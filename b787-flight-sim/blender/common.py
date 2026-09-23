@@ -292,17 +292,19 @@ class MeshBuilder:
             N = N @ M[:3, :3]   # inverse-transpose of Mi's 3x3 for rotation+translation
         N /= np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-12)
         # fix winding so face normal agrees with the mean supplied normal
-        faces = []
-        for f in self.faces:
-            if len(f) >= 3:
-                p = V[f]
-                c = p.mean(0)
-                fn = np.zeros(3)
-                for i in range(len(f)):
-                    fn += np.cross(p[i] - c, p[(i + 1) % len(f)] - c)
-                if np.dot(fn, N[f].sum(0)) < 0:
-                    f = f[::-1]
-            faces.append(f)
+        faces = list(self.faces)
+        sizes = np.fromiter((len(f) for f in faces), dtype=np.int32, count=len(faces))
+        for k in np.unique(sizes):
+            idx = np.where(sizes == k)[0]
+            F = np.array([faces[i] for i in idx], dtype=np.int64)       # (n, k)
+            p = V[F]
+            c = p.mean(1, keepdims=True)
+            q = p - c
+            fn = np.cross(q, np.roll(q, -1, axis=1)).sum(1)
+            ns = N[F].sum(1)
+            flip = np.einsum("ij,ij->i", fn, ns) < 0
+            for i in idx[flip]:
+                faces[i] = faces[i][::-1]
         loop_vi = [i for f in faces for i in f]
         ob = mesh_object(name, V, faces, loop_uvs=UV[loop_vi], col=col, smooth=True)
         me = ob.data

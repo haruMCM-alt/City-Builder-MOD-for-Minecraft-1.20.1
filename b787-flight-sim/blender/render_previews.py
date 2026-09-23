@@ -137,7 +137,20 @@ def main():
             render(os.path.join(PREV_DIR, "b787_%s.jpg" % name), res, 16 if fast else 96)
     else:
         bpy.ops.wm.open_mainfile(filepath=os.path.join(C.OUT_DIR, "world.blend"))
-        setup_world(1.0, 28, 60)
+        setup_world(0.22, 28, 60)
+        # preview-only terrain: grass land, sea south of the coast, river
+        def plane(name, x0, y0, x1, y1, z, col, rough=0.9, metal=0.0):
+            me = bpy.data.meshes.new(name)
+            me.from_pydata([(x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)], [], [(0, 1, 2, 3)])
+            ob = bpy.data.objects.new(name, me)
+            bpy.context.scene.collection.objects.link(ob)
+            me.materials.append(C.pbr_material(name + "M", color=col, roughness=rough, metallic=metal))
+        plane("Land", -30000, -1400, 30000, 30000, -0.02, C.hex_color("#4d6b35"))
+        plane("Sea", -30000, -30000, 30000, -1400, -0.5, C.hex_color("#1d3b52"), 0.08)
+        plane("River", 2890, -1400, 3110, 9800, -0.01, C.hex_color("#23465e"), 0.08)
+        for o in bpy.data.objects:
+            if o.name.startswith("TreeProto"):
+                o.hide_render = True
         import json
         cams = json.load(open(os.path.join(C.HERE, "world_cameras.json")))
         for name, (loc, tgt, lens) in cams.items():
