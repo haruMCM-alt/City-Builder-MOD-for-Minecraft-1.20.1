@@ -1,0 +1,390 @@
+{
+ "name": "Boeing 787-9",
+ "frame": "three.js aircraft frame: +x forward, +y up, +z right; origin = reference CG",
+ "length": 62.81,
+ "span": 60.12,
+ "height": 17.02,
+ "wingArea": 376.61,
+ "mac": 7.708,
+ "macLE": 1.9315791440112342,
+ "groundY": -5.25,
+ "eye": [
+  27.700000000000003,
+  1.08,
+  -0.53
+ ],
+ "noseGear": [
+  24.130000000000003,
+  -5.25,
+  0
+ ],
+ "mainGearL": [
+  -1.6999999999999957,
+  -5.25,
+  -4.9
+ ],
+ "mainGearR": [
+  -1.6999999999999957,
+  -5.25,
+  4.9
+ ],
+ "tailStrike": [
+  -24.65,
+  -0.7591814595660749,
+  0
+ ],
+ "wingTipL": [
+  -13.798058813480843,
+  2.1285776864845327,
+  -30.06
+ ],
+ "wingTipR": [
+  -13.798058813480843,
+  2.1285776864845327,
+  30.06
+ ],
+ "engineL": [
+  4.699969357595663,
+  -4.26,
+  -9.85
+ ],
+ "engineR": [
+  4.699969357595663,
+  -4.26,
+  9.85
+ ],
+ "engineAxisL": [
+  2.6999693575956627,
+  -2.5,
+  -9.85
+ ],
+ "engineAxisR": [
+  2.6999693575956627,
+  -2.5,
+  9.85
+ ],
+ "noseTip": [
+  31.85,
+  -0.55,
+  0
+ ],
+ "parts": [
+  {
+   "name": "FlapInbd_L",
+   "kind": "flap",
+   "max": 36
+  },
+  {
+   "name": "Flaperon_L",
+   "kind": "flaperon",
+   "max": 30
+  },
+  {
+   "name": "FlapOutbd_L",
+   "kind": "flap",
+   "max": 36
+  },
+  {
+   "name": "Aileron_L",
+   "kind": "aileron",
+   "max": 25
+  },
+  {
+   "name": "Spoiler1_L",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler2_L",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler3_L",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler4_L",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler5_L",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler6_L",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler7_L",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Slat1_L",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat2_L",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat3_L",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat4_L",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat5_L",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat6_L",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Fan_L",
+   "kind": "fan",
+   "max": 0
+  },
+  {
+   "name": "FlapInbd_R",
+   "kind": "flap",
+   "max": 36
+  },
+  {
+   "name": "Flaperon_R",
+   "kind": "flaperon",
+   "max": 30
+  },
+  {
+   "name": "FlapOutbd_R",
+   "kind": "flap",
+   "max": 36
+  },
+  {
+   "name": "Aileron_R",
+   "kind": "aileron",
+   "max": 25
+  },
+  {
+   "name": "Spoiler1_R",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler2_R",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler3_R",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler4_R",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler5_R",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler6_R",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Spoiler7_R",
+   "kind": "spoiler",
+   "max": 60
+  },
+  {
+   "name": "Slat1_R",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat2_R",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat3_R",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat4_R",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat5_R",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Slat6_R",
+   "kind": "slat",
+   "max": 22
+  },
+  {
+   "name": "Fan_R",
+   "kind": "fan",
+   "max": 0
+  },
+  {
+   "name": "HStab",
+   "kind": "stab",
+   "max": 4.0
+  },
+  {
+   "name": "Elevator_L",
+   "kind": "elevator",
+   "max": 30
+  },
+  {
+   "name": "Elevator_R",
+   "kind": "elevator",
+   "max": 30
+  },
+  {
+   "name": "Rudder",
+   "kind": "rudder",
+   "max": 27
+  },
+  {
+   "name": "NoseGear",
+   "kind": "gear",
+   "max": 98,
+   "contact": [
+    24.130000000000003,
+    -5.25,
+    0
+   ],
+   "radius": 0.51
+  },
+  {
+   "name": "NoseDoor_L",
+   "kind": "door",
+   "max": 88
+  },
+  {
+   "name": "NoseDoor_R",
+   "kind": "door",
+   "max": 88
+  },
+  {
+   "name": "MainGear_L",
+   "kind": "gear",
+   "max": 88,
+   "contact": [
+    -1.6999999999999957,
+    -5.25,
+    -4.9
+   ],
+   "radius": 0.685,
+   "wheels": [
+    [
+     -0.8999999999999986,
+     -5.25,
+     -4.16
+    ],
+    [
+     -0.8999999999999986,
+     -5.25,
+     -5.640000000000001
+    ],
+    [
+     -2.499999999999993,
+     -5.25,
+     -4.16
+    ],
+    [
+     -2.499999999999993,
+     -5.25,
+     -5.640000000000001
+    ]
+   ]
+  },
+  {
+   "name": "MainDoor_L",
+   "kind": "door",
+   "max": 85
+  },
+  {
+   "name": "MainGear_R",
+   "kind": "gear",
+   "max": 88,
+   "contact": [
+    -1.6999999999999957,
+    -5.25,
+    4.9
+   ],
+   "radius": 0.685,
+   "wheels": [
+    [
+     -0.8999999999999986,
+     -5.25,
+     5.640000000000001
+    ],
+    [
+     -0.8999999999999986,
+     -5.25,
+     4.16
+    ],
+    [
+     -2.499999999999993,
+     -5.25,
+     5.640000000000001
+    ],
+    [
+     -2.499999999999993,
+     -5.25,
+     4.16
+    ]
+   ]
+  },
+  {
+   "name": "MainDoor_R",
+   "kind": "door",
+   "max": 85
+  },
+  {
+   "name": "Throttle_L",
+   "kind": "throttle",
+   "max": 30
+  },
+  {
+   "name": "Throttle_R",
+   "kind": "throttle",
+   "max": 30
+  },
+  {
+   "name": "Yoke_L",
+   "kind": "yoke",
+   "max": 12
+  },
+  {
+   "name": "Yoke_R",
+   "kind": "yoke",
+   "max": 12
+  }
+ ]
+}
