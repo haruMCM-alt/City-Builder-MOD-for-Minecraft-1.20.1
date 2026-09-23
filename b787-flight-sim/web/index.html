@@ -65,6 +65,17 @@
   .val { font-family: var(--mono); color: var(--text); float: right; }
   .scen { display: grid; gap: 8px; }
   .scen button { text-align: left; }
+  #liveryBox { margin-top: 16px; }
+  .livrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  #airlineName { width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 16px; border-radius: 8px;
+    border: 1px solid var(--line); background: rgba(255,255,255,0.06); color: inherit; }
+  #liveryPreview { display: block; width: 100%; max-width: 520px; height: auto; margin-top: 10px; border-radius: 8px; }
+  #liveryReset { margin-top: 8px; }
+  .logos { display: flex; flex-wrap: wrap; gap: 8px; }
+  .logos button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; width: 84px;
+    font-size: 11px; line-height: 1.2; }
+  .logos button canvas { width: 56px; height: 56px; border-radius: 10px; }
+  .logos button.sel { outline: 2px solid var(--accent, #2bb6ff); outline-offset: 1px; }
   button {
     background: #11213a; color: var(--text); border: 1px solid rgba(90,160,255,.35); border-radius: 9px;
     padding: 10px 12px; font: inherit; font-size: 14px; cursor: pointer; transition: background .15s, border-color .15s;
@@ -210,6 +221,21 @@
         <label><input type="checkbox" id="sound" checked> サウンド Sound</label>
       </fieldset>
     </div>
+    <fieldset id="liveryBox">
+      <legend>機体塗装 / Livery</legend>
+      <div class="livrow">
+        <div>
+          <label for="airlineName">エアライン名 Airline name</label>
+          <input type="text" id="airlineName" maxlength="28" value="Claude Air" autocomplete="off" spellcheck="false">
+          <canvas id="liveryPreview" width="520" height="110"></canvas>
+          <button type="button" id="liveryReset" class="small">既定に戻す Reset</button>
+        </div>
+        <div>
+          <label>ロゴ Logo（色も一緒に変わります）</label>
+          <div class="logos" id="logoPick"></div>
+        </div>
+      </div>
+    </fieldset>
     <details open>
       <summary>操作方法 / Controls</summary>
       <div class="keys" style="margin-top:10px">

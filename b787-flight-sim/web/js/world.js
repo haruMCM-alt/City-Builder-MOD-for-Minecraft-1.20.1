@@ -618,11 +618,12 @@ varying vec3 vTW; varying float vSlope;`)
   }
 
   // ---------------------------------------------------------------------- parked aircraft
-  addParkedAircraft(template, stands, skipStand) {
+  addParkedAircraft(template, stands, skipStand, dress) {
     if (!this._parkedTemplate) this._parkedTemplate = World.mergeByMaterial(template);
     for (const st of stands) {
       if (st.id === skipStand) continue;
       const o = this._parkedTemplate.clone(true);
+      if (dress) dress(o);
       o.position.set(st.cg[0], -0.55 + 0.55 + 5.25 - 0.05, st.cg[2]);
       o.rotation.y = Math.PI / 2 - st.heading * DEG;   // heading 0 = north (-z)
       o.traverse((m) => { if (m.isMesh) { m.castShadow = this.quality === 'high'; m.receiveShadow = true; } });

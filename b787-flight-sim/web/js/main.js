@@ -11,6 +11,7 @@ import { Instruments } from './instruments.js';
 import { CameraRig, VIEW_NAMES } from './camera.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
+import { LOGOS, logoById, drawLogoIcon, randomLivery, dressParked, loadSavedLivery, saveLivery, DEFAULT_LIVERY } from './livery.js';
 import { V3, DEG, KT, FT, FPM, clamp, headingVec, wrap360, mulberry32 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -102,7 +103,9 @@ class App {
     this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 250000);
 
     setLoad(0.02, 'loading data…');
-    const [meta, world] = await Promise.all([fetchJSON(ASSET + 'b787-9.json'), fetchJSON(ASSET + 'world.json')]);
+    const [meta, world, livery] = await Promise.all([fetchJSON(ASSET + 'b787-9.json'), fetchJSON(ASSET + 'world.json'),
+      fetchJSON(ASSET + 'livery.json').catch(() => null)]);
+    meta.livery = livery;
     this.meta = meta; this.worldData = world;
     configureTerrain(world);
     this.world = new World(renderer, this.scene, this.quality);
@@ -136,6 +139,8 @@ class App {
     this.fm = new FlightModel(meta);
     this.sys = new Systems(this.fm, world);
     this.visual = new AircraftVisual(acGltf, meta, this.scene, this.quality);
+    this.livery = loadSavedLivery();
+    this.visual.setLivery(this.livery);
     this.instruments = new Instruments($('pfd'), $('nd'), $('eicas'), $('hud'), world);
     this.visual.setDisplayTextures(this.instruments.textures);
     this.rig = new CameraRig(this.camera, canvas, meta, world);
@@ -197,6 +202,7 @@ class App {
     bind('turb', 'turbVal', (v) => (v === 0 ? 'なし' : v.toFixed(1)));
     bind('fuel', 'fuelVal', (v) => `${(v / 1000).toFixed(0)} t`);
     bind('payload', 'payVal', (v) => `${(v / 1000).toFixed(0)} t`);
+    this.buildLiveryMenu();
     $('startBtn').onclick = () => this.startFromMenu();
     $('retryBtn').onclick = () => { $('crash').classList.add('hidden'); this.startScenario(this.scenario, true); };
     $('menuBtn').onclick = () => { $('crash').classList.add('hidden'); this.openMenu(); };
@@ -265,6 +271,50 @@ class App {
     this.paused = true;
     $('menu').classList.remove('hidden');
     ['mcp', 'panel', 'status', 'corner', 'touch'].forEach((i) => $(i).classList.add('hidden'));
+  }
+
+  buildLiveryMenu() {
+    const nameEl = $('airlineName'), box = $('logoPick'), prev = $('liveryPreview');
+    if (!nameEl || !this.meta.livery) { if ($('liveryBox')) $('liveryBox').style.display = 'none'; return; }
+    nameEl.value = this.livery.name;
+    const apply = () => {
+      saveLivery(this.livery);
+      this.visual.setLivery(this.livery);
+      box.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x.dataset.id === this.livery.logo));
+      // flat preview: logo + title in the scheme colours
+      const c = prev.getContext('2d'), W = prev.width, H = prev.height, lg = logoById(this.livery.logo);
+      c.clearRect(0, 0, W, H);
+      c.fillStyle = '#f5f7f9'; c.fillRect(0, 0, W, H);
+      c.fillStyle = lg.colors.primary; c.fillRect(0, H * 0.78, W, H * 0.22);
+      c.fillStyle = lg.colors.accent1; c.fillRect(0, H * 0.72, W, H * 0.04);
+      c.save(); c.translate(H * 0.42, H * 0.4); c.scale(H * 0.32, H * 0.32); lg.draw(c); c.restore();
+      const words = (this.livery.name || ' ').trim().split(/\s+/), last = words.length > 1 ? words.pop() : '';
+      let px = H * 0.34;
+      const font = () => `italic 800 ${px}px "Helvetica Neue", Helvetica, Arial, "Hiragino Sans", sans-serif`;
+      c.font = font();
+      const tw = () => c.measureText(words.join(' ') + (last ? '  ' + last : '')).width;
+      while (tw() > W - H * 0.95 && px > 8) { px -= 1; c.font = font(); }
+      let x = H * 0.85;
+      c.fillStyle = lg.colors.primary; c.fillText(words.join(' '), x, H * 0.52);
+      if (last) { x += c.measureText(words.join(' ') + '  ').width; c.fillStyle = lg.colors.accent1 === '#ffffff' ? lg.colors.primary2 : lg.colors.accent1; c.fillText(last, x, H * 0.52); }
+    };
+    for (const lg of LOGOS) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.dataset.id = lg.id; b.title = lg.label;
+      const cv = document.createElement('canvas'); cv.width = cv.height = 56;
+      drawLogoIcon(cv, lg);
+      b.appendChild(cv);
+      const sp = document.createElement('span'); sp.textContent = lg.label; b.appendChild(sp);
+      b.onclick = () => { this.livery = { ...this.livery, logo: lg.id }; apply(); };
+      box.appendChild(b);
+    }
+    let tmr = 0;
+    nameEl.addEventListener('input', () => {
+      clearTimeout(tmr);
+      tmr = setTimeout(() => { this.livery = { ...this.livery, name: nameEl.value.slice(0, 28) || DEFAULT_LIVERY.name }; apply(); }, 250);
+    });
+    $('liveryReset').onclick = () => { this.livery = { ...DEFAULT_LIVERY }; nameEl.value = this.livery.name; apply(); };
+    apply();
   }
 
   startFromMenu() {
@@ -406,7 +456,8 @@ class App {
     if (this.lodTemplate) {
       for (const o of this.world.parked) this.scene.remove(o);
       this.world.parked = [];
-      this.world.addParkedAircraft(this.lodTemplate, W.stands.filter((s) => s.id % 4 !== 0 || s.id === 1), skipStand);
+      this.world.addParkedAircraft(this.lodTemplate, W.stands.filter((s) => s.id % 4 !== 0 || s.id === 1), skipStand,
+        this.meta.livery ? (o) => dressParked(o, randomLivery(), this.meta.livery) : null);
     }
     this.crashShown = false;
     this.acc = 0;

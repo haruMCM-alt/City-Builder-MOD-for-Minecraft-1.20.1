@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { DEG, clamp, lerp, smoothstep } from './util.js';
 import { glowTexture } from './world.js';
+import { liveryUniforms, patchLiveryShader, liveryAssets, setLiveryUniforms } from './livery.js';
 
 const COCKPIT_PARTS = ['CockpitShell', 'CockpitInterior', 'HUD_Combiner', 'Throttle_L', 'Throttle_R', 'Yoke_L', 'Yoke_R',
   'Display_PFD_L', 'Display_ND_L', 'Display_EICAS', 'Display_ND_R', 'Display_PFD_R'];
@@ -34,6 +35,7 @@ export class AircraftVisual {
       uFlex: { value: 0 }, uRootInv: { value: new THREE.Matrix4() }, uRootUp: { value: new THREE.Vector3(0, 1, 0) },
     };
     this.flex = 0; this.flexVel = 0;
+    this.livU = meta.livery ? liveryUniforms(meta.livery) : null;
     this.parts = {};
     for (const p of meta.parts) {
       const o = this.root.getObjectByName(p.name);
@@ -82,8 +84,11 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
   float fl = uFlex * span * span / 729.0 * step(-15.5, lp.x);
   transformed += inverse(mat3(modelMatrix)) * (uRootUp * fl);
 }`);
+          if (m.name === 'B787_Fuselage' && self.livU) patchLiveryShader(sh, self.livU, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
         };
-        m.customProgramCacheKey = () => 'flex';
+        m.customProgramCacheKey = () => (m.name === 'B787_Fuselage' ? 'flex-livery' : 'flex');
+        if (m.name === 'B787_Tail') this.tailMat = m;
+        if (m.name === 'B787_Navy' || m.name === 'B787_Nacelle') (this.paintMats ||= []).push(m);
       }
     });
     // glow sprites for the aircraft lights
@@ -128,6 +133,15 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
     this._initParticles();
     this.lightsOn = { nav: true, beacon: true, strobe: false, landing: false, taxi: false, logo: true };
     this.cockpitVisible = true;
+  }
+
+  // airline name + logo (see livery.js)
+  setLivery(liv) {
+    if (!this.livU) return;
+    const a = liveryAssets(liv, this.meta.livery, true);
+    setLiveryUniforms(this.livU, a);
+    if (this.tailMat) { this.tailMat.map = a.tail; this.tailMat.color.set(0xffffff); this.tailMat.needsUpdate = true; }
+    for (const m of this.paintMats || []) m.color.setRGB(a.prim.x, a.prim.y, a.prim.z, THREE.LinearSRGBColorSpace);
   }
 
   setDisplayTextures(textures) {

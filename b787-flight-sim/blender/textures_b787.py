@@ -325,6 +325,26 @@ def belly_line(s):
     return z
 
 
+# livery layout shared with the simulator (web/js/livery.js)
+BELLY_S = [0, 5.5, 9.0, 14.0, 30.0, 36.0, 42.0, 47.0, 51.0, 55.0, 70]
+BELLY_Z = [-3.6, -3.4, -2.35, -1.62, -1.55, -1.45, -0.95, 0.10, 1.35, 3.5, 4.0]
+TITLE = dict(s0=10.4, zc=1.5, capHeight=1.2, maxLen=27.0)
+TAIL = dict(s0=46.0, s1=G.LENGTH, z0=G.VT_Z0, z1=G.VT_ZTIP, logo=[55.6, 7.6, 1.55])
+
+
+def write_livery_json():
+    import json
+    out = dict(
+        note="design frame: s aft from nose, z up; three.js x = sCG - s, y = z, z = -y",
+        sCG=G.S_CG, white="#f5f7f9",
+        belly=dict(s=BELLY_S, z=BELLY_Z, fade=1.6, stripes=[[0.10, 0.075], [0.215, 0.022]], stripeS0=8.5),
+        title=TITLE, tail=TAIL,
+    )
+    path = os.path.join(HERE, "..", "web", "assets", "livery.json")
+    with open(path, "w") as fh:
+        json.dump(out, fh, indent=1)
+
+
 def fuselage_textures(W=8192, H=2048):
     print("fuselage maps ...")
     fm = FuselageMaps(W, H)
@@ -337,18 +357,11 @@ def fuselage_textures(W=8192, H=2048):
     emis = np.zeros((H, W, 3), np.float32)
 
     # --- belly + sweep -----------------------------------------------------------
-    zl = belly_line(S)
-    navy_a = aa(Z - zl, 0.012)
-    # subtle vertical gradient on the navy (lighter towards the boundary)
-    t = np.clip((zl - Z) / 1.6, 0, 1)[..., None]
-    navy_col = NAVY2 * (1 - t) + NAVY * t
-    col = col * (1 - navy_a[..., None]) + navy_col * navy_a[..., None]
-    rough = rough * (1 - navy_a) + 0.26 * navy_a
-    # cyan pin-stripe and a thinner gold one above the boundary
-    for off, w, c in ((0.10, 0.075, CYAN), (0.215, 0.022, GOLD)):
-        d = np.abs(Z - (zl + off)) - w / 2
-        a = aa(d, 0.012) * (S > 8.5)
-        blend(col, c, a)
+    # The livery paint (belly colour, pin-stripes, titles, fin) is applied at run time
+    # by the simulator from assets/livery.json, so the airline can be customised.  The
+    # baked texture is bare white paint with the windows, doors and panel lines, which
+    # the livery shader multiplies (paint over detail).
+    write_livery_json()
 
     # --- passenger windows -------------------------------------------------------
     print("windows ...")
@@ -461,19 +474,6 @@ def fuselage_textures(W=8192, H=2048):
     # windshield wiper hints
     # --- titles ------------------------------------------------------------------------
     print("titles ...")
-    # left side reads nose->tail; on the right side the word order is swapped so
-    # that it still reads "CITY BUILDER AIRWAYS" (nose is on the viewer's right)
-    w_cb = text_image("CITY BUILDER", FONT_BOLD_IT, 0.98, 220, 0.0, 0.045)[0].shape[1] / 220
-    w_aw = text_image("AIRWAYS", FONT_BOLD_IT, 0.98, 220, 0.0, 0.045)[0].shape[1] / 220
-    gap = 0.9
-    s0 = 10.4
-    stamp_text(col, fm, "CITY BUILDER", FONT_BOLD_IT, 0.98, s0, 1.55, NAVY, sides=(1,), tracking=0.045)
-    stamp_text(col, fm, "AIRWAYS", FONT_BOLD_IT, 0.98, s0 + w_cb + gap, 1.55, CYAN * 0.85, sides=(1,),
-               tracking=0.045)
-    stamp_text(col, fm, "AIRWAYS", FONT_BOLD_IT, 0.98, s0, 1.55, CYAN * 0.85, sides=(-1,), tracking=0.045)
-    stamp_text(col, fm, "CITY BUILDER", FONT_BOLD_IT, 0.98, s0 + w_aw + gap, 1.55, NAVY, sides=(-1,),
-               tracking=0.045)
-    stamp_text(col, fm, "シティビルダー航空", FONT_JP, 0.42, 42.2, 1.25, NAVY)
     stamp_text(col, fm, "787-9", FONT_BOLD_IT, 0.38, 5.3, -0.62, NAVY, tracking=0.02)
     stamp_text(col, fm, "JA787C", FONT_BOLD, 0.40, 49.9, 1.48, NAVY, tracking=0.03)
     # small door labels / static port markings

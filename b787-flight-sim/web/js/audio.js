@@ -24,6 +24,7 @@ const PHRASES = {
 
 const SHAFT_HZ = 2560 / 60;     // GEnx-1B N1 100 % = ~2560 rpm
 const FAN_BLADES = 18;
+const TONE_SCALE = 0.62;
 const C_SOUND = 340;
 
 function seeded(seed) {
@@ -63,7 +64,10 @@ export class Audio {
     this.airLP = ctx.createBiquadFilter(); this.airLP.type = 'lowpass'; this.airLP.frequency.value = 18000; this.airLP.Q.value = 0.5;
     this.cabinLP = ctx.createBiquadFilter(); this.cabinLP.type = 'lowpass'; this.cabinLP.frequency.value = 20000; this.cabinLP.Q.value = 0.6;
     this.cabinLP2 = ctx.createBiquadFilter(); this.cabinLP2.type = 'lowpass'; this.cabinLP2.frequency.value = 20000; this.cabinLP2.Q.value = 0.6;
-    this.engBus.connect(this.airLP); this.airLP.connect(this.cabinLP); this.cabinLP.connect(this.cabinLP2); this.cabinLP2.connect(this.master);
+    // overall voicing: softer highs, fuller lows
+    const hs = ctx.createBiquadFilter(); hs.type = 'highshelf'; hs.frequency.value = 2200; hs.gain.value = -7;
+    const ls = ctx.createBiquadFilter(); ls.type = 'lowshelf'; ls.frequency.value = 160; ls.gain.value = 4;
+    this.engBus.connect(hs); hs.connect(ls); ls.connect(this.airLP); this.airLP.connect(this.cabinLP); this.cabinLP.connect(this.cabinLP2); this.cabinLP2.connect(this.master);
 
     // noise buffers (white, pink, brown, crackle), 4 s loops
     const len = sr * 4;
@@ -139,7 +143,7 @@ export class Audio {
     const filt = (type, f, q = 0.7) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; };
     // ---- fan blade-passing tone (BPF, 2xBPF, 3xBPF) with slight "breath" -------------------
     const real = new Float32Array(5), imag = new Float32Array(5);
-    imag[1] = 1; imag[2] = 0.45; imag[3] = 0.18; imag[4] = 0.07;
+    imag[1] = 1; imag[2] = 0.28; imag[3] = 0.07; imag[4] = 0.02;
     E.fan = ctx.createOscillator();
     E.fan.setPeriodicWave(ctx.createPeriodicWave(real, imag));
     E.fanG = gain();
@@ -148,7 +152,7 @@ export class Audio {
     const lfo = ctx.createOscillator(); lfo.frequency.value = 3.1 + i * 0.7;
     const lfoG = gain(6); lfo.connect(lfoG); lfoG.connect(E.fan.detune); lfo.start();
     // narrow-band noise around the BPF (tone "haze")
-    E.fanNoiseF = filt('bandpass', 700, 9);
+    E.fanNoiseF = filt('bandpass', 450, 2.5);
     E.fanNoiseG = gain();
     this.noise(this.white, 0.5 + i).connect(E.fanNoiseF); E.fanNoiseF.connect(E.fanNoiseG); E.fanNoiseG.connect(E.pan);
     // ---- buzzsaw: multiple pure tones at shaft orders (supersonic fan tips) ----------------
@@ -156,7 +160,7 @@ export class Audio {
     const bre = new Float32Array(N + 1), bim = new Float32Array(N + 1);
     for (let k = 1; k <= N; k++) {
       // irregular amplitudes: blade-to-blade differences give the rough "saw" timbre
-      const env = Math.exp(-Math.pow((k - 14) / 11, 2)) + 0.25 / k;
+      const env = Math.exp(-Math.pow((k - 7) / 7, 2)) + 0.3 / k;
       bim[k] = env * (0.35 + 0.65 * r());
       bre[k] = env * (r() - 0.5) * 0.6;
     }
@@ -171,23 +175,23 @@ export class Audio {
     E.coreG = gain();
     E.core1.connect(E.coreG); E.core2.connect(E.coreG); E.coreG.connect(E.pan);
     E.core1.start(); E.core2.start();
-    E.coreNoiseF = filt('bandpass', 5000, 6);
+    E.coreNoiseF = filt('bandpass', 2000, 3);
     E.coreNoiseG = gain();
     this.noise(this.white, 1.9 + i).connect(E.coreNoiseF); E.coreNoiseF.connect(E.coreNoiseG); E.coreNoiseG.connect(E.pan);
     // ---- jet roar (pink noise, low-pass + low-mid body) --------------------------------------
     E.jetSrc = this.noise(this.pink, 0.8 + i * 1.3);
     E.jetLP = filt('lowpass', 600, 0.4);
-    E.jetBody = filt('peaking', 180, 0.8); E.jetBody.gain.value = 6;
+    E.jetBody = filt('peaking', 110, 0.7); E.jetBody.gain.value = 9;
     E.jetG = gain();
     E.jetSrc.connect(E.jetLP); E.jetLP.connect(E.jetBody); E.jetBody.connect(E.jetG); E.jetG.connect(E.pan);
     // ---- crackle -----------------------------------------------------------------------------
     E.crkSrc = this.noise(this.crackle, 1.1 + i * 0.9);
-    E.crkF = filt('bandpass', 1400, 0.9);
+    E.crkF = filt('bandpass', 900, 0.8);
     E.crkG = gain();
     E.crkSrc.connect(E.crkF); E.crkF.connect(E.crkG); E.crkG.connect(E.pan);
     // ---- low rumble --------------------------------------------------------------------------
     E.rumSrc = this.noise(this.brown, 2.4 + i);
-    E.rumLP = filt('lowpass', 90, 0.7);
+    E.rumLP = filt('lowpass', 110, 0.7);
     E.rumG = gain();
     E.rumSrc.connect(E.rumLP); E.rumLP.connect(E.rumG); E.rumG.connect(E.pan);
     return E;
@@ -290,7 +294,9 @@ export class Audio {
     for (let i = 0; i < 2; i++) {
       const e = fm.engines[i], E = this.eng[i];
       const n1 = clamp(e.n1 / 100, 0, 1.05), n2 = clamp(e.n2 / 100, 0, 1.05);
-      const shaft = SHAFT_HZ * n1 * dop;
+      // tonal parts are voiced a little below the physical values: at a real airport the
+      // fan tones are masked by broadband roar and the ear hears a deep, rounded sound
+      const shaft = SHAFT_HZ * n1 * dop * TONE_SCALE;
       const bpf = shaft * FAN_BLADES;
       const thrust = clamp(Math.abs(e.thrust) / 330000, 0, 1.1);
       const rev = e.reverse;
@@ -306,30 +312,30 @@ export class Audio {
       const near = cabin ? (i === 0 ? 1.6 : 0.55) : 1;
       // fan tone
       set(E.fan.frequency, bpf, 0.05);
-      set(E.fanG.gain, on * near * fanDir * (0.012 + 0.07 * n1 * n1), 0.08);
-      set(E.fanNoiseF.frequency, bpf, 0.05);
-      set(E.fanNoiseG.gain, on * near * fanDir * 0.16 * n1 * n1, 0.08);
+      set(E.fanG.gain, on * near * fanDir * (0.006 + 0.03 * n1 * n1), 0.08);
+      set(E.fanNoiseF.frequency, bpf * 0.8, 0.05);
+      set(E.fanNoiseG.gain, on * near * fanDir * 0.12 * n1 * n1, 0.08);
       // buzzsaw above ~78 % N1
       set(E.buzz.frequency, shaft, 0.05);
-      set(E.buzzLP.frequency, 1500 + 3500 * n1, 0.1);
+      set(E.buzzLP.frequency, 450 + 1300 * n1, 0.1);
       set(E.buzzG.gain, on * near * fanDir * 0.11 * smoothstep(0.76, 0.96, n1), 0.1);
       // core whine: loudest (relatively) at idle, the classic GEnx whistle
-      const cf = (2400 + 3300 * n2) * dop;
+      const cf = (1150 + 1500 * n2) * dop;
       set(E.core1.frequency, cf, 0.08);
       set(E.core2.frequency, cf * 1.018, 0.08);
-      set(E.coreG.gain, on * near * (0.3 + 0.7 * fanDir) * (0.012 + 0.012 * n2), 0.1);
-      set(E.coreNoiseF.frequency, cf * 1.3, 0.08);
-      set(E.coreNoiseG.gain, on * near * 0.05 * n2, 0.1);
+      set(E.coreG.gain, on * near * (0.3 + 0.7 * fanDir) * (0.004 + 0.004 * n2), 0.1);
+      set(E.coreNoiseF.frequency, cf * 1.2, 0.08);
+      set(E.coreNoiseG.gain, on * near * 0.03 * n2, 0.1);
       // jet roar grows with thrust; reversers throw it forwards
       const jet = Math.pow(thrust, 1.25) + rev * 0.5;
       E.jetSrc.playbackRate.setTargetAtTime(dop, t, 0.1);
-      set(E.jetLP.frequency, 300 + 2200 * Math.min(jet, 1) * (inside ? 0.5 : 1), 0.12);
+      set(E.jetLP.frequency, 220 + 1100 * Math.min(jet, 1) * (inside ? 0.5 : 1), 0.12);
       set(E.jetG.gain, on * near * (jetDir + rev * 0.8) * (0.02 + 0.55 * jet), 0.12);
       // crackle at high thrust, aft
       E.crkSrc.playbackRate.setTargetAtTime(dop, t, 0.1);
       set(E.crkG.gain, on * near * jetDir * 0.35 * smoothstep(0.6, 1.0, thrust), 0.12);
       // rumble
-      set(E.rumG.gain, on * near * (0.12 + 0.5 * n1) * (inside ? 1.6 : 1), 0.1);
+      set(E.rumG.gain, on * near * (0.16 + 0.65 * n1) * (inside ? 1.6 : 1), 0.1);
     }
 
     // ---- airframe ------------------------------------------------------------------------------
