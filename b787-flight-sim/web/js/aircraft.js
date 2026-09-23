@@ -102,7 +102,11 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
       o.updateWorldMatrix(true, false);
       sp.position.copy(o.worldToLocal(c.clone()));
       o.add(sp);
-      this.lights.push({ name, obj: o, sprite: sp, ...L, intensity: 0 });
+      // the light meshes bend with the wing in the vertex shader; the glow sprite follows in JS
+      const lp = c.clone().applyMatrix4(this.root.matrixWorld.clone().invert());
+      const span = Math.max(Math.abs(lp.z) - 3.0, 0);
+      const flexK = lp.x > -15.5 ? span * span / 729 : 0;
+      this.lights.push({ name, obj: o, sprite: sp, ...L, intensity: 0, base: sp.position.clone(), flexK });
     }
     // landing / taxi spotlights
     this.spots = [];
@@ -301,6 +305,8 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
       else if (l.kind === 'landing') on = L.landing ? 1 : 0;
       else if (l.kind === 'taxi') on = L.taxi ? 1 : 0;
       else if (l.kind === 'logo') on = L.logo && night > 0.2 ? 1 : 0;
+      l.sprite.position.copy(l.base);
+      l.sprite.position.y += this.flex * l.flexK;
       const wp = l.sprite.getWorldPosition(new THREE.Vector3());
       const d = wp.distanceTo(camPos);
       const s = l.size * (0.35 + d * 0.004) * lerp(0.55, 1.0, night);

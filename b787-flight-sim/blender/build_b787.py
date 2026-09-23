@@ -475,13 +475,20 @@ def build_wing(M, root, col, side):
                      mat_le=1, le_split=0.05)
 
         def slat_hinge(yy):
+            # Virtual track centre chosen so that a 20 deg nose-down rotation moves the
+            # leading edge 3.5 % chord forward and 7 % chord down; the slat trailing edge
+            # slides down along the fixed leading-edge nose, leaving only a small slot.
             c = float(G.wing_chord(yy))
             p = f(np.array(yy), np.array(0.0), np.array(True)).copy()
-            p[0] += -0.2284 * c * 1.0     # virtual centre ahead ...
-            p[2] += 0.1354 * c            # ... and above the leading edge
+            th = math.radians(20)
+            R = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])  # (s aft, z up)
+            dL = np.array([-0.035 * c, -0.07 * c])
+            off = np.linalg.solve(R - np.eye(2), dL)          # p - centre
+            p[0] -= off[0]
+            p[2] -= off[1]
             return p
         test = f(spans, np.zeros_like(spans), np.ones_like(spans, bool))
-        pred = lambda a_, b_: (b_[:, 2].mean() < a_[:, 2].mean())  # noqa: E731
+        pred = MOVE_FWD
         add_part("Slat%d_%s" % (i + 1, L), "slat", mb2, [M["wing"], M["le"]], slat_hinge(y0), slat_hinge(y1),
                  test, pred, 22, root, col)
     return wing

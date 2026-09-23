@@ -203,6 +203,12 @@ class App {
     $('btnView').onclick = () => this.command('view');
     $('btnPanel').onclick = () => this.command('panel');
     $('btnMenu').onclick = () => this.command('menu');
+    $('resumeBtn').onclick = () => this.resume();
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && ['menu', 'crash', 'pause'].every((id) => $(id).classList.contains('hidden'))) this.pause();
+    });
+    $('restartBtn').onclick = () => { $('pause').classList.add('hidden'); this.audio.start(); this.startScenario(this.scenario, true); };
+    $('toMenuBtn').onclick = () => this.openMenu();
     // MCP
     document.querySelectorAll('.mcpbtn').forEach((b) => { b.onclick = () => this.command(b.dataset.cmd === 'ap' ? 'ap' : b.dataset.cmd === 'at' ? 'at' : b.dataset.cmd); });
     document.querySelectorAll('.num').forEach((n) => {
@@ -233,7 +239,29 @@ class App {
     $('gwVal').style.color = gw > 254011 ? 'var(--bad)' : '';
   }
 
+  pause() {
+    if (this.paused) return;
+    this.paused = true;
+    const o = this.fm.out;
+    const sc = SCENARIOS.find((x) => x.id === this.scenario);
+    $('pauseInfo').textContent = `${sc ? sc.name : ''} — IAS ${Math.round(o.ias)} kt · ALT ${Math.round(o.altFt)} ft · ` +
+      `HDG ${String(Math.round(o.hdg) % 360).padStart(3, '0')} · FLAPS ${FLAPS[this.sys.flapLever].name} · ` +
+      `GEAR ${this.fm.ctl.gearPos < 0.5 ? 'DOWN' : 'UP'}`;
+    $('pause').classList.remove('hidden');
+    this.audio.suspend();
+  }
+
+  resume() {
+    $('pause').classList.add('hidden');
+    this.paused = false;
+    this.acc = 0;
+    this.input.keys.clear();
+    this.audio.start();
+    $('view').focus();
+  }
+
   openMenu() {
+    $('pause').classList.add('hidden');
     this.paused = true;
     $('menu').classList.remove('hidden');
     ['mcp', 'panel', 'status', 'corner', 'touch'].forEach((i) => $(i).classList.add('hidden'));
@@ -397,7 +425,13 @@ class App {
   // ------------------------------------------------------------------- commands
   command(c) {
     const sys = this.sys, fm = this.fm, o = fm.out;
-    if (c === 'menu') { if (this.paused && !$('menu').classList.contains('hidden')) { this.startFromMenu(); } else this.openMenu(); return; }
+    if (c === 'menu') {
+      // Esc: in flight -> pause screen; on the pause screen -> resume; in the main menu -> start
+      if (!$('pause').classList.contains('hidden')) this.resume();
+      else if (!$('menu').classList.contains('hidden')) this.startFromMenu();
+      else if ($('crash').classList.contains('hidden')) this.pause();
+      return;
+    }
     if (this.paused) return;
     switch (c) {
       case 'gear': sys.gearLever = !sys.gearLever; this.toast('ギア Gear ' + (sys.gearLever ? 'DOWN' : 'UP')); break;
@@ -559,7 +593,15 @@ class App {
       this.instruments.drawHUD(hctx, fm, sys, this.camera, hud.width / this.hudScale, hud.height / this.hudScale);
       this._hudDrawn = true;
     } else if (this._hudDrawn) { hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, hud.width, hud.height); this._hudDrawn = false; }
-    this.audio.update(dt, fm, sys, this.rig.view, this.camera.position.distanceTo(this.visual.root.position));
+    const root = this.visual.root, mw = root.matrixWorld;
+    if (!this._L) this._L = { camRight: new THREE.Vector3(), fwd: new THREE.Vector3(), engines: [new THREE.Vector3(), new THREE.Vector3()] };
+    const L = this._L;
+    L.view = this.rig.view; L.acPos = root.position; L.camPos = this.camera.position;
+    L.camRight.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    L.fwd.set(1, 0, 0).applyQuaternion(root.quaternion);
+    L.engines[0].fromArray(this.meta.engineAxisL).applyMatrix4(mw);
+    L.engines[1].fromArray(this.meta.engineAxisR).applyMatrix4(mw);
+    this.audio.update(dt, fm, sys, L);
     this.renderer.render(this.scene, this.camera);
     if (!this.paused) this.updateUI();
   }

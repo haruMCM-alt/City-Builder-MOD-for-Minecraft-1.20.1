@@ -35,7 +35,12 @@
     background: radial-gradient(1200px 700px at 70% 20%, #16345f 0%, #070c14 60%, #04070b 100%);
     z-index: 20; padding: 16px;
   }
-  #menu, #crash { background: rgba(3, 7, 12, 0.72); backdrop-filter: blur(6px); }
+  #menu, #crash, #pause { background: rgba(3, 7, 12, 0.72); backdrop-filter: blur(6px); }
+  #pause { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 20; padding: 16px; }
+  #pause .card { width: min(860px, 100%); }
+  .ph { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-2); margin: 20px 0 4px; font-weight: 600; }
+  .tips p { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 4px 0; max-width: 70ch; }
+  .tips b { color: var(--text); }
   .card {
     width: min(980px, 100%); max-height: calc(100vh - 32px); overflow: auto;
     background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
@@ -231,7 +236,7 @@
         <div><b>L</b> 着陸灯 Lights</div>
         <div><b>T</b> 時刻 Time +1h</div>
         <div><b>J</b> プッシュバック Pushback</div>
-        <div><b>Esc</b> メニュー Menu</div>
+        <div><b>Esc</b> 一時停止 Pause</div>
       </div>
       <p class="sub" style="margin-top:10px">ゲームパッド対応: 左スティック=操縦、右スティック=ラダー、RT/LT=スラスト、A=ギア、X/Y=フラップ、B=ブレーキ。</p>
     </details>
@@ -239,6 +244,51 @@
       <span class="sub" style="margin:0" id="menuNote">開始後、画面をクリックするとキーボード操作できます。 Click the view once, then fly with the keyboard.</span>
       <span class="spacer"></span>
       <button class="primary" id="startBtn">▶ 飛行開始 Start flight</button>
+    </div>
+  </div>
+</div>
+
+<div id="pause" class="hidden">
+  <div class="card">
+    <h1>一時停止 <span>Paused</span></h1>
+    <p class="sub" id="pauseInfo"></p>
+    <div class="row" style="margin-top:0">
+      <button class="primary" id="resumeBtn">▶ 再開 Resume (Esc)</button>
+      <button id="restartBtn">↺ やり直し Restart</button>
+      <button id="toMenuBtn">☰ メインメニュー Main menu</button>
+    </div>
+    <h2 class="ph">操作方法 / Controls</h2>
+      <div class="keys" style="margin-top:6px">
+        <div><b>↑ ↓ / W S</b> ピッチ Pitch</div>
+        <div><b>← → / A D</b> ロール Roll</div>
+        <div><b>Q E</b> ラダー / 前輪 Rudder</div>
+        <div><b>R F</b> スラスト Thrust ±</div>
+        <div><b>Shift+R</b> TOGA</div>
+        <div><b>Shift+F</b> アイドル Idle</div>
+        <div><b>H</b> 逆噴射 Reverse</div>
+        <div><b>X / Z</b> フラップ Flaps ↓ / ↑</div>
+        <div><b>G</b> ギア Gear</div>
+        <div><b>/ K</b> スピードブレーキ Speedbrake</div>
+        <div><b>Space .</b> ブレーキ Brakes</div>
+        <div><b>P</b> パーキングブレーキ</div>
+        <div><b>N</b> オートブレーキ Autobrake</div>
+        <div><b>1</b> AP  <b style="min-width:0">2</b> A/T</div>
+        <div><b>3 4 5 7</b> HDG ALT VS FLCH</div>
+        <div><b>6</b> APP (ILS)</div>
+        <div><b>C</b> 視点 Camera</div>
+        <div><b>マウス</b> 視点回転 · ホイール ズーム</div>
+        <div><b>I</b> 計器パネル Panel</div>
+        <div><b>U</b> HUD</div>
+        <div><b>L</b> 着陸灯 Lights</div>
+        <div><b>T</b> 時刻 Time +1h</div>
+        <div><b>J</b> プッシュバック Pushback</div>
+        <div><b>Esc</b> 一時停止 / 再開 Pause</div>
+      </div>
+    <h2 class="ph">コツ / Tips</h2>
+    <div class="tips">
+      <p><b>離陸</b>：Shift+R で TOGA → 速度テープの <b>VR</b> で ↓ を 2〜3 秒 → 機首 12〜15° を保持 → 上昇したら G でギア上げ → 1000 ft 以上で 1 で A/P。</p>
+      <p><b>着陸</b>：6 で APP（ILS 自動捕捉）→ G でギア下げ、X でフラップ 30 → MCP の速度を Vref+5 → 50 ft で自動フレア、接地後 H で逆噴射。</p>
+      <p><b>手動着陸</b>：PAPI（滑走路左の 4 灯）が白 2・赤 2 なら正しい 3° パス。白が多いと高い、赤が多いと低い。</p>
     </div>
   </div>
 </div>
@@ -275,7 +325,7 @@
 <div id="corner" class="hidden">
   <button id="btnView">視点 View (C)</button>
   <button id="btnPanel">計器 Panel (I)</button>
-  <button id="btnMenu">メニュー (Esc)</button>
+  <button id="btnMenu">⏸ 一時停止 (Esc)</button>
 </div>
 <div id="touch" class="hidden">
   <div id="stick"><div id="stickKnob"></div></div>

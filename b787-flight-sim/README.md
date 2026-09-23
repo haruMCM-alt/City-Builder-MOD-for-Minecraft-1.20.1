@@ -68,7 +68,7 @@ WebGL2 対応ブラウザ（Chrome / Edge / Firefox / Safari 最新版）で動�
 | 6 | APP（ILS 捕捉を準備） | 0 | DIRECT 則（Home/End でトリム） |
 | C | 視点切替 | I / U | 計器パネル / HUD |
 | L | 着陸灯 | T | 時刻 +1 時間 |
-| Esc | メニュー | Backspace | リセット |
+| Esc | 一時停止（操作方法を表示）/ 再開 | Backspace | リセット |
 
 MCP の数値（IAS / HDG / V/S / ALT）はマウスホイールで変更、クリックで現在値に合わせます（Shift で 10 倍）。ゲームパッドにも対応しています。
 
