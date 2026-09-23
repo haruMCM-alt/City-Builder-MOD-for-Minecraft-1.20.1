@@ -32,9 +32,46 @@ async function fetchJSON(url) {
 }
 
 function loadGLB(loader, url, onProgress) {
+  if (url.endsWith('.gltf.json')) return loadEmbeddedGLTF(loader, url, onProgress);
   return new Promise((resolve, reject) => {
     loader.load(url, resolve, (e) => { if (e.total) onProgress(e.loaded / e.total); }, reject);
   });
+}
+
+// glTF JSON whose geometry buffer is embedded as base64 (textures are separate files). Some
+// hosts forbid fetching data: and blob: URLs,
+// so the buffer is decoded here and re-packed into an in-memory GLB for loader.parse().
+async function loadEmbeddedGLTF(loader, url, onProgress) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + ': ' + r.status);
+  const total = +r.headers.get('content-length') || 0;
+  const reader = r.body.getReader();
+  const parts = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value); got += value.length;
+    if (total) onProgress(Math.min(got / total, 1));
+  }
+  const json = JSON.parse(await new Blob(parts).text());
+  const uri = json.buffers[0].uri;
+  const b64 = uri.slice(uri.indexOf(',') + 1);
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  delete json.buffers[0].uri;
+  const enc = new TextEncoder().encode(JSON.stringify(json));
+  const jsonLen = (enc.length + 3) & ~3, binLen = (bin.length + 3) & ~3;
+  const glb = new Uint8Array(12 + 8 + jsonLen + 8 + binLen);
+  const dv = new DataView(glb.buffer);
+  dv.setUint32(0, 0x46546C67, true); dv.setUint32(4, 2, true); dv.setUint32(8, glb.length, true);
+  dv.setUint32(12, jsonLen, true); dv.setUint32(16, 0x4E4F534A, true);
+  glb.fill(0x20, 20, 20 + jsonLen); glb.set(enc, 20);
+  const o = 20 + jsonLen;
+  dv.setUint32(o, binLen, true); dv.setUint32(o + 4, 0x004E4942, true);
+  glb.set(bin, o + 8);
+  onProgress(1);
+  const base = url.slice(0, url.lastIndexOf('/') + 1);   // external textures sit next to the JSON
+  return new Promise((resolve, reject) => loader.parse(glb.buffer, base, resolve, reject));
 }
 
 // --------------------------------------------------------------------- scenarios
