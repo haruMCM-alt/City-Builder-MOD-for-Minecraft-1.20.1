@@ -27,6 +27,13 @@ import b787_geometry as G  # noqa: E402
 import common as C  # noqa: E402
 
 QUICK = "--quick" in sys.argv
+LOD = "--lod" in sys.argv
+RES = 0.28 if LOD else 1.0
+
+
+def RS(n, lo=4):
+    """Scale a mesh resolution by the global LOD factor."""
+    return max(lo, int(round(n * RES)))
 TB = G.to_blender
 PARTS = []          # animation metadata
 
@@ -120,7 +127,7 @@ def orient(N, ref_dir, mask=None):
 
 
 def lifting_loop(mb, fun, spans, x0, x1, front, mat, up_dir, cap0=True, cap1=True,
-                 nch=34, cap_dir=(0, 1, 0), uv_span=1.0, mat_le=None, le_split=None,
+                 nch=None, cap_dir=(0, 1, 0), uv_span=1.0, mat_le=None, le_split=None,
                  mat_te=None):
     """Loft a lifting surface portion x0..x1 over the list of span stations.
 
@@ -130,6 +137,7 @@ def lifting_loop(mb, fun, spans, x0, x1, front, mat, up_dir, cap0=True, cap1=Tru
     """
     spans = np.asarray(spans, dtype=np.float64)
     ns = len(spans)
+    nch = RS(34, 8) if nch is None else RS(nch, 6)
     xs = G.cos_space(x0, x1, nch) if front == "le" else np.linspace(x0, x1, nch) ** 1.0
     if front != "le":
         # still cluster points near the front for curvature
@@ -280,7 +288,9 @@ MOVE_FWD = lambda a, b: b[:, 0].mean() > a[:, 0].mean()         # noqa: E731 (Bl
 # ---------------------------------------------------------------------------
 def build_fuselage(M, root, col):
     st = G.fus_stations()
-    nv = 192
+    if LOD:
+        st = np.unique(np.r_[st[::3], st[-1]])
+    nv = RS(192, 32)
     phi = np.linspace(0.0, 2 * math.pi, nv + 1)
     P = np.zeros((len(st) + 1, nv + 1, 3))
     UV = np.zeros((len(st) + 1, nv + 1, 2))
@@ -340,8 +350,8 @@ def build_wing(M, root, col, side):
     brk = [G.FLAP_IN["y0"], G.FLAP_IN["y1"], G.FLAPERON["y0"], G.FLAPERON["y1"],
            G.FLAP_OUT["y0"], G.FLAP_OUT["y1"], G.AILERON["y0"], G.AILERON["y1"],
            G.SLAT["y0"], G.SLAT["y1"], G.Y_KINK, G.Y_RAKE] + list(G.SLAT_SPLITS)
-    base = np.unique(np.r_[np.linspace(1.2, G.Y_TIP, 110), np.linspace(G.Y_KINK - 1.6, G.Y_KINK + 1.6, 12),
-                           np.linspace(G.Y_RAKE, G.Y_TIP, 12), brk])
+    base = np.unique(np.r_[np.linspace(1.2, G.Y_TIP, RS(110)), np.linspace(G.Y_KINK - 1.6, G.Y_KINK + 1.6, RS(12)),
+                           np.linspace(G.Y_RAKE, G.Y_TIP, RS(12)), brk])
     sd = (0, side, 0)
     mb = C.MeshBuilder(TB)
     gap = 0.004
@@ -510,7 +520,7 @@ def build_engine(M, root, col, side):
     L = "L" if side > 0 else "R"
     cen = np.array([G.ENG_S_HL, side * G.ENG_Y, G.ENG_Z])
     mb = C.MeshBuilder(TB)
-    n = 128
+    n = RS(128, 24)
     th = np.linspace(0, 2 * math.pi, n + 1)
     # ---- inlet (inner) + lip + outer cowl -----------------------------------
     inner = [(a, r) for (a, r) in reversed(G.NAC_INNER)]
@@ -569,7 +579,7 @@ def build_engine(M, root, col, side):
     Nd[:] = (-1.0, 0, 0)
     mb.add_grid(Pd, UVd, N=Nd, mat=4)
     # OGVs (outlet guide vanes) - thin radial plates
-    for j in range(36):
+    for j in range(0 if LOD else 36):
         a = 2 * math.pi * j / 36
         r0, r1 = 0.62, 1.42
         pts = []
@@ -614,14 +624,14 @@ def build_engine(M, root, col, side):
     fb = C.MeshBuilder(TB)
     spin = np.array([(0.62, 0.0), (0.66, 0.12), (0.75, 0.22), (0.90, 0.33), (1.08, 0.42),
                      (1.30, 0.48), (1.70, 0.50)])
-    Ps, Ns, UVs = revolve_grid(spin, cen, 64)
+    Ps, Ns, UVs = revolve_grid(spin, cen, RS(64, 12))
     Ns[0] = (-1, 0, 0)
     if Ns[3, 0, 2] < 0:
         Ns = -Ns
         Ns[0] = (-1, 0, 0)
     fb.add_grid(Ps, UVs, N=Ns, mat=1)
     nb = 18
-    nr, nc = 12, 11
+    nr, nc = RS(12, 3), RS(11, 4)
     rr = np.linspace(0.46, 1.395, nr)
     for b in range(nb):
         th0 = 2 * math.pi * b / nb
@@ -667,7 +677,7 @@ def build_pylon(M, root, col, side, cen):
     c = te - le
     s0 = cen[0] + 1.45
     s1 = te + 0.9
-    ns = 60
+    ns = RS(60, 14)
     ss = np.linspace(s0, s1, ns)
     xs = np.clip((ss - le) / c, 0, 1)
     zlow = G.wing_point(np.full(ns, y), xs, np.zeros(ns, bool), 1)[:, 2]
@@ -679,7 +689,7 @@ def build_pylon(M, root, col, side, cen):
                        [nac_top - 0.05, nac_top - 0.05, cen[2] + 1.02, cen[2] + 0.92,
                         zlow[-1] - 0.25, zlow[-1] + 0.12])
     halfw = 0.27 * np.sin(np.clip((ss - s0) / (s1 - s0), 0, 1) ** 0.35 * math.pi) ** 0.55 + 0.01
-    na = 40
+    na = RS(40, 10)
     ang = np.linspace(0, 2 * math.pi, na + 1)
     P = np.zeros((ns, na + 1, 3))
     for i in range(ns):
@@ -718,7 +728,7 @@ def build_htail(M, root, col):
 
         def f(S, X, U, side=side):
             return G.ht_point(S, X, U, side)
-        base = np.unique(np.r_[np.linspace(0.4, G.HT_SEMI, 40), G.ELEV["y0"], G.ELEV["y1"]])
+        base = np.unique(np.r_[np.linspace(0.4, G.HT_SEMI, RS(40)), G.ELEV["y0"], G.ELEV["y1"]])
         mb = C.MeshBuilder(TB)
         sd = (0, side, 0)
         segs = [(0.4, G.ELEV["y0"], 0, 1.0), (G.ELEV["y0"], G.ELEV["y1"], 0, G.ELEV["x0"]),
@@ -747,7 +757,7 @@ def build_vtail(M, root, col):
     def f(S, X, U):
         side = np.where(U, 1.0, -1.0)
         return G.vt_point(S, X, side)
-    base = np.unique(np.r_[np.linspace(G.VT_Z0, G.VT_ZTIP, 44), np.linspace(G.VT_Z0, G.VT_Z0 + 1.8, 10),
+    base = np.unique(np.r_[np.linspace(G.VT_Z0, G.VT_ZTIP, RS(44)), np.linspace(G.VT_Z0, G.VT_Z0 + 1.8, RS(10)),
                            G.RUDDER["z0"], G.RUDDER["z1"]])
     mb = C.MeshBuilder(TB)
     segs = [(G.VT_Z0, G.RUDDER["z0"], 0, 1.0), (G.RUDDER["z0"], G.RUDDER["z1"], 0, G.RUDDER["x0"]),
@@ -795,6 +805,7 @@ def planar_uv(ob, s0, s1, z0, z1):
 # Landing gear
 # ---------------------------------------------------------------------------
 def cyl(mb, p0, p1, r, mat, n=20, caps=True, r1=None):
+    n = RS(n, 6)
     p0 = np.asarray(p0, dtype=np.float64)
     p1 = np.asarray(p1, dtype=np.float64)
     r1 = r if r1 is None else r1
@@ -816,6 +827,7 @@ def cyl(mb, p0, p1, r, mat, n=20, caps=True, r1=None):
 
 
 def wheel(mb, center, axis_y, D, W, mat_tire, mat_hub, n=48, outboard=1):
+    n = RS(n, 12)
     """Tyre + hub around lateral axis at design centre."""
     R = D / 2
     rim = R * 0.56
@@ -848,7 +860,7 @@ def wheel(mb, center, axis_y, D, W, mat_tire, mat_hub, n=48, outboard=1):
             Nh = -Nh
         mb.add_grid(Ph, N=Nh, mat=mat_hub)
         # bolt ring
-        for j in range(10):
+        for j in range(0 if LOD else 10):
             a = 2 * math.pi * j / 10
             c0 = np.array([cs + rim * 0.45 * math.cos(a), cy + sgn * W / 2 * 0.60, cz + rim * 0.45 * math.sin(a)])
             cyl(mb, c0, c0 + np.array([0, sgn * 0.04, 0]), 0.022, mat_hub, n=8)
@@ -1258,6 +1270,12 @@ def main():
     build_htail(M, root, col)
     build_vtail(M, root, col)
     build_gear(M, root, col)
+    if LOD:
+        # parked-aircraft level of detail: no cockpit / antennas / lights
+        C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9-lod.glb"), draco=True)
+        tris = sum(len(o.data.polygons) for o in bpy.data.objects if o.type == "MESH")
+        print("LOD polygons:", tris)
+        return
     build_details(M, root, col)
     build_cockpit(M, root, col)
 
@@ -1286,7 +1304,7 @@ def main():
     with open(os.path.join(C.WEB_ASSETS, "b787-9.json"), "w") as fh:
         json.dump(meta, fh, indent=1)
     C.save_blend(os.path.join(C.OUT_DIR, "b787-9.blend"))
-    C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9.glb"))
+    C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9.glb"), draco=True)
     tris = sum(len(o.data.polygons) for o in bpy.data.objects if o.type == "MESH")
     print("objects:", len(bpy.data.objects), "polygons:", tris)
 

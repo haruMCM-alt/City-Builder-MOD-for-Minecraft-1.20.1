@@ -482,5 +482,10 @@ def export_glb(path, selected_only=False, draco=False, instancing=False):
 
 
 def save_blend(path):
+    # embed the generated textures so the .blend opens complete on any machine
+    try:
+        bpy.ops.file.pack_all()
+    except RuntimeError as e:  # pragma: no cover
+        print("pack_all failed:", e)
     bpy.ops.wm.save_as_mainfile(filepath=path, compress=True)
     print("saved", path, os.path.getsize(path) // 1024, "KiB")
