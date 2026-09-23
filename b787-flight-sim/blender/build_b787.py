@@ -1320,12 +1320,25 @@ def main():
         noseTip=G.to_three([0, 0, -0.55]),
         parts=PARTS,
     )
-    with open(os.path.join(C.WEB_ASSETS, "b787-9.json"), "w") as fh:
-        json.dump(meta, fh, indent=1)
-    C.save_blend(os.path.join(C.OUT_DIR, "b787-9.blend"))
     C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9.glb"), draco=True)
     tris = sum(len(o.data.polygons) for o in bpy.data.objects if o.type == "MESH")
     print("objects:", len(bpy.data.objects), "polygons:", tris)
+
+    # --- passenger cabin: separate file, loaded when the camera goes inside -------
+    import cabin_b787
+    ccol = C.collection("B787-9_Cabin")
+    cabin_root, cabin = cabin_b787.build_cabin(ccol, tex)
+    meta["cabin"] = cabin
+    for ob in bpy.data.objects:
+        ob.select_set(False)
+    cabin_objs = [cabin_root] + list(cabin_root.children_recursive)
+    for ob in cabin_objs:
+        ob.select_set(True)
+    C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9-cabin.glb"), selected_only=True, draco=True)
+    print("cabin polygons:", sum(len(o.data.polygons) for o in cabin_objs if o.type == "MESH"))
+    with open(os.path.join(C.WEB_ASSETS, "b787-9.json"), "w") as fh:
+        json.dump(meta, fh, indent=1)
+    C.save_blend(os.path.join(C.OUT_DIR, "b787-9.blend"))
 
 
 if __name__ == "__main__":

@@ -11,7 +11,8 @@ import { Instruments } from './instruments.js';
 import { CameraRig, VIEW_NAMES } from './camera.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
-import { LOGOS, logoById, drawLogoIcon, randomLivery, dressParked, loadSavedLivery, saveLivery, DEFAULT_LIVERY } from './livery.js';
+import { LOGOS, logoById, drawLogoIcon, randomLivery, dressParked, loadSavedLivery, saveLivery, DEFAULT_LIVERY, liveryAssets } from './livery.js';
+import { Cabin } from './cabin.js';
 import { V3, DEG, KT, FT, FPM, clamp, headingVec, wrap360, mulberry32 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -139,8 +140,9 @@ class App {
     this.fm = new FlightModel(meta);
     this.sys = new Systems(this.fm, world);
     this.visual = new AircraftVisual(acGltf, meta, this.scene, this.quality);
+    this.cabin = new Cabin(this.visual, meta, () => loadGLB(loader, ASSET + 'b787-9-cabin' + MODEL_EXT, () => {}));
     this.livery = loadSavedLivery();
-    this.visual.setLivery(this.livery);
+    this.applyLivery();
     this.instruments = new Instruments($('pfd'), $('nd'), $('eicas'), $('hud'), world);
     this.visual.setDisplayTextures(this.instruments.textures);
     this.rig = new CameraRig(this.camera, canvas, meta, world);
@@ -201,7 +203,8 @@ class App {
     bind('windDir', 'windDirVal', (v) => `${String(v).padStart(3, '0')}°`);
     bind('turb', 'turbVal', (v) => (v === 0 ? 'なし' : v.toFixed(1)));
     bind('fuel', 'fuelVal', (v) => `${(v / 1000).toFixed(0)} t`);
-    bind('payload', 'payVal', (v) => `${(v / 1000).toFixed(0)} t`);
+    bind('payload', 'payVal', (v) => `${(v / 1000).toFixed(0)} t` +
+      (this.meta.cabin ? `（乗客 ${Math.min(this.meta.cabin.total, Math.floor(v / (this.meta.cabin.paxMass || 100)))} 名）` : ''));
     this.buildLiveryMenu();
     $('startBtn').onclick = () => this.startFromMenu();
     $('retryBtn').onclick = () => { $('crash').classList.add('hidden'); this.startScenario(this.scenario, true); };
@@ -273,13 +276,18 @@ class App {
     ['mcp', 'panel', 'status', 'corner', 'touch'].forEach((i) => $(i).classList.add('hidden'));
   }
 
+  applyLivery() {
+    this.visual.setLivery(this.livery);
+    if (this.meta.livery) this.cabin.setLivery(liveryAssets(this.livery, this.meta.livery, true));
+  }
+
   buildLiveryMenu() {
     const nameEl = $('airlineName'), box = $('logoPick'), prev = $('liveryPreview');
     if (!nameEl || !this.meta.livery) { if ($('liveryBox')) $('liveryBox').style.display = 'none'; return; }
     nameEl.value = this.livery.name;
     const apply = () => {
       saveLivery(this.livery);
-      this.visual.setLivery(this.livery);
+      this.applyLivery();
       box.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x.dataset.id === this.livery.logo));
       // flat preview: logo + title in the scheme colours
       const c = prev.getContext('2d'), W = prev.width, H = prev.height, lg = logoById(this.livery.logo);
@@ -345,6 +353,7 @@ class App {
     this.scenario = id;
     fm.fuel = +$('fuel').value;
     fm.payload = +$('payload').value;
+    this.cabin.setPassengers(fm.payload, 1 + Math.floor(Math.random() * 1e6));
     this.world.tod = +$('tod').value;
     const wname = $('weather').value;
     if (wname !== this.world.weatherName) this.world.setWeather(wname);
@@ -530,6 +539,7 @@ class App {
         break;
       case 'view': {
         const v = this.rig.next();
+        if ((v === 'cabin' || v === 'wing') && !this.cabin.group && this.cabin.available) this.toast('機内を読み込み中… Loading cabin');
         $('panel').classList.toggle('hidden', !this.panelOn || v === 'cockpit');
         this.toast('視点 ' + VIEW_NAMES[v]);
         break;
@@ -634,6 +644,7 @@ class App {
     for (const e of events) this.onEvent(e);
     const cockpit = this.rig.view === 'cockpit';
     this.visual.update(dt, fm, sys, { night: this.world.night, camera: this.camera, cockpitView: cockpit, events });
+    this.cabin.update(this.rig.view === 'cabin' || this.rig.view === 'wing', this.world.night);
     this.rig.update(dt, fm, this.visual.root);
     this.world.update(dt, this.camera, new THREE.Vector3(fm.pos.x, fm.pos.y, fm.pos.z));
     this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit });
