@@ -9,6 +9,11 @@ import { clamp, smoothstep, lerp, mulberry32, DEG } from './util.js';
 const LIGHT_KIND = { steady: 0, directional: 1, papi: 2, sequenced: 3, blink: 4, night: 5 };
 const NIGHT_ONLY = new Set(['street', 'landmark', 'bridge', 'apron_flood']);
 
+// Display-referred custom shaders (clouds, light points, smoke) output sRGB-ish colours.
+// When the HDR post chain is active they are converted to linear radiance instead.
+export const HDR = { uLin: { value: 0 }, uGain: { value: 1 }, uGainL: { value: 1 } };
+const HDR_GLSL = 'uniform float uLin, uGain, uGainL;';
+
 export const WEATHER = {
   clear: { cover: 0.08, base: 1800, top: 2300, vis: 60000, overcast: 0, wind: 1 },
   scattered: { cover: 0.35, base: 1300, top: 2400, vis: 40000, overcast: 0, wind: 1 },
@@ -110,6 +115,53 @@ function puffCanvas(size = 128) {
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
   return c;
+}
+
+// Runway surface detail in the shader (world frame: runway 09/27 along x, +/-1750 m, 60 m wide):
+// tyre rubber in the touchdown zones concentrated on the main-gear and nose-gear tracks,
+// worn centre lanes, fine aggregate grain and longitudinal paving joints.
+function patchPavement(m) {
+  const asphalt = m.name === 'W_Asphalt' || m.name === 'W_TaxiAsphalt';
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRwP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRwP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vRwP;
+float rwHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float rwNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(rwHash(i), rwHash(i + vec2(1, 0)), f.x), mix(rwHash(i + vec2(0, 1)), rwHash(i + vec2(1, 1)), f.x), f.y); }
+float rwRubber = 0.0;`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+{
+  vec3 wp = vRwP;
+  float ax = abs(wp.x), az = abs(wp.z);
+  float aa = clamp(1.0 - length(fwidth(wp.xz)) * 12.0, 0.0, 1.0);     // fade detail with distance
+  if (az < 30.5 && ax < 1760.0) {
+    float d = 1750.0 - ax;                                            // metres past the threshold
+    float tdz = smoothstep(90.0, 260.0, d) * (1.0 - smoothstep(650.0, 1250.0, d));
+    float tracks = exp(-pow((az - 4.9) / 1.7, 2.0)) + 0.55 * exp(-pow(az / 1.3, 2.0));
+    float spread = smoothstep(12.0, 3.0, az);
+    float streak = rwNoise(vec2(wp.x * 0.04, wp.z * 2.2)) * 0.55 + rwNoise(vec2(wp.x * 0.35, wp.z * 7.0)) * 0.45;
+    rwRubber = clamp(tdz * (0.6 * tracks + 0.4 * spread) * (0.35 + streak), 0.0, 1.0);
+    float wear = 0.10 * spread * (0.6 + 0.4 * rwNoise(vec2(wp.x * 0.02, wp.z * 0.7)));
+    diffuseColor.rgb *= 1.0 - 0.78 * rwRubber - wear;
+  }
+  ${asphalt ? `
+  float g = rwNoise(wp.xz * 17.0) * 0.55 + rwNoise(wp.xz * 53.0) * 0.45;
+  float blot = rwNoise(wp.xz * 0.11) * 0.6 + rwNoise(wp.xz * 0.5) * 0.4;
+  diffuseColor.rgb *= mix(1.0, 0.88 + 0.24 * g, aa) * (0.93 + 0.14 * blot);
+  if (az < 30.5 && ax < 1760.0) {
+    float jl = 1.0 - smoothstep(0.0, 0.035, abs(fract(wp.z / 7.5 + 0.5) - 0.5) * 7.5);
+    float jt = 1.0 - smoothstep(0.0, 0.03, abs(fract(wp.x / 15.0 + 0.5) - 0.5) * 15.0);
+    diffuseColor.rgb *= 1.0 - (0.22 * jl + 0.12 * jt) * aa;
+  }` : ''}
+}`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+roughnessFactor *= 1.0 - 0.3 * rwRubber;`);
+  };
+  m.customProgramCacheKey = () => 'rwy-' + (asphalt ? 'a' : 'm');
 }
 
 export function glowTexture() {
@@ -343,6 +395,7 @@ varying vec3 vTW; varying float vSlope;`)
         if (m.name === 'W_GlassTower' || m.name === 'W_Sign') this.emissiveMats.push(m);
         if (m.map) m.map.anisotropy = 8;
         if (m.name === 'W_Asphalt' || m.name === 'W_TaxiAsphalt') m.color.setScalar(0.62);
+        if (['W_Asphalt', 'W_TaxiAsphalt', 'W_MarkWhite', 'W_MarkYellow'].includes(m.name)) patchPavement(m);
         if (m.name === 'W_Shoulder') m.color.setScalar(0.75);
         if (m.name === 'W_Concrete') m.color.setScalar(0.85);
       }
@@ -444,6 +497,7 @@ varying vec3 vTW; varying float vSlope;`)
     this.lightUniforms = {
       uTime: { value: 0 }, uNight: { value: 0 }, uScreen: { value: 800 }, uPR: { value: 1 },
       uFogDensity: { value: 0 }, uMap: { value: glowTexture() },
+      uLin: HDR.uLin, uGain: HDR.uGain, uGainL: HDR.uGainL,
     };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.lightUniforms,
@@ -491,6 +545,7 @@ varying vec3 vTW; varying float vSlope;`)
       fragmentShader: /* glsl */`
         #include <common>
         #include <logdepthbuf_pars_fragment>
+        ${HDR_GLSL}
         uniform sampler2D uMap;
         varying vec3 vColor; varying float vAlpha;
         void main() {
@@ -500,6 +555,7 @@ varying vec3 vTW; varying float vSlope;`)
           float a = exp(-r2 * 5.0) + 0.9 * exp(-r2 * 40.0);
           if (vAlpha * a < 0.003) discard;
           gl_FragColor = vec4(vColor * a * vAlpha * 2.2, 1.0);
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, pow(max(gl_FragColor.rgb, 0.0), vec3(2.2)) * uGainL, uLin);
         }`,
     });
     mat.toneMapped = false;
@@ -545,6 +601,7 @@ varying vec3 vTW; varying float vSlope;`)
       uAmb: { value: new THREE.Color(0.6, 0.65, 0.75) }, uCam: { value: new THREE.Vector3() }, uTile: { value: TILE },
       uDrift: { value: new THREE.Vector2() }, uFogCol: { value: new THREE.Color() }, uFogDensity: { value: 0 },
       uBase: { value: 1000 }, uTop: { value: 2000 }, uDark: { value: 0 },
+      uLin: HDR.uLin, uGain: HDR.uGain, uGainL: HDR.uGainL,
     };
     this.cloudUniforms.uBase.value = W.base;
     this.cloudUniforms.uTop.value = W.top;
@@ -574,6 +631,7 @@ varying vec3 vTW; varying float vSlope;`)
       fragmentShader: /* glsl */`
         #include <common>
         #include <logdepthbuf_pars_fragment>
+        ${HDR_GLSL}
         uniform sampler2D uMap; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uAmb;
         uniform vec3 uFogCol; uniform float uFogDensity; uniform float uDark;
         varying vec2 vUv; varying float vH; varying float vDist; varying float vSeed; varying vec3 vWorld;
@@ -587,6 +645,7 @@ varying vec3 vTW; varying float vSlope;`)
           float fade = smoothstep(80.0, 400.0, vDist);
           float fog = exp(-uFogDensity * uFogDensity * vDist * vDist * 0.5);
           col = mix(uFogCol, col, fog);
+          col = mix(col, pow(max(col, 0.0), vec3(2.2)) * uGain, uLin);
           gl_FragColor = vec4(col, a * fade * 0.92);
         }`,
     });

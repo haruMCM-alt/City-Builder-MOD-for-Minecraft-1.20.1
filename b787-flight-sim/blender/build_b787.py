@@ -15,6 +15,7 @@ JSON (flaps/ailerons/elevator: trailing edge down, spoilers: up, rudder:
 trailing edge right, slats: extend, gear: retract, doors: open).
 """
 import json
+import time
 import math
 import os
 import sys
@@ -52,9 +53,9 @@ def make_materials():
         "B787_Fuselage", color=C.hex_color("#f3f5f7"), roughness=0.32,
         base_tex=tex("fuselage_base.jpg"), orm_tex=tex("fuselage_orm.jpg"),
         normal_tex=tex("fuselage_normal.png"), emissive_tex=tex("fuselage_emissive.jpg"),
-        emission_strength=1.0, normal_strength=1.0)
+        emission_strength=1.0, normal_strength=1.0, clearcoat=0.6)
     M["tail"] = C.pbr_material("B787_Tail", color=C.hex_color("#0b2a5c"), roughness=0.3,
-                               base_tex=tex("tail_base.jpg"))
+                               base_tex=tex("tail_base.jpg"), clearcoat=0.6)
     M["wing"] = C.pbr_material("B787_WingPaint", color=C.hex_color("#c9ced4"), roughness=0.42,
                                metallic=0.05, base_tex=tex("wing_base.jpg"),
                                normal_tex=tex("wing_normal.png"), normal_strength=0.8)
@@ -62,10 +63,10 @@ def make_materials():
                                     metallic=0.1)
     M["le"] = C.pbr_material("B787_LeadingEdge", color=C.hex_color("#d4d8dc"), roughness=0.25,
                              metallic=0.55)
-    M["belly"] = C.pbr_material("B787_Navy", color=C.hex_color("#0b2a5c"), roughness=0.3)
+    M["belly"] = C.pbr_material("B787_Navy", color=C.hex_color("#0b2a5c"), roughness=0.3, clearcoat=0.5)
     M["nacelle"] = C.pbr_material("B787_Nacelle", color=C.hex_color("#0b2a5c"), roughness=0.28,
-                                  base_tex=tex("nacelle_base.jpg"))
-    M["lip"] = C.pbr_material("B787_InletLip", color=C.hex_color("#dfe3e6"), roughness=0.18,
+                                  base_tex=tex("nacelle_base.jpg"), clearcoat=0.6)
+    M["lip"] = C.pbr_material("B787_InletLip", color=C.hex_color("#cfd4d8"), roughness=0.32,
                               metallic=1.0)
     M["inlet"] = C.pbr_material("B787_InletLiner", color=C.hex_color("#6b7075"), roughness=0.6,
                                 metallic=0.2)
@@ -1272,6 +1273,53 @@ def build_cockpit(M, root, col):
 
 
 # ---------------------------------------------------------------------------
+# Ambient-occlusion bake (Cycles): fuselage and wings, used as aoMap in the sim
+# ---------------------------------------------------------------------------
+AO_TARGETS = {"Fuselage": ("ao_fuselage.png", 2048, 512, "B787_Fuselage"),
+              "Wing_L": ("ao_wing.png", 1024, 1024, "B787_WingPaint")}
+
+
+def bake_ao():
+    sc = bpy.context.scene
+    sc.render.engine = "CYCLES"
+    sc.cycles.device = "CPU"
+    sc.cycles.samples = 96
+    if sc.world is None:
+        sc.world = bpy.data.worlds.new("World")
+    sc.world.light_settings.distance = 4.0
+    for name, (fn, W, H, matname) in AO_TARGETS.items():
+        ob = bpy.data.objects.get(name)
+        if ob is None:
+            continue
+        img = bpy.data.images.new("AO_" + name, W, H, alpha=False, float_buffer=False)
+        dummy = bpy.data.images.new("AO_dummy_" + name, 64, 64)
+        added = []
+        for slot in ob.material_slots:
+            m = slot.material
+            node = m.node_tree.nodes.new("ShaderNodeTexImage")
+            node.image = img if m.name == matname else dummy
+            m.node_tree.nodes.active = node
+            added.append((m, node))
+        for o in bpy.context.view_layer.objects:
+            o.select_set(False)
+        ob.select_set(True)
+        bpy.context.view_layer.objects.active = ob
+        t0 = time.time()
+        bpy.ops.object.bake(type="AO", margin=6, use_clear=True)
+        print("baked AO", name, "%.0fs" % (time.time() - t0))
+        px = np.array(img.pixels[:], dtype=np.float32).reshape(H, W, 4)[::-1, :, 0]
+        # keep the darkest crevices readable, lift the open areas to 1
+        px = np.clip((px - 0.08) / 0.84, 0, 1) ** 0.8
+        px = 0.3 + 0.7 * px          # covered coves (under flaps / slats) stay dark grey, not black
+        from PIL import Image as _I
+        _I.fromarray((px * 255 + 0.5).astype(np.uint8), "L").save(os.path.join(C.WEB_ASSETS, fn), optimize=True)
+        for m, node in added:
+            m.node_tree.nodes.remove(node)
+        bpy.data.images.remove(img)
+        bpy.data.images.remove(dummy)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -1297,6 +1345,8 @@ def main():
         return
     build_details(M, root, col)
     build_cockpit(M, root, col)
+    if "--bake" in sys.argv:
+        bake_ao()
 
     # --- metadata for the simulator ------------------------------------------
     area, mac, y_mac, le_mac = G.wing_area_mac()

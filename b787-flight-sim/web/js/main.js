@@ -5,7 +5,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { FlightModel, FLAPS } from './flightmodel.js';
 import { Systems, AUTOBRAKE } from './systems.js';
 import { configureTerrain, terrainHeight } from './terrain.js';
-import { World } from './world.js';
+import { World, HDR } from './world.js';
 import { AircraftVisual } from './aircraft.js';
 import { Instruments } from './instruments.js';
 import { CameraRig, VIEW_NAMES } from './camera.js';
@@ -13,6 +13,7 @@ import { Input } from './input.js';
 import { Audio } from './audio.js';
 import { LOGOS, logoById, drawLogoIcon, randomLivery, dressParked, loadSavedLivery, saveLivery, DEFAULT_LIVERY, liveryAssets } from './livery.js';
 import { Cabin } from './cabin.js';
+import { PostFX } from './postfx.js';
 import { V3, DEG, KT, FT, FPM, clamp, headingVec, wrap360, mulberry32 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -141,6 +142,14 @@ class App {
     this.sys = new Systems(this.fm, world);
     this.visual = new AircraftVisual(acGltf, meta, this.scene, this.quality);
     this.cabin = new Cabin(this.visual, meta, () => loadGLB(loader, ASSET + 'b787-9-cabin' + MODEL_EXT, () => {}));
+    this.post = new PostFX(renderer, this.scene, this.camera);
+    this.resize();
+    // baked ambient occlusion (Blender / Cycles) for the fuselage and wings
+    {
+      const tl = new THREE.TextureLoader();
+      const ld = (f) => new Promise((res) => tl.load(ASSET + f, (t) => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; res(t); }, undefined, () => res(null)));
+      Promise.all([ld('ao_fuselage.png'), ld('ao_wing.png')]).then(([f, w]) => this.visual.setAO(f, w));
+    }
     this.livery = loadSavedLivery();
     this.applyLivery();
     this.instruments = new Instruments($('pfd'), $('nd'), $('eicas'), $('hud'), world);
@@ -176,6 +185,7 @@ class App {
     const pr = Math.min(window.devicePixelRatio, 2);
     hud.width = w * pr; hud.height = h * pr;
     this.hudScale = pr;
+    if (this.post) this.post.setSize(w, h);
   }
 
   // ------------------------------------------------------------------- menu
@@ -664,13 +674,39 @@ class App {
     L.engines[0].fromArray(this.meta.engineAxisL).applyMatrix4(mw);
     L.engines[1].fromArray(this.meta.engineAxisR).applyMatrix4(mw);
     this.audio.update(dt, fm, sys, L);
-    this.renderer.render(this.scene, this.camera);
+    const hdr = !!this.post && this.quality !== 'low';
+    HDR.uLin.value = hdr ? 1 : 0;
+    // clouds / smoke: lit like white surfaces; point lights: bright enough to bloom at night
+    HDR.uGain.value = this.world.sun.intensity * 0.85 + 0.45;
+    HDR.uGainL.value = 1.1 / Math.max(this.renderer.toneMappingExposure, 0.3);
+    if (hdr) {
+      this.post.update(dt, { night: this.world.night, plumes: this.plumes() });
+      this.post.render();
+    } else this.renderer.render(this.scene, this.camera);
     if (!this.paused) this.updateUI();
+  }
+
+  // exhaust plumes for the heat-haze pass (world space)
+  plumes() {
+    const out = [];
+    const mw = this.visual.root.matrixWorld;
+    this._pl = this._pl || [0, 1].map(() => ({ start: new THREE.Vector3(), end: new THREE.Vector3(), r0: 0.9, r1: 5, strength: 0 }));
+    [this.meta.engineAxisL, this.meta.engineAxisR].forEach((ax, i) => {
+      const e = this.fm.engines[i], p = this._pl[i];
+      p.start.set(ax[0] - 2.0, ax[1], ax[2]).applyMatrix4(mw);
+      p.end.set(ax[0] - 38, ax[1] - 0.8, ax[2]).applyMatrix4(mw);
+      const n = Math.max(0, Math.min(1, (e.n1 - 15) / 85));
+      p.strength = e.running ? 0.35 + 0.65 * n : 0;
+      p.r1 = 4 + 3 * n;
+      out.push(p);
+    });
+    return out;
   }
 
   onEvent(e) {
     if (e.type === 'touchdown') {
       const fpm = e.vs / FPM;
+      this.rig.impulse(Math.min(1, Math.abs(fpm) / 600));
       const r = this.nearestRunway();
       const d = headingVec(r.heading);
       const dx = this.fm.pos.x - r.threshold[0], dz = this.fm.pos.z - r.threshold[2];

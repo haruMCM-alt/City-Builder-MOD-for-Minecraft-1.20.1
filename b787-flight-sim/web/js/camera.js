@@ -148,6 +148,7 @@ export class CameraRig {
         break;
       }
     }
+    this._shake(dt, fm);
     // keep external cameras above the terrain
     if (this.view !== 'cockpit' && this.view !== 'wing' && this.view !== 'cabin') {
       const g = Math.max(terrainHeight(cam.position.x, cam.position.z), -0.3);
@@ -160,6 +161,32 @@ export class CameraRig {
     }
     this._init = true;
     if (cam.near !== this._near) { this._near = cam.near; cam.updateProjectionMatrix(); }
+  }
+
+  // touchdown / bump: a decaying jolt
+  impulse(k) { this._jolt = Math.max(this._jolt || 0, k); }
+
+  // camera vibration: runway roughness on the ground roll, buffet and light turbulence in the air
+  _shake(dt, fm) {
+    const inside = this.view === 'cockpit' || this.view === 'cabin' || this.view === 'wing';
+    const chase = this.view === 'chase';
+    if (!inside && !chase) return;
+    this._t = (this._t || 0) + dt;
+    this._jolt = (this._jolt || 0) * Math.exp(-dt * 5);
+    const wow = fm.gear.some((g) => g.onGround);
+    const gs = fm.out.gs || 0, ias = fm.out.ias || 0;
+    const ctl = fm.ctl;
+    let a = 0;
+    if (wow) a += Math.min(gs / 140, 1) * 0.0035 + (gs > 2 ? 0.0004 : 0);
+    else a += 0.0005 + 0.0025 * ((1 - ctl.gearPos) * 0.5 + ctl.speedbrake * 0.8) * Math.min(ias / 250, 1.2);
+    a += this._jolt * 0.02;
+    if (chase) a *= 0.35;
+    if (a < 1e-5) return;
+    const t = this._t;
+    const n = (f, ph) => Math.sin(t * f + ph) * 0.6 + Math.sin(t * f * 2.13 + ph * 1.7) * 0.3 + Math.sin(t * f * 4.7 + ph * 0.3) * 0.1;
+    const e = new THREE.Euler(n(29, 1.1) * a, n(23, 2.7) * a * 0.5, n(31, 0.4) * a * 0.4, 'YXZ');
+    this.camera.quaternion.multiply(new THREE.Quaternion().setFromEuler(e));
+    if (inside) this.camera.position.y += n(37, 3.3) * a * 0.6;
   }
 
   _spot(fm, ahead) {

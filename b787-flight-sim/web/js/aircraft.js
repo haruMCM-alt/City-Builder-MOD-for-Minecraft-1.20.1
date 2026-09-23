@@ -1,7 +1,7 @@
 // Visual 787-9: animates the Blender-built model from the flight model state.
 import * as THREE from 'three';
 import { DEG, clamp, lerp, smoothstep } from './util.js';
-import { glowTexture } from './world.js';
+import { glowTexture, HDR } from './world.js';
 import { liveryUniforms, patchLiveryShader, liveryAssets, setLiveryUniforms } from './livery.js';
 
 const COCKPIT_PARTS = ['CockpitShell', 'CockpitInterior', 'HUD_Combiner', 'Throttle_L', 'Throttle_R', 'Yoke_L', 'Yoke_R',
@@ -46,6 +46,24 @@ export class AircraftVisual {
     const wr = (g) => (meta.parts.find((p) => p.kind === 'wheel' && p.gear === g) || { radius: 0.6 }).radius;
     this.wheelR = [wr(0), wr(1)];
     this.cockpit = COCKPIT_PARTS.map((n) => this.root.getObjectByName(n)).filter(Boolean);
+    // wings get their own copy of the wing paint so the baked AO (wing UVs) is not
+    // applied to the tailplane, pylons and fairings that share the material
+    this.wingAOMats = [];
+    for (const n of ['Wing_L', 'Wing_R']) {
+      const w = this.root.getObjectByName(n);
+      if (!w) continue;
+      w.traverse((o) => {
+        if (!o.isMesh) return;
+        const arr = Array.isArray(o.material) ? o.material : [o.material];
+        const out = arr.map((m) => {
+          if (m.name !== 'B787_WingPaint') return m;
+          if (!this._wingClone) { this._wingClone = m.clone(); this.wingAOMats.push(this._wingClone); }
+          return this._wingClone;
+        });
+        o.material = Array.isArray(o.material) ? out : out[0];
+      });
+    }
+    this.fuselageMats = [];
     this.displayMats = {};
     this.lightMats = {};
     const self = this;
@@ -65,14 +83,15 @@ export class AircraftVisual {
           continue;
         }
         if (m.name.startsWith('Cockpit_')) { m.envMapIntensity = 0.25; }
-        if (m.name === 'HUD_Glass') { m.opacity = 0.05; m.depthWrite = false; }
+        if (m.name === 'HUD_Glass') { m.opacity = 0.02; m.depthWrite = false; m.envMapIntensity = 0.05; }
+        if (m.name === 'Cockpit_Panel') { m.color.set(0x16181b); m.envMapIntensity = 0.08; m.roughness = 0.95; }   // anti-glare
         if (m.name.startsWith('Display_')) { this.displayMats[m.name.slice(8)] = m; continue; }
         if (m.name.startsWith('Cockpit_') || m.name === 'HUD_Glass') continue;
         if (['B787_Strobe', 'B787_Beacon', 'B787_LandingLight', 'B787_LightRed', 'B787_LightGreen', 'B787_LightWhite'].includes(m.name)) {
           this.lightMats[m.name] = m;
           m.emissive = new THREE.Color(m.color);
         }
-        if (m.name === 'B787_Fuselage') { this.fuselageMat = m; m.emissive = new THREE.Color(1, 1, 1); }
+        if (m.name === 'B787_Fuselage') { this.fuselageMat = m; this.fuselageMats.push(m); m.emissive = new THREE.Color(1, 1, 1); }
         // wing flex: bend everything outboard of the fuselage side
         m.onBeforeCompile = (sh) => {
           Object.assign(sh.uniforms, self.flexUniforms);
@@ -119,7 +138,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
     // landing / taxi spotlights
     this.spots = [];
     const mk = (pos, target, angle, intensity) => {
-      const s = new THREE.SpotLight(0xfff1dc, 0, 2200, angle, 0.45, 1.2);
+      const s = new THREE.SpotLight(0xfff1dc, 0, 2200, angle, 0.45, 2.0);   // physical fall-off
       s.position.set(...pos);
       s.target.position.set(...target);
       this.root.add(s, s.target);
@@ -128,14 +147,21 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
       return s;
     };
     const eyeX = meta.eye[0];
-    mk([8, -2.2, -3.5], [300, -30, -8], 0.16, 9e5);
-    mk([8, -2.2, 3.5], [300, -30, 8], 0.16, 9e5);
-    this.taxiSpot = mk([eyeX - 3.5, -3.2, 0], [80, -9, 0], 0.5, 2e5);
+    // scene units: sun ~3.4 = ~100 klx, so a 600 W landing light is a few thousand units
+    mk([8, -2.2, -3.5], [300, -30, -8], 0.16, 2500);
+    mk([8, -2.2, 3.5], [300, -30, 8], 0.16, 2500);
+    this.taxiSpot = mk([eyeX - 3.5, -3.2, 0], [80, -9, 0], 0.5, 180);
     scene.add(this.root);
     // particles (tyre smoke, contrails)
     this._initParticles();
     this.lightsOn = { nav: true, beacon: true, strobe: false, landing: false, taxi: false, logo: true };
     this.cockpitVisible = true;
+  }
+
+  setAO(fus, wing) {
+    const apply = (m, t) => { if (!t) return; m.aoMap = t; m.aoMapIntensity = 1.0; m.needsUpdate = true; };
+    for (const m of this.fuselageMats) apply(m, fus);
+    for (const m of this.wingAOMats) apply(m, wing);
   }
 
   // airline name + logo (see livery.js)
@@ -175,7 +201,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
     this.pMeta = Array.from({ length: N }, () => ({ life: 0, max: 1, vx: 0, vy: 0, vz: 0, grow: 1 }));
     this.pNext = 0;
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uMap: { value: tex }, uScreen: { value: 800 }, uCol: { value: new THREE.Color(0.9, 0.9, 0.92) } },
+      uniforms: { uMap: { value: tex }, uScreen: { value: 800 }, uCol: { value: new THREE.Color(0.9, 0.9, 0.92) }, uLin: HDR.uLin, uGain: HDR.uGain },
       transparent: true, depthWrite: false,
       vertexShader: /* glsl */`
         #include <common>
@@ -188,10 +214,10 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
       fragmentShader: /* glsl */`
         #include <common>
         #include <logdepthbuf_pars_fragment>
-        uniform sampler2D uMap; uniform vec3 uCol; varying float vA;
+        uniform sampler2D uMap; uniform vec3 uCol; varying float vA; uniform float uLin, uGain;
         void main(){
           #include <logdepthbuf_fragment>
-          float a = texture2D(uMap, gl_PointCoord).a * vA; if (a < 0.004) discard; gl_FragColor = vec4(uCol, a); }`,
+          float a = texture2D(uMap, gl_PointCoord).a * vA; if (a < 0.004) discard; gl_FragColor = vec4(mix(uCol, pow(uCol, vec3(2.2)) * uGain, uLin), a); }`,
     });
     this.particles = new THREE.Points(geo, mat);
     this.particles.frustumCulled = false;
@@ -366,7 +392,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
       s.intensity = on ? s.userData.max * (0.25 + 0.75 * night) : 0;
       s.visible = on && night > 0.05;
     }
-    if (this.fuselageMat) this.fuselageMat.emissiveIntensity = night * 1.3;
+    for (const fm_ of this.fuselageMats) fm_.emissiveIntensity = night * 1.3;
     // ---- cockpit interior only when close ------------------------------------------
     const dCam = camPos.distanceTo(this.root.position);
     const wantCockpit = env.cockpitView || dCam < 45;
