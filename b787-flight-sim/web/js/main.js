@@ -16,6 +16,8 @@ import { V3, DEG, KT, FT, FPM, clamp, headingVec, wrap360, mulberry32 } from './
 const $ = (id) => document.getElementById(id);
 const DT = 1 / 240;
 const ASSET = './assets/';
+// model files: .glb by default; a host that cannot serve .glb can set window.B787_MODEL_EXT = '.gltf.json'
+const MODEL_EXT = window.B787_MODEL_EXT || '.glb';
 
 // --------------------------------------------------------------------- loading
 function setLoad(p, msg) {
@@ -82,9 +84,9 @@ class App {
     const upd = () => setLoad(0.05 + 0.85 * (prog.ac * 0.35 + prog.world * 0.5 + prog.lod * 0.15),
       `787-9 ${Math.round(prog.ac * 100)}% · airport/city ${Math.round(prog.world * 100)}%`);
     const [acGltf, worldGltf, lodGltf] = await Promise.all([
-      loadGLB(loader, ASSET + 'b787-9.glb', (p) => { prog.ac = p; upd(); }),
-      loadGLB(loader, ASSET + 'world.glb', (p) => { prog.world = p; upd(); }),
-      loadGLB(loader, ASSET + 'b787-9-lod.glb', (p) => { prog.lod = p; upd(); }).catch(() => null),
+      loadGLB(loader, ASSET + 'b787-9' + MODEL_EXT, (p) => { prog.ac = p; upd(); }),
+      loadGLB(loader, ASSET + 'world' + MODEL_EXT, (p) => { prog.world = p; upd(); }),
+      loadGLB(loader, ASSET + 'b787-9-lod' + MODEL_EXT, (p) => { prog.lod = p; upd(); }).catch(() => null),
     ]);
     setLoad(0.92, 'building scene…');
     this.world.attachWorldGLB(worldGltf);
