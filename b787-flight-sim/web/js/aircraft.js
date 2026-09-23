@@ -42,6 +42,9 @@ export class AircraftVisual {
       if (!o) continue;
       this.parts[p.name] = { obj: o, rest: o.quaternion.clone(), pos: o.position.clone(), info: p };
     }
+    this.wheelParts = meta.parts.filter((p) => p.kind === 'wheel').map((p) => [p.name, p.gear]);
+    const wr = (g) => (meta.parts.find((p) => p.kind === 'wheel' && p.gear === g) || { radius: 0.6 }).radius;
+    this.wheelR = [wr(0), wr(1)];
     this.cockpit = COCKPIT_PARTS.map((n) => this.root.getObjectByName(n)).filter(Boolean);
     this.displayMats = {};
     this.lightMats = {};
@@ -284,6 +287,10 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
     this.setPart('MainDoor_L', doorT * 85 * DEG); this.setPart('MainDoor_R', doorT * 85 * DEG);
     const gearVis = gp < 0.97;
     const strut = [['NoseGear', fm.gear[0]], ['MainGear_L', fm.gear[1]], ['MainGear_R', fm.gear[2]]];
+    // main gear: in the last part of the swing the leg also moves up / inboard so the
+    // bogie (axles vertical, tyres flat) tucks into the belly wheel well instead of
+    // poking out beside the fuselage
+    const stow = smoothstep(0.55, 1.0, legT);
     for (const [n, g] of strut) {
       const p = this.parts[n];
       if (!p) continue;
@@ -291,7 +298,27 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
       const ext = gp < 0.05 ? (g.compression - fm.gearExt) : 0;
       p.obj.position.copy(p.pos);
       p.obj.position.y += ext;
+      if (n !== 'NoseGear') {
+        p.obj.position.y += 0.55 * stow;
+        p.obj.position.z -= Math.sign(p.pos.z) * 1.0 * stow;
+      }
     }
+    // ---- wheels roll with the ground speed, spin down after lift-off ----------------
+    const fwd = this._fwd || (this._fwd = new THREE.Vector3());
+    fwd.set(1, 0, 0).applyQuaternion(this.root.quaternion);
+    const vFwd = fm.vel.x * fwd.x + fm.vel.y * fwd.y + fm.vel.z * fwd.z;
+    this.wheelW = this.wheelW || [0, 0, 0];
+    this.wheelA = this.wheelA || [0, 0, 0];
+    for (let i = 0; i < 3; i++) {
+      const g = fm.gear[i];
+      const R = i === 0 ? this.wheelR[0] : this.wheelR[1];
+      if (g.onGround) this.wheelW[i] = vFwd / R;
+      else this.wheelW[i] *= Math.exp(-dt * (gp > 0.02 ? 2.5 : 0.25));   // brakes on retraction
+      // cap the visual rate so fast rotation does not alias into a backwards spin
+      const w = clamp(this.wheelW[i], -2 * Math.PI * 9, 2 * Math.PI * 9);
+      this.wheelA[i] = (this.wheelA[i] + w * dt) % (Math.PI * 2);
+    }
+    for (const [name, i] of this.wheelParts) this.setPart(name, this.wheelA[i]);
     // ---- engines -------------------------------------------------------------------
     this.fanAngle = (this.fanAngle || [0, 0]);
     for (let i = 0; i < 2; i++) {

@@ -897,12 +897,17 @@ def build_gear(M, root, col):
     mb.add_box((sN - 0.17, 0, -3.10), (0.10, 0.34, 0.14), mat=0)
     for dy in (-0.1, 0.1):
         cyl(mb, (sN - 0.20, dy, -3.10), (sN - 0.235, dy, -3.10), 0.055, 3, n=16)
-    for dy in (-1, 1):
-        wheel(mb, (sN, dy * G.NOSE_WHEEL_DY, axle_z), 0, G.NOSE_TIRE_D, G.NOSE_TIRE_W, 2, 4, n=40)
     test = np.array([[sN, 0, axle_z]])
-    add_part("NoseGear", "gear", mb, [M["gear"], M["chrome"], M["tire"], M["landing"], M["hub"]],
-             hinge, hinge + np.array([0, 1.0, 0]), test, MOVE_FWD, 98, root, col,
-             extra=dict(contact=G.to_three([sN, 0, g]), radius=rN))
+    nose = add_part("NoseGear", "gear", mb, [M["gear"], M["chrome"], M["tire"], M["landing"], M["hub"]],
+                    hinge, hinge + np.array([0, 1.0, 0]), test, MOVE_FWD, 98, root, col,
+                    extra=dict(contact=G.to_three([sN, 0, g]), radius=rN))
+    # wheels are separate children so they can roll (+angle = rolling forwards)
+    mbw = C.MeshBuilder(TB)
+    for dy in (-1, 1):
+        wheel(mbw, (sN, dy * G.NOSE_WHEEL_DY, axle_z), 0, G.NOSE_TIRE_D, G.NOSE_TIRE_W, 0, 1, n=40)
+    ax = np.array([sN, 0, axle_z])
+    add_part("NoseWheels", "wheel", mbw, [M["tire"], M["hub"]], ax, ax + np.array([0, 1.0, 0]),
+             np.array([[sN, 0, axle_z + rN]]), MOVE_FWD, 360, nose, col, extra=dict(radius=rN, gear=0))
 
     # nose gear doors
     for side in (1, -1):
@@ -950,7 +955,6 @@ def build_gear(M, root, col):
             cyl(mb, (sM + ds, yM - G.MAIN_WHEEL_DY - 0.1, axle_z), (sM + ds, yM + G.MAIN_WHEEL_DY + 0.1, axle_z),
                 0.09, 0)
             for dy in (-1, 1):
-                wheel(mb, (sM + ds, yM + dy * G.MAIN_WHEEL_DY, axle_z), 0, G.MAIN_TIRE_D, G.MAIN_TIRE_W, 2, 3, n=48)
                 # brake housing
                 cyl(mb, (sM + ds, yM + dy * (G.MAIN_WHEEL_DY - 0.22), axle_z),
                     (sM + ds, yM + dy * (G.MAIN_WHEEL_DY - 0.30), axle_z), 0.36, 0, n=24)
@@ -976,12 +980,20 @@ def build_gear(M, root, col):
         mb.add_poly(di, mat=6, outward=("dir", (0, -side, 0)))
         test = np.array([[sM, yM, axle_z]])
         inboard = (lambda a, b, side=side: np.abs(b[:, 1]).mean() < np.abs(a[:, 1]).mean())
-        add_part("MainGear_" + L, "gear", mb, [M["gear"], M["chrome"], M["tire"], M["hub"], M["hub"],
+        leg = add_part("MainGear_" + L, "gear", mb, [M["gear"], M["chrome"], M["tire"], M["hub"], M["hub"],
                                                M["fuselage"], M["bay"]],
                  top, top + np.array([1.0, 0, 0]), test, inboard, 88, root, col,
                  extra=dict(contact=G.to_three([sM, yM, g]), radius=rM,
                             wheels=[G.to_three([sM + ds, yM + dy * G.MAIN_WHEEL_DY, g])
                                     for ds in (-G.MAIN_AXLE_DS, G.MAIN_AXLE_DS) for dy in (-1, 1)]))
+        for k, ds in enumerate((-G.MAIN_AXLE_DS, G.MAIN_AXLE_DS)):
+            mbw = C.MeshBuilder(TB)
+            for dy in (-1, 1):
+                wheel(mbw, (sM + ds, yM + dy * G.MAIN_WHEEL_DY, axle_z), 0, G.MAIN_TIRE_D, G.MAIN_TIRE_W, 0, 1, n=48)
+            ax = np.array([sM + ds, yM, axle_z])
+            add_part("MainWheels_%s%d" % (L, k), "wheel", mbw, [M["tire"], M["hub"]], ax, ax + np.array([0, 1.0, 0]),
+                     np.array([[sM + ds, yM, axle_z + rM]]), MOVE_FWD, 360, leg, col,
+                     extra=dict(radius=rM, gear=1 if side > 0 else 2))
         # belly wheel-well door (hinged near the keel, opens downward)
         mbd = C.MeshBuilder(TB)
         ss = np.linspace(sM - 1.55, sM + 1.75, 16)

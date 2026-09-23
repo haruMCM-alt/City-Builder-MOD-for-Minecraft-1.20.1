@@ -281,6 +281,13 @@
    "radius": 0.51
   },
   {
+   "name": "NoseWheels",
+   "kind": "wheel",
+   "max": 360,
+   "radius": 0.51,
+   "gear": 0
+  },
+  {
    "name": "NoseDoor_L",
    "kind": "door",
    "max": 88
@@ -324,6 +331,20 @@
    ]
   },
   {
+   "name": "MainWheels_L0",
+   "kind": "wheel",
+   "max": 360,
+   "radius": 0.685,
+   "gear": 1
+  },
+  {
+   "name": "MainWheels_L1",
+   "kind": "wheel",
+   "max": 360,
+   "radius": 0.685,
+   "gear": 1
+  },
+  {
    "name": "MainDoor_L",
    "kind": "door",
    "max": 85
@@ -360,6 +381,20 @@
      4.16
     ]
    ]
+  },
+  {
+   "name": "MainWheels_R0",
+   "kind": "wheel",
+   "max": 360,
+   "radius": 0.685,
+   "gear": 2
+  },
+  {
+   "name": "MainWheels_R1",
+   "kind": "wheel",
+   "max": 360,
+   "radius": 0.685,
+   "gear": 2
   },
   {
    "name": "MainDoor_R",
