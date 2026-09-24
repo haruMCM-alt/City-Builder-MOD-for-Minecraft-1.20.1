@@ -3,10 +3,10 @@ import * as THREE from 'three';
 import { DEG, clamp, lerp } from './util.js';
 import { terrainHeight } from './terrain.js';
 
-export const VIEWS = ['cockpit', 'chase', 'orbit', 'wing', 'cabin', 'tower', 'flyby'];
+export const VIEWS = ['cockpit', 'chase', 'orbit', 'wing', 'cabin', 'tower', 'flyby', 'traffic'];
 export const VIEW_NAMES = {
   cockpit: 'コックピット Cockpit', chase: '追尾 Chase', orbit: '外部 Orbit', wing: '客室窓 Cabin window', cabin: '機内 Cabin',
-  tower: '管制塔 Tower', flyby: 'フライバイ Fly-by',
+  tower: '管制塔 Tower', flyby: 'フライバイ Fly-by', traffic: 'AI交通 Traffic (B: 切替)',
 };
 
 export class CameraRig {
@@ -58,6 +58,7 @@ export class CameraRig {
     this.view = v;
     this.yaw = 0; this.pitch = v === 'cockpit' ? -0.10 : 0;
     this.fov = v === 'cockpit' ? 62 : v === 'wing' ? 60 : v === 'cabin' ? 70 : v === 'tower' ? 30 : 55;
+    if (v === 'traffic') { this.dist = 110; this.orbitPitch = 0.25; }
     this.flybyPos = null;
     this._init = false;
   }
@@ -139,6 +140,19 @@ export class CameraRig {
         cam.lookAt(pos);
         const d = cam.position.distanceTo(pos);
         this.fovAuto = clamp(2 * Math.atan(90 / d) / DEG, 2.5, 60);
+        break;
+      }
+      case 'traffic': {
+        // orbit an AI aircraft / ground vehicle chosen by the app (B cycles targets)
+        const tp = this.trafficTarget || pos;
+        const off = new THREE.Vector3(
+          Math.cos(this.orbitYaw) * Math.cos(this.orbitPitch), Math.sin(this.orbitPitch), Math.sin(this.orbitYaw) * Math.cos(this.orbitPitch))
+          .multiplyScalar(this.dist);
+        const want = tp.clone().add(off);
+        if (!this._init || !this._tpPrev || this._tpPrev.distanceTo(tp) > 300) cam.position.copy(want);
+        else cam.position.lerp(want, Math.min(1, dt * 4));
+        this._tpPrev = (this._tpPrev || new THREE.Vector3()).copy(tp);
+        cam.lookAt(tp);
         break;
       }
       case 'flyby': {

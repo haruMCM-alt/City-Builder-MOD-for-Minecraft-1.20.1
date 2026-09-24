@@ -656,10 +656,16 @@ def cockpit_shell_texture():
     glass, frame, d = cockpit_window_masks(fm.S, fm.Y, fm.Z, 0.01)
     # interior: lining grey, darker frame around windows
     col = np.empty((H, W, 3), np.float32)
-    col[:] = srgb("#4a5058")
+    col[:] = srgb("#b3b7ba")                       # light grey flight-deck lining
     zrel = np.clip((fm.Z + 0.2) / 2.0, 0, 1)[..., None]
-    col = col * (0.75 + 0.25 * zrel)
-    blend(col, srgb("#23272c"), aa(np.abs(d) - 0.05, 0.02))
+    col = col * (0.82 + 0.18 * zrel)
+    low = (fm.Z < -0.35)[..., None]                # darker kick panels low down
+    col = np.where(low, col * 0.55, col)
+    # lining panel seams every ~0.55 m along the fuselage and a horizontal seam
+    seam = np.clip(1 - np.abs(((fm.S + 0.1) % 0.55) - 0.275) / 0.004, 0, 1) * (np.abs(d) > 0.08)
+    seam = np.maximum(seam, np.clip(1 - np.abs(fm.Z - 0.62) / 0.004, 0, 1))
+    col = col * (1 - 0.35 * seam[..., None])
+    blend(col, srgb("#2a2e33"), aa(np.abs(d) - 0.05, 0.02))
     alpha = 1.0 - aa(d + 0.02, 0.01)
     rgba = np.concatenate([np.clip(col, 0, 1), alpha[..., None]], -1)
     Image.fromarray((rgba * 255 + 0.5).astype(np.uint8), "RGBA").save(os.path.join(TEX, "cockpit_shell.png"),

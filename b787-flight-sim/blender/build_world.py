@@ -42,6 +42,10 @@ DOWNTOWN = (5600.0, 3000.0)
 FLAT = dict(x0=-5200.0, x1=11200.0, y0=COAST_Y, y1=9800.0)
 STAND_XS = [-520.0 + 80.0 * k for k in range(14)]
 STAND_NOSE_Y = 488.0
+APRON_LINKS = [-640.0, -240.0, 240.0, 640.0]   # apron taxilane <-> taxiway A
+TAXILANE_Y = 262.0
+SERVICE_Y = 415.0                              # GSE service road behind the parked tails
+GSE_DEPOTS = [(-690.0, 460.0), (690.0, 460.0)]  # ground-equipment parking at the apron ends
 S_CG_FROM_NOSE = 31.85
 
 LIGHTS = {}          # name -> dict(color, size, pos[], dir[] (optional), kind)
@@ -312,6 +316,12 @@ def build_airfield(M, col):
         rect(pav, cx, (TWY_Y + RWY_W / 2) / 2, L + 20, TWY_W, math.pi - ang if direction < 0 else ang, Z_PAV - 0.004, 2)
     # apron (concrete)
     rect(pav, 0, (APRON_Y0 + APRON_Y1) / 2, 1500, APRON_Y1 - APRON_Y0, 0, Z_PAV + 0.002, 3)
+    # apron links between taxiway A and the apron taxilane
+    for xl in APRON_LINKS:
+        rect(pav, xl, (TWY_Y + APRON_Y0) / 2 + 2, TWY_W + 4, APRON_Y0 - TWY_Y + 8, 0, Z_PAV - 0.003, 2)
+        for sx in (-1, 1):
+            rect(pav, xl + sx * (TWY_W / 2 + 7), APRON_Y0 - 5, 14, 12, 0, Z_PAV - 0.004, 2)
+            rect(pav, xl + sx * (TWY_W / 2 + 7), TWY_Y + TWY_W / 2 + 5, 14, 12, 0, Z_PAV - 0.004, 2)
     rect(pav, 1150, 330, 700, 240, 0, Z_PAV + 0.002, 3)       # maintenance apron
     rect(pav, -1150, 330, 700, 240, 0, Z_PAV + 0.002, 3)      # cargo apron
     # --- runway markings (white) ------------------------------------------------
@@ -357,6 +367,20 @@ def build_airfield(M, col):
         pass
     # apron taxilane + stand lead-in lines + stop bars + stand numbers
     rect(mk, 0, 262, 1480, 0.3, 0, Z_MK, 1)
+    for xl in APRON_LINKS:
+        rect(mk, xl, (TWY_Y + TAXILANE_Y) / 2, 0.3, TAXILANE_Y - TWY_Y, 0, Z_MK, 1)
+    # GSE service road (white edge lines, dashed centre) and equipment parking boxes
+    for sy in (-6.0, 6.0):
+        rect(mk, 0, SERVICE_Y + sy, 1480, 0.2, 0, Z_MK, 0)
+    xx = -735.0
+    while xx < 735.0:
+        rect(mk, xx + 1.5, SERVICE_Y, 3.0, 0.15, 0, Z_MK, 0)
+        xx += 6.0
+    for (dx, dy) in GSE_DEPOTS:
+        for k in range(9):
+            rect(mk, dx - 40 + k * 10, dy, 0.15, 60, 0, Z_MK, 0)
+        for sy in (-30.0, 30.0):
+            rect(mk, dx, dy + sy, 80, 0.15, 0, Z_MK, 0)
     for k, xs in enumerate(STAND_XS):
         rect(mk, xs, (262 + STAND_NOSE_Y) / 2, 0.3, STAND_NOSE_Y - 262, 0, Z_MK, 1)
         rect(mk, xs, STAND_NOSE_Y - 1.0, 8, 0.6, 0, Z_MK, 1)
@@ -453,6 +477,11 @@ def build_airfield_lights(M, col, conns):
         # stop bar (red) at the holding point
         for d in range(-5, 6):
             add_light("stopbar", (xc + d * 2.0, 86, 0.2), "#ff2020", 0.9)
+    for xl in APRON_LINKS:
+        yy = TWY_Y + 15
+        while yy < TAXILANE_Y:
+            add_light("twy_cl", (xl, yy, 0.1), "#28ff6a", 0.8)
+            yy += 15
     # apron flood light masts
     for xm in range(-700, 701, 140):
         beam(fx, (xm, APRON_Y1 - 5, 0), (xm, APRON_Y1 - 5, 30), 0.8, 0.8, 1)
@@ -613,16 +642,7 @@ def build_airport_buildings(M, col):
     box(b, 330, 760, 400, 830, 0, 72, 7, 1, FACADES["facade_glass"])
     box(b, -420, 760, -320, 840, 0, 36, 5, 1, FACADES["facade_office"])
     add_light("obstruction", (365, 795, 72.5), "#ff1a1a", 2.0, kind="blink")
-    # ground vehicles on the apron (tugs, fuel trucks, stairs)
-    rng = np.random.default_rng(7)
-    for xs in STAND_XS:
-        for k in range(rng.integers(1, 4)):
-            x = xs + rng.uniform(-30, 30)
-            y = rng.uniform(420, 470)
-            L, W, H = rng.choice([(6, 2.4, 2.2), (9, 2.5, 3.2), (4, 1.8, 1.5)])
-            ang = rng.uniform(0, math.pi)
-            obox(b, x, y, L, W, ang, 0.4, H, 3 if rng.random() < 0.6 else 8, 3)
-            obox(b, x, y, L * 0.9, W * 0.95, ang, 0.0, 0.4, 9, 9)
+    # (apron ground vehicles are separate, animated models: build_gse.py)
     b.build("AirportBuildings", mats, col=col)
 
 
@@ -983,6 +1003,12 @@ def main():
         coastZ=-COAST_Y,
         river=dict(x=RIVER_X, width=RIVER_W, z0=-9800.0, z1=-COAST_Y),
         lights=LIGHTS,
+        # ground movement network (three.js x, z = -design y)
+        ground=dict(twyZ=-TWY_Y, taxilaneZ=-TAXILANE_Y, serviceZ=-SERVICE_Y, apronZ=[-APRON_Y1, -APRON_Y0],
+                    connectors=conns, apronLinks=APRON_LINKS, holdZ=-89.0,
+                    rapidExits=[dict(rwy="27", x0=350.0, x1=350.0 - 310.0 * math.cos(math.radians(30))),
+                                dict(rwy="09", x0=-450.0, x1=-450.0 + 310.0 * math.cos(math.radians(30)))],
+                    gseDepots=[[x, -y] for (x, y) in GSE_DEPOTS], standLaneDX=40.0),
         trees=[v for t in TREES for v in (t[0], t[2], -t[1], t[3])],
     )
     with open(os.path.join(C.WEB_ASSETS, "world.json"), "w") as fh:

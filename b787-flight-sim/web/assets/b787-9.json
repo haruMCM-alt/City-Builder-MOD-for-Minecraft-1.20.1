@@ -674,6 +674,195 @@
    "max": 12
   }
  ],
+ "mcp": {
+  "halfWidth": 0.675,
+  "height": 0.13,
+  "controls": [
+   {
+    "kind": "toggle",
+    "id": "FD_L",
+    "u": -0.635,
+    "v": 0.05,
+    "label": "F/D"
+   },
+   {
+    "kind": "toggle",
+    "id": "AT_ARM_L",
+    "u": -0.595,
+    "v": 0.05,
+    "label": "L"
+   },
+   {
+    "kind": "toggle",
+    "id": "AT_ARM_R",
+    "u": -0.57,
+    "v": 0.05,
+    "label": "R"
+   },
+   {
+    "kind": "pb",
+    "id": "CLB_CON",
+    "u": -0.52,
+    "v": 0.042,
+    "label": "CLB/CON"
+   },
+   {
+    "kind": "pb",
+    "id": "AT",
+    "u": -0.475,
+    "v": 0.042,
+    "label": "A/T"
+   },
+   {
+    "kind": "win",
+    "id": "IAS",
+    "u": -0.405,
+    "v": 0.092,
+    "w": 0.064,
+    "h": 0.022,
+    "label": "IAS/MACH"
+   },
+   {
+    "kind": "knob",
+    "id": "SPD",
+    "u": -0.405,
+    "v": 0.038
+   },
+   {
+    "kind": "pb",
+    "id": "LNAV",
+    "u": -0.33,
+    "v": 0.042,
+    "label": "LNAV"
+   },
+   {
+    "kind": "pb",
+    "id": "VNAV",
+    "u": -0.285,
+    "v": 0.042,
+    "label": "VNAV"
+   },
+   {
+    "kind": "pb",
+    "id": "FLCH",
+    "u": -0.24,
+    "v": 0.042,
+    "label": "FLCH"
+   },
+   {
+    "kind": "pb",
+    "id": "AP_L",
+    "u": -0.18,
+    "v": 0.042,
+    "label": "A/P"
+   },
+   {
+    "kind": "win",
+    "id": "HDG",
+    "u": -0.105,
+    "v": 0.092,
+    "w": 0.05,
+    "h": 0.022,
+    "label": "HDG"
+   },
+   {
+    "kind": "knob",
+    "id": "HDG",
+    "u": -0.105,
+    "v": 0.038,
+    "big": true
+   },
+   {
+    "kind": "pb",
+    "id": "HDG_HOLD",
+    "u": -0.045,
+    "v": 0.042,
+    "label": "HOLD"
+   },
+   {
+    "kind": "win",
+    "id": "VS",
+    "u": 0.035,
+    "v": 0.092,
+    "w": 0.058,
+    "h": 0.022,
+    "label": "V/S"
+   },
+   {
+    "kind": "wheel",
+    "id": "VS",
+    "u": 0.035,
+    "v": 0.036
+   },
+   {
+    "kind": "pb",
+    "id": "VS",
+    "u": 0.09,
+    "v": 0.042,
+    "label": "V/S"
+   },
+   {
+    "kind": "win",
+    "id": "ALT",
+    "u": 0.17,
+    "v": 0.092,
+    "w": 0.064,
+    "h": 0.022,
+    "label": "ALTITUDE"
+   },
+   {
+    "kind": "knob",
+    "id": "ALT",
+    "u": 0.17,
+    "v": 0.038,
+    "big": true
+   },
+   {
+    "kind": "pb",
+    "id": "ALT_HOLD",
+    "u": 0.235,
+    "v": 0.042,
+    "label": "HOLD"
+   },
+   {
+    "kind": "pb",
+    "id": "LOC",
+    "u": 0.3,
+    "v": 0.042,
+    "label": "LOC"
+   },
+   {
+    "kind": "pb",
+    "id": "APP",
+    "u": 0.345,
+    "v": 0.042,
+    "label": "APP"
+   },
+   {
+    "kind": "pb",
+    "id": "AP_R",
+    "u": 0.405,
+    "v": 0.042,
+    "label": "A/P"
+   },
+   {
+    "kind": "bar",
+    "id": "AP_DISC",
+    "u": 0.47,
+    "v": 0.03,
+    "w": 0.05,
+    "h": 0.012,
+    "label": "DISENGAGE"
+   },
+   {
+    "kind": "toggle",
+    "id": "FD_R",
+    "u": 0.635,
+    "v": 0.05,
+    "label": "F/D"
+   }
+  ]
+ },
  "cabin": {
   "seats": [
    {

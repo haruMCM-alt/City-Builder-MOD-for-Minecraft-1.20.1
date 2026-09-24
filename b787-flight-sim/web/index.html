@@ -129,6 +129,13 @@
     background: rgba(5, 10, 18, .6); padding: 6px 9px; border-radius: 7px; line-height: 1.5; pointer-events: none;
     white-space: pre;
   }
+  #atc {
+    position: fixed; left: 10px; top: 118px; z-index: 5; width: min(430px, calc(100vw - 20px)); pointer-events: none;
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.35; display: flex; flex-direction: column; gap: 3px;
+  }
+  #atc div { background: rgba(5, 10, 18, .62); padding: 4px 8px; border-radius: 6px; color: #d7e6f7; transition: opacity .6s; }
+  #atc div b { color: #7fd3ff; font-weight: 700; margin-right: 4px; }
+  #atc div.atc b { color: #ffd166; }
   #corner { position: fixed; right: 10px; top: 10px; z-index: 5; display: flex; gap: 6px; }
   #corner button { padding: 6px 10px; font-size: 12px; background: rgba(12, 22, 38, .8); }
   #crash .card { max-width: 520px; text-align: center; }
@@ -146,6 +153,7 @@
   @media (max-width: 720px) {
     #panel canvas { width: 31vw; height: 31vw; }
     #status { display: none; }
+    #atc { top: auto; bottom: calc(33vw + 190px); font-size: 10.5px; }
     #mcp { top: calc(6px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; transform: none; }
     #corner { top: calc(72px + env(safe-area-inset-top, 0px)); right: 8px; }
     #corner button { padding: 5px 8px; font-size: 11px; }
@@ -220,6 +228,8 @@
           <option value="low">低 Low (fast)</option>
         </select>
         <label><input type="checkbox" id="sound" checked> サウンド Sound</label>
+        <label><input type="checkbox" id="traffic" checked> AI交通・地上車両 Traffic &amp; GSE</label>
+        <label><input type="checkbox" id="atcVoice" checked> ATC 無線音声 Radio voice</label>
       </fieldset>
     </div>
     <fieldset id="liveryBox">
@@ -262,6 +272,8 @@
         <div><b>U</b> HUD</div>
         <div><b>L</b> 着陸灯 Lights</div>
         <div><b>T</b> 時刻 Time +1h</div>
+        <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
+        <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>
         <div><b>Esc</b> 一時停止 Pause</div>
       </div>
@@ -308,6 +320,8 @@
         <div><b>U</b> HUD</div>
         <div><b>L</b> 着陸灯 Lights</div>
         <div><b>T</b> 時刻 Time +1h</div>
+        <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
+        <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>
         <div><b>Esc</b> 一時停止 / 再開 Pause</div>
       </div>
@@ -350,6 +364,7 @@
   <canvas id="eicas" width="600" height="600"></canvas>
 </div>
 <div id="status" class="hidden"></div>
+<div id="atc" class="hidden"></div>
 <div id="corner" class="hidden">
   <button id="btnView">視点 View (C)</button>
   <button id="btnPanel">計器 Panel (I)</button>

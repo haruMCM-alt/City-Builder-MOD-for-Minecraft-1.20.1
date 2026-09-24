@@ -46,6 +46,13 @@ export class AircraftVisual {
     const wr = (g) => (meta.parts.find((p) => p.kind === 'wheel' && p.gear === g) || { radius: 0.6 }).radius;
     this.wheelR = [wr(0), wr(1)];
     this.cockpit = COCKPIT_PARTS.map((n) => this.root.getObjectByName(n)).filter(Boolean);
+    // flight-deck fill lights (model frame: x fwd from the CG, y up): windshield and rear
+    this.fill = [[28.2, 1.3, 0], [26.4, 1.45, 0]].map(([x, y, z]) => {
+      const l = new THREE.PointLight(0xfff6ee, 0, 4.2, 1.5);
+      l.position.set(x, y, z); l.castShadow = false;
+      this.root.add(l);
+      return l;
+    });
     // wings get their own copy of the wing paint so the baked AO (wing UVs) is not
     // applied to the tailplane, pylons and fairings that share the material
     this.wingAOMats = [];
@@ -79,9 +86,18 @@ export class AircraftVisual {
         m.envMapIntensity = 1.0;
         if (m.name === 'Cockpit_Shell') {
           m.alphaTest = 0.5; m.transparent = false; m.depthWrite = true; m.side = THREE.FrontSide;
-          m.color.setScalar(0.45); m.envMapIntensity = 0.15;
+          m.color.setScalar(0.92); m.envMapIntensity = 0.15;
           continue;
         }
+        // textured flight-deck panels: back-lit legends (emissive map) driven at night
+        if (m.name.startsWith('CkPanel_')) {
+          m.emissive = new THREE.Color(1.0, 0.94, 0.84); m.emissiveIntensity = 0.02; m.envMapIntensity = 0.3;
+          if (m.map) m.map.anisotropy = 8;
+          (this.panelMats ||= []).push(m);
+          continue;
+        }
+        if (m.name === 'Cockpit_DomeLight') { m.emissive = new THREE.Color(1.0, 0.95, 0.85); this.domeMat = m; }
+        if (m.name === 'Cockpit_Visor') { m.depthWrite = false; m.opacity = 0.5; }
         if (m.name.startsWith('Cockpit_')) { m.envMapIntensity = 0.25; }
         if (m.name === 'Cockpit_Label') { m.emissive = new THREE.Color(1.0, 0.93, 0.8); this.panelLabelMat = m; }
         if (m.name === 'HUD_Glass') { m.opacity = 0.02; m.depthWrite = false; m.envMapIntensity = 0.05; }
@@ -395,6 +411,15 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
     }
     for (const fm_ of this.fuselageMats) fm_.emissiveIntensity = night * 1.3;
     if (this.panelLabelMat) this.panelLabelMat.emissiveIntensity = 0.05 + night * 0.9;   // integral panel lighting
+    if (this.panelMats) for (const m of this.panelMats) m.emissiveIntensity = 0.02 + night * 1.1;
+    if (this.domeMat) this.domeMat.emissiveIntensity = night * 1.5;
+    // light through the big windows by day, dim flood light at night (flight deck only)
+    if (this.fill) {
+      const inside = env.cockpitView ? 1 : 0;
+      this.fill[0].intensity = inside * ((1 - night) * 3.2 + night * 0.25);
+      this.fill[1].intensity = inside * ((1 - night) * 1.6 + night * 0.35);
+      this.fill[0].color.setRGB(lerp(1.0, 1.0, night), lerp(0.97, 0.86, night), lerp(0.94, 0.7, night));
+    }
     // ---- cockpit interior only when close ------------------------------------------
     const dCam = camPos.distanceTo(this.root.position);
     const wantCockpit = env.cockpitView || dCam < 45;

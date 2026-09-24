@@ -16,6 +16,9 @@ import { Cabin } from './cabin.js';
 import { PostFX } from './postfx.js';
 import { Rain } from './weatherfx.js';
 import { Vapor } from './vapor.js';
+import { Traffic } from './traffic.js';
+import { Radio } from './atc.js';
+import { MCP3D } from './mcp3d.js';
 import { V3, DEG, KT, FT, FPM, clamp, headingVec, wrap360, mulberry32 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -124,13 +127,15 @@ class App {
     }
     const loader = new GLTFLoader();
     loader.setDRACOLoader(draco);
-    const prog = { ac: 0, world: 0, lod: 0 };
-    const upd = () => setLoad(0.05 + 0.85 * (prog.ac * 0.35 + prog.world * 0.5 + prog.lod * 0.15),
-      `787-9 ${Math.round(prog.ac * 100)}% · airport/city ${Math.round(prog.world * 100)}%`);
-    const [acGltf, worldGltf, lodGltf] = await Promise.all([
+    const prog = { ac: 0, world: 0, lod: 0, gse: 0 };
+    const upd = () => setLoad(0.05 + 0.85 * (prog.ac * 0.33 + prog.world * 0.47 + prog.lod * 0.13 + prog.gse * 0.07),
+      `787-9 ${Math.round(prog.ac * 100)}% · airport/city ${Math.round(prog.world * 100)}% · GSE ${Math.round(prog.gse * 100)}%`);
+    const [acGltf, worldGltf, lodGltf, gseGltf, gseInfo] = await Promise.all([
       loadGLB(loader, ASSET + 'b787-9' + MODEL_EXT, (p) => { prog.ac = p; upd(); }),
       loadGLB(loader, ASSET + 'world' + MODEL_EXT, (p) => { prog.world = p; upd(); }),
       loadGLB(loader, ASSET + 'b787-9-lod' + MODEL_EXT, (p) => { prog.lod = p; upd(); }).catch(() => null),
+      loadGLB(loader, ASSET + 'gse' + MODEL_EXT, (p) => { prog.gse = p; upd(); }).catch(() => null),
+      fetchJSON(ASSET + 'gse.json').catch(() => null),
     ]);
     setLoad(0.92, 'building scene…');
     this.world.attachWorldGLB(worldGltf);
@@ -138,6 +143,12 @@ class App {
     this.world.buildLights(world.lights);
     this.world.setWeather('scattered');
     this.lodTemplate = lodGltf ? lodGltf.scene : null;
+    // airport traffic: AI 787s under ATC control and ground support equipment
+    this.radio = new Radio($('atc'));
+    this.traffic = this.lodTemplate ? new Traffic(this.scene, world, meta, {
+      gse: gseGltf ? gseGltf.scene : null, gseInfo, lodTemplate: this.lodTemplate, livery: meta.livery,
+      radio: this.radio, quality: this.quality,
+    }) : null;
 
     // aircraft
     this.fm = new FlightModel(meta);
@@ -159,6 +170,8 @@ class App {
     this.applyLivery();
     this.instruments = new Instruments($('pfd'), $('nd'), $('eicas'), $('hud'), world);
     this.visual.setDisplayTextures(this.instruments.textures);
+    // live face of the 3-D MCP on the glareshield
+    if (meta.mcp) { this.mcp3d = new MCP3D(meta.mcp); this.mcp3d.apply(this.visual.displayMats.MCP); }
     this.rig = new CameraRig(this.camera, canvas, meta, world);
     this.input = new Input((c) => this.command(c));
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -288,7 +301,7 @@ class App {
     $('pause').classList.add('hidden');
     this.paused = true;
     $('menu').classList.remove('hidden');
-    ['mcp', 'panel', 'status', 'corner', 'touch'].forEach((i) => $(i).classList.add('hidden'));
+    ['mcp', 'panel', 'status', 'corner', 'touch', 'atc'].forEach((i) => $(i).classList.add('hidden'));
   }
 
   applyLivery() {
@@ -476,12 +489,17 @@ class App {
       sys.mcp.spd = Math.round(this.fm.out.ias);
     }
     this.input.axes = { pitch: 0, roll: 0, yaw: 0 };
-    // parked aircraft
-    if (this.lodTemplate) {
-      for (const o of this.world.parked) this.scene.remove(o);
-      this.world.parked = [];
-      this.world.addParkedAircraft(this.lodTemplate, W.stands.filter((s) => s.id % 4 !== 0 || s.id === 1), skipStand,
-        this.meta.livery ? (o) => dressParked(o, randomLivery(), this.meta.livery) : null);
+    // parked / AI aircraft and ground vehicles
+    if (this.traffic) {
+      const wdir = +$('windDir').value, wkt = +$('windSpd').value;
+      // active runway: the one with a headwind component (27 in calm wind)
+      const head27 = Math.cos((wdir - 270) * DEG) * wkt;
+      this.traffic.enabled = $('traffic') ? $('traffic').checked : true;
+      this.radio.voice = $('atcVoice') ? $('atcVoice').checked : true;
+      this.radio.enabled = run;
+      this.traffic.reset({ stands: W.stands, skipStand, randomLivery, runway: head27 < -3 ? '09' : '27', windDir: wdir, windKt: wkt });
+      this.radio.enabled = true;
+      this.trafficFocus = null;
     }
     this.crashShown = false;
     this.acc = 0;
@@ -577,6 +595,18 @@ class App {
         break;
       case 'direct': sys.lawDirect = !sys.lawDirect; this.toast('Flight controls ' + (sys.lawDirect ? 'DIRECT (Home/End でトリム)' : 'NORMAL')); break;
       case 'mute': this.audio.enabled = !this.audio.enabled; this.toast('Sound ' + (this.audio.enabled ? 'ON' : 'OFF')); break;
+      case 'trafficNext':
+        if (!this.traffic) break;
+        if (this.rig.view !== 'traffic') { this.rig.setView('traffic'); $('panel').classList.add('hidden'); }
+        this.rig.trafficTarget = this.pickTrafficFocus(true);
+        break;
+      case 'atcVoice':
+        if (!this.radio) break;
+        this.radio.voice = !this.radio.voice;
+        if ($('atcVoice')) $('atcVoice').checked = this.radio.voice;
+        if (!this.radio.voice) this.radio.clear();
+        this.toast('ATC 音声 voice ' + (this.radio.voice ? 'ON' : 'OFF'));
+        break;
       case 'reset': this.startScenario(this.scenario, true); break;
     }
     this.updateMCP(true);
@@ -657,6 +687,14 @@ class App {
       if (n >= 48) this.acc = 0;
     }
     for (const e of events) this.onEvent(e);
+    if (this.traffic && !this.paused) {
+      const o = fm.out;
+      this.traffic.update(dt, {
+        player: { x: fm.pos.x, z: fm.pos.z, alt: o.ra ?? 0, a: ((o.hdg || 0) - 90) * DEG, v: (o.gs || 0) * KT, onGround: !!o.wow },
+        camera: this.camera, night: this.world.night, touchdown: (ac) => this.aiTouchdown(ac),
+      });
+    }
+    if (this.rig.view === 'traffic' && this.traffic) this.rig.trafficTarget = this.pickTrafficFocus();
     const cockpit = this.rig.view === 'cockpit';
     fm.wet = this.world.wet || 0;
     this.visual.update(dt, fm, sys, { night: this.world.night, camera: this.camera, cockpitView: cockpit, events, wet: fm.wet });
@@ -664,6 +702,7 @@ class App {
     this.rig.update(dt, fm, this.visual.root);
     this.world.update(dt, this.camera, new THREE.Vector3(fm.pos.x, fm.pos.y, fm.pos.z));
     this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit });
+    if (this.mcp3d && this.visual.cockpitVisible && (this._mcpT3 = (this._mcpT3 || 0) + dt) > 0.12) { this._mcpT3 = 0; this.mcp3d.update(sys, this.world.night); }
     const hud = $('hud');
     const hctx = hud.getContext('2d');
     if (cockpit && !this.paused) {
@@ -676,6 +715,7 @@ class App {
     const L = this._L;
     L.view = this.rig.view; L.acPos = root.position; L.camPos = this.camera.position;
     L.rain = this.world.rain || 0;
+    L.traffic = this.traffic && this.traffic.enabled ? this.traffic.sound(this.camera.position) : null;
     L.camRight.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
     L.fwd.set(1, 0, 0).applyQuaternion(root.quaternion);
     L.engines[0].fromArray(this.meta.engineAxisL).applyMatrix4(mw);
@@ -704,6 +744,38 @@ class App {
       this.post.render();
     } else { this.world.volumetricState(false); this.renderer.render(this.scene, this.camera); }
     if (!this.paused) this.updateUI();
+  }
+
+  // AI traffic: tyre smoke on touchdown
+  aiTouchdown(ac) {
+    const c = Math.cos(ac.a), s = Math.sin(ac.a);
+    for (const side of [-1, 1]) {
+      const p = { x: ac.x - c * 1.7 - s * 4.9 * side, y: 0.5, z: ac.z - s * 1.7 + c * 4.9 * side };
+      for (let i = 0; i < 6; i++) {
+        this.visual.emit(p, { x: c * ac.v * 0.5 + (Math.random() - 0.5) * 3, y: 0.8 + Math.random(), z: s * ac.v * 0.5 + (Math.random() - 0.5) * 3 },
+          1.6 + Math.random(), 1.2, 3.5, 0.35);
+      }
+    }
+  }
+
+  // camera target for the traffic view: keep following one moving AI aircraft (B: next)
+  pickTrafficFocus(next = false) {
+    const T = this.traffic;
+    const act = T.aircraft.filter((a) => a.state !== 'PARKED');
+    const prio = { TAKEOFF: 0, ROLLOUT: 0, AIR: 1, LINEUP: 1, WAIT_TKOF: 2, PUSH: 2, TAXI_OUT: 3, TAXI_IN: 3, HOLDING: 4 };
+    let f = this.trafficFocus;
+    if (next || !f || (f.kind === 'ac' && f.obj.state === 'PARKED' && (f.t = (f.t || 0) + 1) > 600)) {
+      const list = act.map((a) => ({ kind: 'ac', obj: a })).concat(T.vehicles.filter((v) => v.mover && !v.leader).map((v) => ({ kind: 'veh', obj: v })));
+      list.sort((a, b) => (a.kind === 'ac' ? (prio[a.obj.state] ?? 5) : 6) - (b.kind === 'ac' ? (prio[b.obj.state] ?? 5) : 6));
+      if (!list.length) return null;
+      let i = 0;
+      if (next && f) i = (list.findIndex((x) => x.obj === f.obj) + 1) % list.length;
+      f = this.trafficFocus = list[i];
+      this.toast(f.kind === 'ac' ? `追跡 Tracking ${f.obj.callsign}` : `追跡 Tracking ${f.obj.type}`, 2000);
+    }
+    const o = f.obj;
+    this._tf = this._tf || new THREE.Vector3();
+    return this._tf.set(o.x, (f.kind === 'ac' ? o.alt + 5 : 1.5), o.z);
   }
 
   // exhaust plumes for the heat-haze pass (world space)

@@ -134,6 +134,16 @@ export class Audio {
     chain(this.noise(this.white, 2.7), hp(1100), lp(8000), this.rainG, this.master);
     this.rainDrumG = ctx.createGain(); this.rainDrumG.gain.value = 0;
     chain(this.noise(this.crackle, 3.3), bp(420, 0.7), this.rainDrumG, this.master);
+    // other aircraft (AI traffic): distant jet roar and fan whine
+    this.trafG = ctx.createGain(); this.trafG.gain.value = 0;
+    this.trafLP = lp(420);
+    chain(this.noise(this.brown, 0.9), this.trafLP, this.trafG, this.master);
+    this.trafWhineG = ctx.createGain(); this.trafWhineG.gain.value = 0;
+    const tw = ctx.createOscillator(); tw.type = 'triangle'; tw.frequency.value = 2350;
+    const tw2 = ctx.createOscillator(); tw2.type = 'sine'; tw2.frequency.value = 2390;
+    const twb = bp(2370, 6);
+    tw.connect(twb); tw2.connect(twb); twb.connect(this.trafWhineG); this.trafWhineG.connect(this.master);
+    tw.start(); tw2.start();
     this._travel = 0;
     this._gearPrev = null;
   }
@@ -342,6 +352,13 @@ export class Audio {
       // rumble
       set(E.rumG.gain, on * near * (0.16 + 0.65 * n1) * (inside ? 1.6 : 1), 0.1);
     }
+
+    // ---- AI traffic ----------------------------------------------------------------------------------
+    const tr = L.traffic;
+    const muff = inside ? 0.25 : cabin ? 0.4 : 1;
+    set(this.trafG.gain, on * (tr ? tr.roar * 0.45 * muff : 0), 0.25);
+    set(this.trafLP.frequency, 260 + (tr ? Math.min(tr.roar, 1) * 700 : 0) * (inside ? 0.4 : 1), 0.3);
+    set(this.trafWhineG.gain, on * (tr ? tr.whine * 0.006 * muff * muff : 0), 0.25);
 
     // ---- rain ------------------------------------------------------------------------------------
     const rain = L.rain || 0;

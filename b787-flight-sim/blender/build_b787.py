@@ -1132,6 +1132,9 @@ def build_details(M, root, col):
 # ---------------------------------------------------------------------------
 # Cockpit interior (visible from the pilot's eye point)
 # ---------------------------------------------------------------------------
+COCKPIT_META = {}
+
+
 def build_cockpit(M, root, col):
     Mi = {
         "shell": C.pbr_material("Cockpit_Shell", color=C.hex_color("#3a3f45"), roughness=0.8,
@@ -1191,18 +1194,12 @@ def build_cockpit(M, root, col):
     fb.add_poly([(ps, 1.12, pz0), (ps + (pz1 - pz0) * math.tan(tilt) * -1, 1.12, pz1),
                  (ps + (pz1 - pz0) * math.tan(tilt) * -1, -1.12, pz1), (ps, -1.12, pz0)], mat=1,
                 outward=("dir", (1, 0, 0.2)))
-    fb.add_box((3.25, 0, 0.62 + DZ), (0.6, 2.24, 0.72), mat=1)
-    # glareshield + MCP
-    fb.add_box((3.45, 0, 1.05 + DZ), (0.62, 2.35, 0.14), mat=1)
-    fb.add_box((3.78, 0, 1.00 + DZ), (0.10, 1.35, 0.13), mat=2)
-    for j in range(14):
-        fb.add_box((3.835, -0.6 + j * 0.092, 1.0 + DZ), (0.03, 0.035, 0.035), mat=7)
-    # centre pedestal
+    fb.add_box((3.16, 0, 0.62 + DZ), (0.44, 2.24, 0.72), mat=1)      # behind the slanted panel face
+    # glareshield + MCP housing (the MCP face and controls: cockpit_b787.py)
+    fb.add_box((3.38, 0, 1.07 + DZ), (0.48, 2.35, 0.14), mat=1)
+    fb.add_box((3.63, 0, 1.025 + DZ), (0.10, 1.35, 0.13), mat=2)
+    # centre pedestal (panels, levers and pedals: cockpit_b787.py)
     fb.add_box((4.25, 0, 0.42 + DZ), (1.15, 0.52, 0.40), mat=1)
-    # rudder pedals
-    for sy in (0.53, -0.53):
-        for dy in (-0.14, 0.14):
-            fb.add_box((3.95, sy + dy, 0.18 + DZ), (0.06, 0.10, 0.22), mat=6)
     # seats, overhead panel, pedestal faces, side consoles: cockpit_b787.py
     ob = fb.build("CockpitInterior", [Mi["shell"], Mi["panel"], Mi["grey"], Mi["seat"], Mi["black"],
                                       Mi["floor"], Mi["metal"], Mi["knob"]], col=col)
@@ -1216,8 +1213,8 @@ def build_cockpit(M, root, col):
         mat = C.pbr_material("Display_" + nm, color=(0.0, 0.0, 0.0, 1), roughness=0.15,
                              emission=(0.02, 0.02, 0.03, 1), emission_strength=1.0)
         db = C.MeshBuilder(TB)
-        zc = 0.66 + DZ
-        dx = -0.012
+        zc = 0.61 + DZ
+        dx = 0.006                      # just proud of the panel face, inside the bezel
         s_top = ps + dx - (zc + h / 2 - pz0) * math.tan(tilt)
         s_bot = ps + dx - (zc - h / 2 - pz0) * math.tan(tilt)
         pts = np.array([(s_bot, yc + w / 2, zc - h / 2), (s_bot, yc - w / 2, zc - h / 2),
@@ -1237,28 +1234,48 @@ def build_cockpit(M, root, col):
     ob = hb.build("HUD_Combiner", [hud], col=col)
     C.set_parent(ob, root)
     import cockpit_b787
-    cockpit_b787.build_cockpit_detail(root, col, tex)
-    # throttle levers (pivot about lateral axis, positive = forward)
+    cockpit_b787.build_cockpit_detail(root, col, tex, COCKPIT_META)
+    # throttle levers (pivot about lateral axis, positive = forward): shaft, T-grip with
+    # TO/GA and A/T disconnect switches, piggy-back reverse-thrust lever
     for side in (1, -1):
         L = "L" if side > 0 else "R"
         tb = C.MeshBuilder(TB)
-        base = np.array([4.0, side * 0.07, 0.62 + DZ])
-        cyl(tb, base, base + np.array([-0.05, 0, 0.20]), 0.012, 0, n=8)
-        tb.add_box(tuple(base + np.array([-0.055, 0, 0.215])), (0.05, 0.09, 0.035), mat=1)
-        test = np.array([base + np.array([-0.05, 0, 0.2])])
-        add_part("Throttle_" + L, "throttle", tb, [Mi["metal"], Mi["black"]], base, base + np.array([0, 1, 0]),
+        base = np.array([4.25, side * 0.07, 0.62 + DZ])
+        top = base + np.array([-0.05, 0, 0.19])
+        cyl(tb, base, top, 0.011, 0, n=10)
+        cyl(tb, top + np.array([0, -side * 0.012, 0]), top + np.array([0, side * 0.075, 0.01]), 0.018, 1, n=14)
+        cyl(tb, top + np.array([0.012, side * 0.03, 0.012]), top + np.array([0.012, side * 0.05, 0.02]), 0.006, 2, n=8)
+        rv = base + np.array([-0.03, 0, 0.12])
+        cyl(tb, rv, rv + np.array([-0.035, 0, 0.03]), 0.006, 0, n=8)
+        tb.add_box(tuple(rv + np.array([-0.04, 0, 0.035])), (0.02, 0.05, 0.012), mat=1)
+        test = np.array([top])
+        add_part("Throttle_" + L, "throttle", tb, [Mi["metal"], Mi["black"], Mi["grey"]], base, base + np.array([0, 1, 0]),
                  test, MOVE_FWD, 30, root, col)
-    # control columns (yokes)
+    # control columns and wheels (787: open-top "ram's horn" wheel with grips, PTT and trim switches)
     for sy in (0.53, -0.53):
         L = "L" if sy > 0 else "R"
         yb = C.MeshBuilder(TB)
-        cyl(yb, (3.72, sy, 0.05 + DZ), (3.9, sy, 0.62 + DZ), 0.03, 0, n=10)
-        yb.add_box((3.92, sy, 0.66 + DZ), (0.06, 0.34, 0.05), mat=1)
-        for dy in (-0.17, 0.17):
-            yb.add_box((3.92, sy + dy, 0.74 + DZ), (0.06, 0.05, 0.17), mat=1)
-        test = np.array([[3.92, sy, 0.66 + DZ]])
-        add_part("Yoke_" + L, "yoke", yb, [Mi["metal"], Mi["black"]], (3.72, sy, 0.05 + DZ), (3.72, sy + 1, 0.05 + DZ),
-                 test, MOVE_FWD, 12, root, col)
+        c0 = np.array([3.72, sy, 0.05 + DZ])
+        c1 = np.array([3.9, sy, 0.6 + DZ])
+        cyl(yb, c0 + np.array([0, 0, -0.02]), c0 + np.array([0.03, 0, 0.12]), 0.07, 1, n=14, r1=0.035)   # boot
+        cyl(yb, c0, c1, 0.028, 0, n=12)
+        hub = np.array([3.925, sy, 0.655 + DZ])
+        cyl(yb, c1, hub, 0.03, 1, n=12)
+        yb.add_box(tuple(hub + np.array([0.005, 0, 0.0])), (0.06, 0.11, 0.075), mat=1)
+        # checklist / chart clip on the hub face
+        yb.add_box(tuple(hub + np.array([0.038, 0, 0.01])), (0.004, 0.09, 0.06), mat=2)
+        for s_ in (-1, 1):
+            pts = [hub + np.array([0.0, s_ * 0.05, -0.005]), hub + np.array([0.004, s_ * 0.13, -0.02]),
+                   hub + np.array([0.008, s_ * 0.175, 0.02]), hub + np.array([0.01, s_ * 0.18, 0.08]),
+                   hub + np.array([0.008, s_ * 0.16, 0.115])]
+            for a, b in zip(pts[:-1], pts[1:]):
+                cyl(yb, a, b, 0.017, 1, n=10)
+            # grip rubber and switches (PTT on the outboard horn top, electric trim thumb switch)
+            cyl(yb, pts[2], pts[3], 0.021, 1, n=12)
+            yb.add_box(tuple(pts[4] + np.array([0.012, 0, 0.004])), (0.014, 0.018, 0.012), mat=3 if s_ * sy > 0 else 2)
+        test = np.array([hub])
+        add_part("Yoke_" + L, "yoke", yb, [Mi["metal"], Mi["black"], Mi["grey"], Mi["knob"]], (3.72, sy, 0.05 + DZ),
+                 (3.72, sy + 1, 0.05 + DZ), test, MOVE_FWD, 12, root, col)
 
 
 # ---------------------------------------------------------------------------
@@ -1363,6 +1380,7 @@ def main():
         wingVapor=[G.to_three(list(G.wing_point(np.array(y), np.array(x), np.array(True), 1)))
                    for y in np.linspace(4.5, 21.0, 12) for x in (0.12, 0.25, 0.4, 0.55)],
         parts=PARTS,
+        **COCKPIT_META,
     )
     C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9.glb"), draco=True)
     tris = sum(len(o.data.polygons) for o in bpy.data.objects if o.type == "MESH")
