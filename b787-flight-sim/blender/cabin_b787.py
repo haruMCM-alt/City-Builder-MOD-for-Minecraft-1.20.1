@@ -701,7 +701,7 @@ def proto_seat_y(M, col, parent):
     def on_back(dz, ds=0.0):
         return (0.30 + 0.035 + dz * st + ds, 0.0, 0.82 + dz * ct)
     c = on_back(0.2)
-    sbox(mb, c, (0.006, 0.12, 0.075), SCR, e=0.15, n=(2, 8), tilt=tilt)
+    sbox(mb, c, (0.006, 0.12, 0.075), SCR, e=0.15, n=(12, 16), tilt=tilt)
     c = on_back(-0.08)
     sbox(mb, c, (0.012, 0.19, 0.12), PL, e=0.2, n=(2, 8), tilt=tilt)
     # armrests
@@ -732,7 +732,7 @@ def proto_seat_j(M, col, parent):
         sbox(mb, (0.15, sy * 0.33, 0.62), (0.42, 0.035, 0.5), SHELL, e=0.2, n=(4, 10))
         sbox(mb, (0.0, sy * 0.30, 0.66), (0.3, 0.05, 0.03), PL, e=0.25, n=(4, 8))
     # IFE screen on the back of the shell (for the row behind)
-    sbox(mb, (0.59, 0, 1.0), (0.008, 0.19, 0.12), SCR, e=0.12, n=(2, 8), tilt=math.radians(8))
+    sbox(mb, (0.59, 0, 1.0), (0.008, 0.19, 0.12), SCR, e=0.12, n=(12, 16), tilt=math.radians(8))
     # ottoman / foot well
     sbox(mb, (-0.72, 0, 0.3), (0.16, 0.2, 0.13), FAB, e=0.3, n=(6, 12))
     mb.add_box((-0.72, 0, 0.1), (0.25, 0.3, 0.2), mat=SHELL)
