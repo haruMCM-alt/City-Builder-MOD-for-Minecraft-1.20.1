@@ -29,9 +29,9 @@ const MODEL_EXT = window.B787_MODEL_EXT || '.glb';
 
 // aircraft types (Blender builds: blender/build_b787.py with AC_TYPE) and the AI fleet mix
 const TYPES = [
-  { id: 'b738', asset: 'b737-800', weight: 0.4, short: '737-800', cls: '単通路 Narrow-body' },
-  { id: 'b763', asset: 'b767-300er', weight: 0.3, short: '767-300ER', cls: '双通路 Wide-body' },
-  { id: 'b789', asset: 'b787-9', weight: 0.3, short: '787-9', cls: '双通路 Wide-body' },
+  { id: 'b738', asset: 'b737-800', weight: 1, short: '737-800', cls: '単通路 Narrow-body' },
+  { id: 'b763', asset: 'b767-300er', weight: 1, short: '767-300ER', cls: '双通路 Wide-body' },
+  { id: 'b789', asset: 'b787-9', weight: 1, short: '787-9', cls: '双通路 Wide-body' },
 ];
 const STAND_NOSE = 24.13;       // stands are marked for the 787-9 nose gear position
 const WEATHER_ICONS = { clear: ['☀', '快晴'], scattered: ['🌤', '晴れ時々曇り'], broken: ['⛅', '曇り'], overcast: ['☁', '曇天・低視程'], rain: ['🌧', '雨'] };

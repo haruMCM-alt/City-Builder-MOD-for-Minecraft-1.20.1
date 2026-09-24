@@ -455,12 +455,14 @@ TYPES = {
         TC=[0.155, 0.145, 0.125, 0.105, 0.100], TWIST=[3.5, 3.2, 1.5, -1.0, -1.5],
         WINGLET=dict(r=0.6, theta=72.0, h=2.49, c_tip=0.6, sweep=40.0),
         ENG_Y=4.87, ENG_Z=-1.95, ENG_FWD=2.9, ENG_KA=0.59, ENG_KR=0.55, FAN_BLADES=24, ENG_FLAT=0.16,
-        HT_S_LE0=32.4, HT_C0=4.0, HT_SEMI=7.17, HT_LE=33.0, HT_TIP_C=1.2, HT_Z0=0.45,
-        VT_Z0=1.3, VT_S_LE0=28.0, VT_C0=5.9, VT_TIP_C=1.6, VT_LE=35.0, VT_FIL=(1.4, 4.2),
+        # tail: fin tip trailing edge ~1 m ahead of the tail cone end, stabiliser tips at the APU
+        # exhaust (areas ~ 26 m^2 fin, ~33 m^2 stabiliser as published)
+        HT_S_LE0=33.6, HT_C0=3.7, HT_SEMI=7.17, HT_LE=33.0, HT_TIP_C=1.15, HT_Z0=0.45,
+        VT_Z0=1.3, VT_S_LE0=31.0, VT_C0=6.4, VT_TIP_C=2.0, VT_LE=35.0, VT_FIL=(1.5, 4.5),
         NOSE_TIRE=(0.69, 0.20, 0.17), MAIN_TIRE=(1.13, 0.42, 0.43), MAIN_AXLE_DS=0.0,
         DOORS=[4.55, 33.9], DOOR=(0.86, -0.57, 1.26), DOOR_GAP=0.62,
-        EXITS=[(15.9, 0.51, -0.18, 0.80), (16.8, 0.51, -0.18, 0.80)],
-        WIN=(0.28, 0.25, 0.36, 0.508), WIN_S=(6.1, 33.0),
+        EXITS=[(15.9, 0.51, 0.06, 1.03), (16.8, 0.51, 0.06, 1.03)],
+        WIN=(0.55, 0.25, 0.36, 0.508), WIN_S=(6.1, 33.0),       # window centre ~1.17 m above the floor
         CARGO=[(8.8, 1.22, -1.95, -1.05), (27.8, 1.22, -1.90, -1.05)],
         LABEL="737-800", REG="JA738C", CK=(0.70, -0.505, 0.90, 0.912, -0.365),
         SPEC=dict(S=124.6, b=35.79, c=3.96, OEW=41413, MTOW=79016, MLW=66361, MZFW=62732,

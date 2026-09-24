@@ -425,7 +425,7 @@ let CALLSEQ = 0;
 class AIAircraft {
   constructor(traffic, stand, liv, rnd, tm) {
     this.t = traffic; this.stand = stand; this.liv = liv;
-    this.tm = tm || traffic._pickType(rnd);
+    this.tm = tm || traffic._pickType();
     this.id = ++CALLSEQ;
     this.callsign = (TELEPHONY[liv.logo] || 'Claude') + ' ' + (100 + Math.floor(rnd() * 800)) + (this.tm.heavy ? ' heavy' : '');
     this.sz = stand.cg[2] - this.tm.standShift;           // CG stop on the stand for this type
@@ -529,11 +529,14 @@ export class Traffic {
     this.pc = new PlayerATC(this);
   }
 
-  _pickType(rnd) {
-    const tot = this.types.reduce((a, t) => a + t.weight, 0);
-    let r = rnd() * tot;
-    for (const t of this.types) { r -= t.weight; if (r <= 0) return t; }
-    return this.types[0];
+  // aircraft type for a new AI flight: random, drawn from a shuffled bag so that the three
+  // types stay mixed (no long runs of one type) while the order is unpredictable
+  _pickType() {
+    if (!this._bag || !this._bag.length) {
+      this._bag = this.types.flatMap((t) => [t, t]);
+      for (let i = this._bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [this._bag[i], this._bag[j]] = [this._bag[j], this._bag[i]]; }
+    }
+    return this._bag.pop();
   }
 
   // the player's aircraft type (footprint for separation)
@@ -564,7 +567,7 @@ export class Traffic {
   reset({ stands, skipStand, randomLivery, runway, windDir, windKt, playerStand, playerCallsign }) {
     for (const ac of this.aircraft) { this.scene.remove(ac.static); if (ac.art) this._release(ac.art); }
     for (const v of this.vehicles) this.scene.remove(v.obj);
-    this.aircraft = []; this.vehicles = [];
+    this.aircraft = []; this.vehicles = []; this._bag = null;
     this._timers = [];
     this.radio?.clear();
     this.pc.reset(playerCallsign || 'Claude 101');

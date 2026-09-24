@@ -32,7 +32,7 @@ os.makedirs(TEX, exist_ok=True)
 CABIN = {
     "b789": dict(S0=6.92, S1=55.4, BAND=(-0.55, 0.95), CEIL=1.45, BIN_BOT=0.97, BIN_FRONT=1.36, centre=True,
                  aisle_y=0.955),
-    "b738": dict(S0=4.32, S1=34.6, BAND=(-0.36, 0.82), CEIL=1.56, BIN_BOT=1.08, BIN_FRONT=0.60, centre=False,
+    "b738": dict(S0=4.32, S1=34.6, BAND=(-0.30, 0.92), CEIL=1.56, BIN_BOT=1.08, BIN_FRONT=0.60, centre=False,
                  aisle_y=0.0),
     "b763": dict(S0=5.94, S1=49.0, BAND=(-0.55, 0.95), CEIL=1.45, BIN_BOT=0.97, BIN_FRONT=1.33, centre=True,
                  aisle_y=0.985),
