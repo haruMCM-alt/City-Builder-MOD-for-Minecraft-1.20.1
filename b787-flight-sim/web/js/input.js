@@ -66,7 +66,7 @@ export class Input {
       g: 'gear', x: 'flapsDown', z: 'flapsUp', '/': 'speedbrake', k: 'speedbrake', p: 'parking', n: 'autobrake',
       h: 'reverse', '1': 'ap', '2': 'at', '3': 'hdg', '4': 'alt', '5': 'vs', '6': 'app', '7': 'flch',
       c: 'view', i: 'panel', u: 'hud', l: 'lights', t: 'time', j: 'pushback', Escape: 'menu', Backspace: 'reset',
-      '0': 'direct', m: 'mute', v: 'view', b: 'trafficNext', '9': 'atcVoice',
+      '0': 'direct', m: 'mute', v: 'view', b: 'trafficNext', '9': 'atcVoice', y: 'atc',
     };
     if (e.shiftKey && k === 'r') return this.onCommand('toga');
     if (e.shiftKey && k === 'f') return this.onCommand('idle');

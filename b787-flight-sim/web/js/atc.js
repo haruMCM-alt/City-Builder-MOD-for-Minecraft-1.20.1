@@ -27,15 +27,15 @@ export class Radio {
   }
 
   // who: 'GND' | 'TWR' (controller) or a pilot callsign; text: the transmission
-  say(who, text, { station = null } = {}) {
+  say(who, text, { station = null, me = false } = {}) {
     if (!this.enabled) return;
     const atc = who === 'GND' || who === 'TWR';
     const label = atc ? (who === 'GND' ? 'GROUND' : 'TOWER') : who;
-    this.lines.push({ label, text, atc, t: performance.now() });
+    this.lines.push({ label: me ? label + ' (YOU)' : label, text, atc, me, t: performance.now() });
     if (this.lines.length > 6) this.lines.shift();
     this.render();
     if (this.voice && this.synth) {
-      this.queue.push({ text, atc, pitch: atc ? 1.0 : 0.85 + ((hash(who) % 30) / 100) });
+      this.queue.push({ text, atc, me, pitch: atc ? 1.0 : me ? 1.12 : 0.85 + ((hash(who) % 30) / 100) });
       if (this.queue.length > 4) this.queue.splice(0, this.queue.length - 4);
       this._next();
     }
@@ -70,7 +70,7 @@ export class Radio {
     this.el.innerHTML = this.lines.map((l) => {
       const age = (now - l.t) / 1000;
       const op = Math.max(0.35, 1 - Math.max(0, age - 20) / 40);
-      return `<div class="${l.atc ? 'atc' : 'plt'}" style="opacity:${op.toFixed(2)}"><b>${esc(l.label)}</b> ${esc(l.text)}</div>`;
+      return `<div class="${l.atc ? 'atc' : l.me ? 'me' : 'plt'}" style="opacity:${op.toFixed(2)}"><b>${esc(l.label)}</b> ${esc(l.text)}</div>`;
     }).join('');
     this.el.classList.toggle('hidden', !this.lines.length);
   }

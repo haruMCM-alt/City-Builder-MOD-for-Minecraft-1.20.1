@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { World, HDR, glowTexture } from './world.js';
 import { Path, Mover } from './path.js';
 import { hdg3 } from './atc.js';
+import { PlayerATC } from './playeratc.js';
 import { dressParked } from './livery.js';
 import { terrainHeight } from './terrain.js';
 import { DEG, KT, FT, clamp, lerp, smoothstep, mulberry32 } from './util.js';
@@ -17,8 +18,9 @@ const G = 9.81;
 const TAN3 = Math.tan(3 * DEG);
 const GEAR_Y = 5.2;                    // model origin above the ground on the gear
 const TELEPHONY = { spark: 'Claude', crane: 'Tsuru', skyline: 'Citybird', wave: 'Pacific', fuji: 'Fuji Sky', globe: 'Globelink', plane: 'Swift' };
-const CIRCUIT_ALT = 2500 * FT;
-const BASE_ALT = 1600 * FT;
+const CIRCUIT_ALT = 2000 * FT;
+const BASE_ALT = 1300 * FT;
+const DEPART_ALT = 5000 * FT;
 const TURN_R = 1800;                   // circuit turn radius (25 deg bank at ~180 kt)
 const wrapPi = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
 const compass = (a) => ((a / DEG + 90) % 360 + 360) % 360;
@@ -245,7 +247,7 @@ class Vehicle {
     this.home = null;
     this.task = null;
     this.beaconPhase = Math.random();
-    this.vmax = info.towed ? 6 : type === 'Tug' ? 6 : type === 'Bus' ? 8 : type === 'BagTractor' ? 5 : 7.5;
+    this.vmax = info.towed ? 6 : type === 'Tug' ? 8 : type === 'Bus' ? 8 : type === 'BagTractor' ? 5 : 7.5;
     if (this.parts.Platform) this.parts.Platform.obj.rotation.z = Math.PI / 2;     // folded
   }
 
@@ -487,6 +489,7 @@ export class Traffic {
     this._staticTpl = lodTemplate ? World.mergeByMaterial(lodTemplate.clone(true)) : null;
     this._artTpl = lodTemplate ? buildArticulated(lodTemplate.clone(true)) : null;
     this.player = { x: 0, z: 0, alt: 0, a: 0, v: 0, onGround: true, circles: [], active: false };
+    this.pc = new PlayerATC(this);
   }
 
   _staticModel(liv) {
@@ -511,21 +514,26 @@ export class Traffic {
   _release(art) { art.obj.visible = false; this._artPool.push(art); }
 
   // ------------------------------------------------------------------ setup per scenario
-  reset({ stands, skipStand, randomLivery, runway, windDir, windKt, playerStand }) {
+  reset({ stands, skipStand, randomLivery, runway, windDir, windKt, playerStand, playerCallsign }) {
     for (const ac of this.aircraft) { this.scene.remove(ac.static); if (ac.art) this._release(ac.art); }
     for (const v of this.vehicles) this.scene.remove(v.obj);
     this.aircraft = []; this.vehicles = [];
     this._timers = [];
     this.radio?.clear();
+    this.pc.reset(playerCallsign || 'Claude 101');
     this.rnd = mulberry32((Math.random() * 1e9) | 0);
     this.windDir = windDir; this.windKt = windKt;
     this.rwy = runway;                                     // active runway: '27' or '09'
     this._rl = randomLivery;
-    this.apronOwner = null; this.apronQueue = [];
+    this.apron = new Set(); this.apronQueue = [];
+    this.nextInbound = 50;
+    this.stats = { takeoffs: 0, landings: 0 };
+    this._removeList = [];
     this.runwayOwner = null; this.lastTakeoff = -999;
     this.arrivals = [];
     this.nextDeparture = 25;
     this.playerStand = playerStand;
+    this.skipStand = skipStand;
     if (!this._staticTpl) return;
     const occupied = new Set();
     for (const st of stands) {
@@ -542,11 +550,13 @@ export class Traffic {
     for (let i = parked.length - 1; i > 0; i--) { const j = Math.floor(this.rnd() * (i + 1)); [parked[i], parked[j]] = [parked[j], parked[i]]; }
     parked.forEach((ac, i) => {
       if (i < 3) this._startTurnaround(ac, true);
-      else ac.readyAt = this.time + 60 + i * 50 + this.rnd() * 40;
+      else ac.readyAt = this.time + 5 + (i - 3) * 35 + this.rnd() * 15;
+      if (i === 3 || i === 4) this._stageTug(ac);
     });
-    if (parked[3]) parked[3].readyAt = 8;
-    // an inbound aircraft already on downwind, heading for a free gate
+    // an inbound aircraft already on downwind, heading for a free gate, and a departure
+    // already taxiing to the runway
     if (this.freeStands.length) this._spawnInbound(this.freeStands.shift(), 0.35);
+    if (this.freeStands.length) this._spawnTaxiing(this.freeStands.shift());
   }
 
   // ------------------------------------------------------------------ GSE fleet
@@ -569,7 +579,7 @@ export class Traffic {
       const cols = [];
       for (let k = 0; k < 9; k++) cols.push(dep.x - 40 + k * 10);
       if (dep.side > 0) cols.reverse();
-      const plan = ['Tug', 'Tug', 'Catering', 'Fuel', 'BeltLoader', 'ULD', 'BAG', dep.side < 0 ? 'FollowMe' : 'Bus', 'Van'];
+      const plan = ['Tug', 'Tug', 'Catering', 'Fuel', 'BeltLoader', 'ULD', 'BAG', dep.side < 0 ? 'FollowMe' : 'Bus', 'Tug'];
       plan.forEach((kind, k) => {
         let v;
         if (kind === 'ULD' || kind === 'BAG') {
@@ -706,7 +716,7 @@ export class Traffic {
   // ------------------------------------------------------------------ turnaround
   _startTurnaround(ac, midway = false) {
     const T = ac.turnaround = { t: 0, jobs: [], midway };
-    const jobs = [['BeltLoader', 170], ['Catering', 150], ['Fuel', 140], ['ULDTrain', 160], ['BagTrain', 150]];
+    const jobs = [['BeltLoader', 100], ['Catering', 90], ['Fuel', 90], ['ULDTrain', 100], ['BagTrain', 95]];
     if (midway) {
       // vehicles already in place, part-way through the service
       for (const [kind, dur] of jobs) {
@@ -723,7 +733,7 @@ export class Traffic {
         T.jobs.push({ kind, v, done: false });
       }
     } else {
-      jobs.forEach(([kind, dur], i) => T.jobs.push({ kind, dur, at: 4 + i * 9, v: null, done: false }));
+      jobs.forEach(([kind, dur], i) => T.jobs.push({ kind, dur, at: 4 + i * 6, v: null, done: false }));
     }
     ac.state = 'PARKED';
     ac.readyAt = null;
@@ -771,7 +781,9 @@ export class Traffic {
     }
     if (allDone) {
       ac.turnaround = null;
-      ac.readyAt = this.time + 20 + this.rnd() * 70;
+      ac.readyAt = this.time + 10 + this.rnd() * 30;
+      // the pushback tug comes to the nose while the aircraft waits for its slot
+      if (!ac.tug) { const tug = this._dispatch(ac, 'Tug', 1e9); if (tug) ac.tug = tug; }
     }
   }
 
@@ -785,10 +797,10 @@ export class Traffic {
   _circuitPts(fromX, fromZ, startLeg = 0) {
     const R = this._rw();
     const sv = 1;                                              // circuit to the south, over the sea
-    const U = { x: R.far + R.d * 2500, z: 0 };
-    const C1 = { x: U.x, z: sv * 5000 };
-    const D = { x: R.tx - R.d * 9000, z: sv * 5000 };
-    const F = { x: R.tx - R.d * 9000, z: 0 };
+    const U = { x: R.far + R.d * 1500, z: 0 };
+    const C1 = { x: U.x, z: sv * 4000 };
+    const D = { x: R.tx - R.d * 7000, z: sv * 4000 };
+    const F = { x: R.tx - R.d * 7000, z: 0 };
     const TD = { x: R.tx + R.d * 250, z: 0 };
     const END = { x: R.tx + R.d * 1400, z: 0 };
     const all = [U, C1, D, F, TD, END];
@@ -796,11 +808,11 @@ export class Traffic {
     return pts;
   }
 
-  _startAir(ac, pts, legBase) {
-    const path = new Path(pts, TURN_R, 25);
+  _startAir(ac, pts, legBase, depart = false) {
+    const path = new Path(pts, depart ? 0 : TURN_R, 25);
     const legS = path.vertexS.slice(1);
     const R = this._rw();
-    ac.air = { path, s: 0, legS, legBase, tdS: path.nearestS(R.tx + R.d * 250, 0), extended: false, cleared: false, reported: {} };
+    ac.air = { path, s: 0, legS, legBase, tdS: path.nearestS(R.tx + R.d * 250, 0), extended: false, cleared: false, reported: {}, depart };
     ac.state = 'AIR';
   }
 
@@ -811,20 +823,75 @@ export class Traffic {
     return A.legBase + i;   // 0 upwind, 1 crosswind, 2 downwind, 3 base, 4 final, 5 rollout
   }
 
-  _spawnInbound(stand, frac) {
+  _spawnInbound(stand, frac, straightIn = false) {
     const R = this._rw();
-    const x = lerp(R.far + R.d * 2500, R.tx - R.d * 9000, frac);
     const ac = new AIAircraft(this, stand, this._randLiv(), this.rnd);
-    ac.x = x; ac.z = 5000; ac.a = R.d > 0 ? Math.PI : 0;
-    ac.alt = CIRCUIT_ALT; ac.v = 95; ac.gear = 1; ac.flap = 1; ac.slat = 0.5; ac.n1 = 62;
-    ac.activate();
-    Object.assign(ac.lightsOn, { nav: true, beacon: true, strobe: true, landing: false, logo: true });
-    this._startAir(ac, this._circuitPts(x, 5000, 2), 2);
+    if (straightIn) {
+      // long final: 16 km out on the extended centreline, established on the glide path
+      const dist = 16000;
+      ac.x = R.tx - R.d * dist; ac.z = 0; ac.a = R.d > 0 ? 0 : Math.PI;
+      ac.alt = (dist + 250) * TAN3; ac.v = 82; ac.gear = 0; ac.flap = 20; ac.slat = 1; ac.n1 = 55;
+      ac.activate();
+      this._startAir(ac, [{ x: ac.x, z: 0 }, { x: R.tx + R.d * 250, z: 0 }, { x: R.tx + R.d * 1400, z: 0 }], 4);
+      this.radio?.say(ac.callsign, `City Builder Tower, ${ac.callsign}, established ILS runway ${R.id}, eight miles.`);
+      this._later(3, () => this.radio?.say('TWR', `${ac.callsign}, continue approach runway ${R.id}, report four miles.`));
+    } else {
+      const x = lerp(R.far + R.d * 1500, R.tx - R.d * 7000, frac);
+      ac.x = x; ac.z = 4000; ac.a = R.d > 0 ? Math.PI : 0;
+      ac.alt = CIRCUIT_ALT; ac.v = 95; ac.gear = 1; ac.flap = 1; ac.slat = 0.5; ac.n1 = 62;
+      ac.activate();
+      this._startAir(ac, this._circuitPts(x, 4000, 2), 2);
+      this.radio?.say(ac.callsign, `City Builder Tower, ${ac.callsign}, ${R.d < 0 ? 'left' : 'right'} downwind runway ${R.id}, full stop.`);
+      this._later(3, () => this.radio?.say('TWR', `${ac.callsign}, number one, report final runway ${R.id}.`));
+    }
+    Object.assign(ac.lightsOn, { nav: true, beacon: true, strobe: true, landing: straightIn, logo: true });
     ac.inbound = true;
     this.aircraft.push(ac);
-    this.radio?.say(ac.callsign, `City Builder Tower, ${ac.callsign}, ${R.d < 0 ? 'left' : 'right'} downwind runway ${R.id}, full stop.`);
-    this._later(3, () => this.radio?.say('TWR', `${ac.callsign}, number one, report final runway ${R.id}.`));
     return ac;
+  }
+
+  _spawnTaxiing(stand) {
+    const R = this._rw();
+    const G = this.G;
+    const link = R.d < 0 ? G.apronLinks[G.apronLinks.length - 1] : G.apronLinks[0];
+    const ac = new AIAircraft(this, stand, this._randLiv(), this.rnd);
+    ac.x = link; ac.z = G.taxilaneZ + 20; ac.a = Math.PI / 2;     // on the link, heading for Alpha
+    ac.n1 = 26; ac.gear = 0; ac.flap = 5; ac.slat = 1;
+    ac.plan = 'depart';
+    ac.activate();
+    this.aircraft.push(ac);
+    this._startTaxiOut(ac);
+    this.radio?.say('GND', `${ac.callsign}, taxi to holding point ${ac.depConn || ''} runway ${R.id} via Alpha.`);
+    return ac;
+  }
+
+  // a new arrival from outside, when a gate is free and the sky near the airport has room
+  _maybeSpawnInbound() {
+    if (!this.freeStands.length) return false;
+    const R = this._rw();
+    const air = this.aircraft.filter((a) => a.state === 'AIR');
+    if (air.filter((a) => a.inbound).length >= 3) return false;
+    const straight = this.rnd() < 0.5;
+    const frac = 0.1 + this.rnd() * 0.3;
+    const sx = straight ? R.tx - R.d * 16000 : lerp(R.far + R.d * 1500, R.tx - R.d * 7000, frac);
+    const sz = straight ? 0 : 4000;
+    for (const a of air) if (Math.hypot(a.x - sx, a.z - sz) < 6000) return false;
+    if (straight && air.some((a) => a.air && this._leg(a) >= 3 && a.air.tdS - a.air.s > 6000)) return false;
+    const i = Math.floor(this.rnd() * this.freeStands.length);
+    const st = this.freeStands.splice(i, 1)[0];
+    this._spawnInbound(st, frac, straight);
+    return true;
+  }
+
+  _remove(ac) {
+    this.scene.remove(ac.static);
+    if (ac.art) this._release(ac.art);
+    ac.art = null;
+    this.apron.delete(ac);
+    const qi = this.apronQueue.indexOf(ac);
+    if (qi >= 0) this.apronQueue.splice(qi, 1);
+    if (ac.stand && ac.stand.id !== this.skipStand) this.freeStands.push(ac.stand);
+    this.aircraft = this.aircraft.filter((a) => a !== ac);
   }
 
   _randLiv() { return this._rl ? this._rl(this.rnd) : { name: 'Claude Air', logo: 'spark' }; }
@@ -834,7 +901,7 @@ export class Traffic {
   // ground routes -------------------------------------------------------------------
   _pushbackPts(ac) {
     const R = this._rw();
-    const xs = ac.stand.cg[0], zc = ac.stand.cg[2], tl = this.G.taxilaneZ;
+    const xs = ac.stand.cg[0], zc = ac.stand.cg[2], tl = this.G.pushZ ?? -340;
     // the aircraft must end up facing the departure end (taxi towards +d on the taxilane for 27:
     // east), so the tail swings the other way
     const face = R.d < 0 ? 1 : -1;
@@ -845,9 +912,12 @@ export class Traffic {
     const R = this._rw();
     const G = this.G;
     const link = R.d < 0 ? G.apronLinks[G.apronLinks.length - 1] : G.apronLinks[0];
-    const conn = R.d < 0 ? G.connectors[G.connectors.length - 1] : G.connectors[0];
+    // intersection departure from the connector that still leaves ~2.4 km of runway
+    const conns = G.connectors.slice().sort((a, b) => (a - b) * R.d);
+    const conn = conns.find((c) => (R.far - c) * R.d > 2350 && (c - link) * -R.d > 40) ?? conns[0];
+    ac.depConn = 'A' + (G.connectors.indexOf(conn) + 1);
     const lineX = conn + R.d * 45;
-    const pts = [{ x: ac.x, z: ac.z, v: 9 }, { x: link, z: G.taxilaneZ, v: 9 }, { x: link, z: G.twyZ, v: 10 }, { x: conn, z: G.twyZ, v: 9 },
+    const pts = [{ x: ac.x, z: ac.z, v: 12 }, { x: link, z: ac.z, v: 12 }, { x: link, z: G.twyZ, v: 12 }, { x: conn, z: G.twyZ, v: 10 },
       { x: conn, z: G.holdZ, v: 6 }, { x: conn, z: 0, v: 6 }, { x: lineX, z: 0, v: 4 }];
     return { pts, holdIdx: 4 };
   }
@@ -860,8 +930,8 @@ export class Traffic {
     const link = R.d < 0 ? G.apronLinks[1] : G.apronLinks[2];
     const xs = ac.stand.cg[0], zc = ac.stand.cg[2];
     ac.exitName = 'A' + (G.connectors.indexOf(conn) + 1);
-    const pts = [{ x: ac.x, z: ac.z }, { x: conn, z: 0, v: 7 }, { x: conn, z: G.twyZ, v: 9 },
-      { x: link, z: G.twyZ, v: 9 }, { x: link, z: G.taxilaneZ, v: 8 }, { x: xs, z: G.taxilaneZ, v: 7 }, { x: xs, z: zc + 30, v: 3 }, { x: xs, z: zc, v: 1.2 }];
+    const pts = [{ x: ac.x, z: ac.z }, { x: conn, z: 0, v: 7 }, { x: conn, z: G.twyZ, v: 12 },
+      { x: link, z: G.twyZ, v: 12 }, { x: link, z: G.taxilaneZ, v: 10 }, { x: xs, z: G.taxilaneZ, v: 9 }, { x: xs, z: zc + 30, v: 3 }, { x: xs, z: zc, v: 1.2 }];
     const rad = [0, 40, 45, 45, 40, 32, 0, 0];
     return { pts, rad, holdIdx: 3 };
   }
@@ -877,18 +947,20 @@ export class Traffic {
     Object.assign(P, env.player || {});
     P.active = !!env.player;
     if (P.active) acCircles(P.x, P.z, P.a, P.circles);
-    this.movingAircraft = this.aircraft.filter((a) => !['PARKED', 'AIR', 'TUG', 'REQ_PUSH'].includes(a.state));
+    this.movingAircraft = this.aircraft.filter((a) => !['PARKED', 'AIR', 'TUG', 'REQ_PUSH', 'PUSH_WAIT'].includes(a.state));
     if (P.active && P.onGround) this.movingAircraft.push(P);
     // timers
     if (this._timers) {
       for (let i = this._timers.length - 1; i >= 0; i--) if (this._timers[i].t <= this.time) { const f = this._timers[i].f; this._timers.splice(i, 1); f(); }
     }
     this._atc(dt);
+    if (P.active) this.pc.update(dt);
     for (const ac of this.aircraft) {
       this._updateTurnaround(ac, dt);
       this._aiStep(ac, dt);
     }
     for (const v of this.vehicles) v.update(dt);
+    while (this._removeList.length) this._remove(this._removeList.pop());
     // lights and visibility culling
     const cam = env.camera.position;
     const L = this.lights;
@@ -929,11 +1001,12 @@ export class Traffic {
       if (ac.state === 'ROLLOUT' && !ac.vacated) return ac;
     }
     const P = this.player;
-    if (P.active && P.alt < 50 && Math.abs(P.z) < 45 && Math.abs(P.x) < 1850) return P;
+    if (except !== P && P.active && P.alt < 50 && Math.abs(P.z) < 45 && Math.abs(P.x) < 1850) return P;
+    if (except !== P && P.active && this.pc.runwayClaim()) return P;
     return null;
   }
 
-  _arrivalEta() {
+  _arrivalEta(forPlayer = false) {
     let eta = Infinity;
     for (const ac of this.aircraft) {
       if (ac.state !== 'AIR' || !ac.air) continue;
@@ -943,7 +1016,7 @@ export class Traffic {
       eta = Math.min(eta, rem / Math.max(ac.v, 50));
     }
     const P = this.player;
-    if (P.active && !P.onGround && P.alt < 900 && Math.abs(P.z) < 1500) {
+    if (!forPlayer && P.active && !P.onGround && P.alt < 900 && Math.abs(P.z) < 1500) {
       const R = this._rw();
       const along = (R.tx - P.x) * R.d;          // distance before the threshold
       const hd = Math.abs(wrapPi(P.a - (R.d > 0 ? 0 : Math.PI)));
@@ -957,27 +1030,38 @@ export class Traffic {
     // departures: schedule the next pushback
     if (this.time > this.nextDeparture) {
       const airborne = this.aircraft.filter((a) => ['AIR', 'TAKEOFF'].includes(a.state)).length;
-      const outbound = this.aircraft.filter((a) => ['TUG', 'REQ_PUSH', 'PUSH', 'TAXI_OUT', 'HOLDING', 'LINEUP', 'WAIT_TKOF'].includes(a.state)).length;
-      const cand = this.aircraft.filter((a) => a.state === 'PARKED' && !a.turnaround && a.readyAt != null && a.readyAt < this.time);
-      if (cand.length && airborne < 3 && outbound < 2) {
-        const ac = cand[Math.floor(this.rnd() * cand.length)];
+      const outbound = this.aircraft.filter((a) => ['TUG', 'REQ_PUSH', 'PUSH_WAIT', 'PUSH', 'TAXI_WAIT', 'TAXI_OUT', 'HOLDING', 'LINEUP', 'WAIT_TKOF'].includes(a.state)).length;
+      const cand = this.aircraft.filter((a) => a.state === 'PARKED' && !a.turnaround && a.readyAt != null && a.readyAt < this.time)
+        .sort((a, b) => a.readyAt - b.readyAt);
+      if (cand.length && airborne < 5 && outbound < 3) {
+        const ac = cand[0];
+        // about half the departures leave the area; the others fly a circuit and come back
+        ac.plan = this.rnd() < 0.45 ? 'depart' : 'circuit';
         this._callTug(ac);
-        this.nextDeparture = this.time + 100 + this.rnd() * 80;
-      } else this.nextDeparture = this.time + 10;
+        this.nextDeparture = this.time + 40 + this.rnd() * 30;
+      } else this.nextDeparture = this.time + 6;
     }
-    // apron: one mover at a time (arrivals first)
-    if (!this.apronOwner && this.apronQueue.length) {
-      this.apronQueue.sort((a, b) => (a.state === 'TAXI_IN' ? 0 : 1) - (b.state === 'TAXI_IN' ? 0 : 1));
-      const ac = this.apronQueue.shift();
-      this.apronOwner = ac;
-      if (ac.state === 'REQ_PUSH') {
-        const face = R.d < 0 ? 'east' : 'west';
-        this.radio?.say('GND', `${ac.callsign}, push back and start up approved, facing ${face}.`);
-        this._later(2.5, () => this.radio?.say(ac.callsign, `Push and start approved, facing ${face}, ${ac.callsign}.`));
-        this._later(4, () => this._beginPush(ac));
-      } else if (ac.state === 'TAXI_IN') {
-        this.radio?.say('GND', `${ac.callsign}, continue via apron taxilane to stand ${ac.stand.id}.`);
-        if (ac.apronHold) ac.apronHold.cleared = true;
+    // arrivals from outside to free gates
+    if (this.time > this.nextInbound) {
+      this.nextInbound = this.time + (this._maybeSpawnInbound() ? 70 + this.rnd() * 60 : 12);
+    }
+    // apron taxilane: departures may share it when well apart; an arrival gets it to itself
+    if (this.apronQueue.length) {
+      const q = this.apronQueue.slice().sort((a, b) => (a.state === 'TAXI_IN' ? 0 : 1) - (b.state === 'TAXI_IN' ? 0 : 1));
+      for (const ac of q) {
+        if (!this._apronOk(ac)) continue;
+        this.apronQueue.splice(this.apronQueue.indexOf(ac), 1);
+        this.apron.add(ac);
+        if (ac.state === 'REQ_PUSH') {
+          const face = R.d < 0 ? 'east' : 'west';
+          this.radio?.say('GND', `${ac.callsign}, push back and start up approved, facing ${face}.`);
+          this._later(2.5, () => this.radio?.say(ac.callsign, `Push and start approved, facing ${face}, ${ac.callsign}.`));
+          this._later(4, () => this._beginPush(ac));
+          ac.state = 'PUSH_WAIT';
+        } else if (ac.state === 'TAXI_IN') {
+          this.radio?.say('GND', `${ac.callsign}, continue via apron taxilane to stand ${ac.stand.id}.`);
+          if (ac.apronHold) ac.apronHold.cleared = true;
+        }
       }
     }
     // runway: line up / take-off clearance
@@ -985,11 +1069,13 @@ export class Traffic {
     const eta = this._arrivalEta();
     const hold = this.aircraft.filter((a) => a.state === 'HOLDING').sort((a, b) => a.holdT - b.holdT)[0];
     const lined = this.aircraft.find((a) => a.state === 'WAIT_TKOF' || (a.state === 'LINEUP'));
-    if (hold && !lined && !busy && eta > 70 && this.time - this.lastTakeoff > 70) {
+    const pw = this.pc.waiting;
+    const playerFirst = pw && (!hold || pw.t < hold.holdT);
+    if (hold && !playerFirst && !lined && !busy && eta > 55 && this.time - this.lastTakeoff > 55) {
       hold.state = 'LINEUP';
       hold.onRunwayArmed = true;
       if (hold.lineHold) hold.lineHold.cleared = true;
-      const clearNow = eta > 110;
+      const clearNow = eta > 80;
       hold.tkofCleared = clearNow;
       if (clearNow) {
         this.radio?.say('TWR', `${hold.callsign}, wind ${hdg3(this.windDir)} at ${Math.round(this.windKt)} knots, runway ${R.id}, cleared for take-off.`);
@@ -998,14 +1084,14 @@ export class Traffic {
         this.radio?.say('TWR', `${hold.callsign}, runway ${R.id}, line up and wait.`);
         this._later(2.5, () => this.radio?.say(hold.callsign, `Line up and wait runway ${R.id}, ${hold.callsign}.`));
       }
-    } else if (hold && !hold.toldHold && (busy || eta <= 70)) {
+    } else if (hold && !hold.toldHold && (busy || eta <= 55)) {
       hold.toldHold = true;
-      if (eta <= 70) this.radio?.say('TWR', `${hold.callsign}, hold short runway ${R.id}, landing traffic.`);
+      if (eta <= 55) this.radio?.say('TWR', `${hold.callsign}, hold short runway ${R.id}, landing traffic.`);
     }
     for (const ac of this.aircraft) {
       if ((ac.state === 'WAIT_TKOF' || ac.state === 'LINEUP') && !ac.tkofCleared) {
         const e = this._arrivalEta();
-        if (e > 110 && !this._runwayBusy(ac)) {
+        if (e > 80 && !this._runwayBusy(ac)) {
           ac.tkofCleared = true;
           this.radio?.say('TWR', `${ac.callsign}, runway ${R.id}, cleared for take-off.`);
           this._later(2.5, () => this.radio?.say(ac.callsign, `Cleared for take-off, ${ac.callsign}.`));
@@ -1036,26 +1122,78 @@ export class Traffic {
     }
   }
 
+  // put a tug straight onto the nose gear (scenario start)
+  _stageTug(ac) {
+    const dep = ac.stand.cg[0] < 0 ? this.depots[0] : this.depots[1];
+    const v = this._free(dep, 'Tug');
+    if (!v) return;
+    v.task = { ac, kind: 'Tug', dur: 1e9, plan: this._servicePlan('Tug', ac.stand, 0, 0), t: 0 };
+    v.state = 'SERVICE';
+    this._onServiceArrive(v);
+    ac.tug = v;
+  }
+
   _callTug(ac) {
     ac.state = 'TUG';
-    const tug = this._dispatch(ac, 'Tug', 1e9);
+    const tug = ac.tug || this._dispatch(ac, 'Tug', 1e9);
     ac.tug = tug;
     ac.activate();
     Object.assign(ac.lightsOn, { nav: true, beacon: false, logo: true });
     if (!tug) { ac.state = 'REQ_PUSH'; this._requestPush(ac); }
   }
 
+  // stretch of the apron taxilane (x interval) an aircraft will use
+  _apronSpan(ac) {
+    const R = this._rw();
+    const G = this.G;
+    const dirTaxi = R.d < 0 ? 1 : -1;                  // departures taxi east for 27
+    const xs = ac.stand.cg[0];
+    if (ac.state === 'TAXI_IN') {
+      const link = R.d < 0 ? G.apronLinks[1] : G.apronLinks[2];
+      return [Math.min(link, xs) - 45, Math.max(link, xs) + 45];
+    }
+    const link = R.d < 0 ? G.apronLinks[G.apronLinks.length - 1] : G.apronLinks[0];
+    const x0 = ['PUSH', 'PUSH_WAIT', 'REQ_PUSH', 'TUG'].includes(ac.state) ? xs : ac.x;
+    const back = x0 - dirTaxi * 115;
+    return dirTaxi > 0 ? [Math.min(back, x0), link + 30] : [link - 30, Math.max(back, x0)];
+  }
+
+  _apronOk(ac) {
+    const R = this._rw();
+    const dirTaxi = R.d < 0 ? 1 : -1;
+    const ov = (a, b) => a[0] < b[1] && b[0] < a[1];
+    const mine = this._apronSpan(ac);
+    const arrival = ac.state === 'TAXI_IN';
+    // the player moving (or about to push back) on the apron
+    const P = this.player;
+    if (P.active && P.onGround && P.z < -215 && P.z > -505 && (P.v > 0.5 || this.pc.s.push)) {
+      if (arrival ? (P.x > mine[0] - 60 && P.x < mine[1] + 60) : Math.abs(P.x - ac.stand.cg[0]) < 230) return false;
+    }
+    for (const u of this.apron) {
+      const uArr = u.state === 'TAXI_IN';
+      if (arrival || uArr) { if (ov(mine, this._apronSpan(u))) return false; continue; }
+      const xs = ac.stand.cg[0];
+      if (['PUSH', 'PUSH_WAIT'].includes(u.state)) { if (Math.abs(u.stand.cg[0] - xs) < 230) return false; continue; }
+      if ((u.x - xs) * dirTaxi < 160) return false;     // still behind or abeam: it would pass our push
+    }
+    // departures do not cut in front of a waiting arrival whose path they would block
+    if (!arrival) {
+      for (const q of this.apronQueue) if (q.state === 'TAXI_IN' && ov(mine, this._apronSpan(q))) return false;
+    }
+    return true;
+  }
+
   _requestPush(ac) {
     ac.state = 'REQ_PUSH';
     ac.lightsOn.beacon = true;
     this.radio?.say(ac.callsign, `City Builder Ground, ${ac.callsign}, stand ${ac.stand.id}, request push back and start up.`);
-    if (this.apronOwner || this.apronQueue.length) this._later(3, () => this.radio?.say('GND', `${ac.callsign}, standby, expect push back in two minutes.`));
+    if (this.apron.size || this.apronQueue.length) this._later(3, () => this.radio?.say('GND', `${ac.callsign}, standby, expect push back in two minutes.`));
     this.apronQueue.push(ac);
   }
 
   _beginPush(ac) {
     const pts = this._pushbackPts(ac);
-    ac.mover = new Mover(new Path(pts, 45, 2), { vmax: 2.2, acc: 0.15, dec: 0.3, aLat: 0.15, dir: -1 });
+    ac.mover = new Mover(new Path(pts, 45, 2), { vmax: 2.8, acc: 0.2, dec: 0.35, aLat: 0.18, dir: -1 });
     ac.state = 'PUSH';
     ac.startT = 0;
   }
@@ -1111,7 +1249,7 @@ export class Traffic {
           ac.tug = null;
           this._later(4, () => this.radio?.say(ac.callsign, `${ac.callsign}, ready to taxi.`));
           this._later(7, () => {
-            this.radio?.say('GND', `${ac.callsign}, taxi to holding point runway ${R.id} via Alpha. QNH one zero one three.`);
+            this.radio?.say('GND', `${ac.callsign}, taxi to holding point ${ac.depConn || ''} runway ${R.id} via Alpha. QNH one zero one three.`);
             this._later(3, () => this.radio?.say(ac.callsign, `Taxi to holding point runway ${R.id} via Alpha, ${ac.callsign}.`));
             this._startTaxiOut(ac);
           });
@@ -1128,7 +1266,7 @@ export class Traffic {
         const p = ac.mover.update(dt);
         ac.x = p.x; ac.z = p.z; ac.a = p.a; ac.v = ac.mover.v;
         ac.n1 = lerp(ac.n1, ac.v < 0.5 && ac.mover.limit > 1 ? 32 : 26, Math.min(1, dt));
-        if (this.apronOwner === ac && ac.z > this.G.taxilaneZ + 25) this.apronOwner = null;
+        if (this.apron.has(ac) && ac.z > this.G.taxilaneZ + 12) this.apron.delete(ac);
         if (ac.state === 'TAXI_OUT' && ac.mover.atHold()) {
           ac.state = 'HOLDING'; ac.holdT = this.time;
           this.radio?.say(ac.callsign, `City Builder Tower, ${ac.callsign}, holding point runway ${R.id}, ready for departure.`);
@@ -1152,9 +1290,16 @@ export class Traffic {
           ac.state = 'AIR';
           ac.liftoffT = this.time;
           this.lastTakeoff = this.time;
-          this._startAir(ac, this._circuitPts(ac.x, ac.z, 0), 0);
+          this.stats.takeoffs++;
           ac.onRunwayArmed = false;
           ac.lightsOn.taxi = false;
+          if (ac.plan === 'depart') {
+            this._startAir(ac, [{ x: ac.x, z: ac.z }, { x: ac.x + R.d * 26000, z: ac.z }], 0, true);
+            this._later(6, () => this.radio?.say('TWR', `${ac.callsign}, climb and maintain five thousand feet, contact Departure one two five decimal three, good day.`));
+            this._later(10, () => this.radio?.say(ac.callsign, `Five thousand, one two five decimal three, ${ac.callsign}, good day.`));
+            break;
+          }
+          this._startAir(ac, this._circuitPts(ac.x, ac.z, 0), 0);
           const turn = R.d < 0 ? 'left' : 'right';
           this._later(6, () => this.radio?.say('TWR', `${ac.callsign}, after departure ${turn} turn, climb ${Math.round(CIRCUIT_ALT / FT)} feet, join ${turn} downwind runway ${R.id}, report downwind.`));
           this._later(10, () => this.radio?.say(ac.callsign, `${turn[0].toUpperCase() + turn.slice(1)} downwind runway ${R.id}, ${ac.callsign}.`));
@@ -1188,7 +1333,7 @@ export class Traffic {
         if (ac.state === 'TAXI_IN' && ac.mover.done) {
           ac.state = 'PARKED'; ac.parkT = 0; ac.v = 0; ac.inbound = false;
           Object.assign(ac.lightsOn, { taxi: false, strobe: false, landing: false });
-          if (this.apronOwner === ac) this.apronOwner = null;
+          this.apron.delete(ac);
           ac.apronReq = false;
           this._startTurnaround(ac);
         }
@@ -1203,7 +1348,7 @@ export class Traffic {
   _startTaxiOut(ac) {
     const { pts, holdIdx } = this._taxiOutPts(ac);
     const path = new Path(pts, [0, 40, 40, 45, 0, 35, 0], 2);
-    ac.mover = new Mover(path, { vmax: 10, acc: 0.45, dec: 0.9, aLat: 0.9 });
+    ac.mover = new Mover(path, { vmax: 12, acc: 0.5, dec: 0.9, aLat: 0.9 });
     const hs = path.nearestS(pts[holdIdx].x, pts[holdIdx].z);
     ac.lineHold = ac.mover.hold(hs - 2, 'hold');
     ac.state = 'TAXI_OUT';
@@ -1230,7 +1375,7 @@ export class Traffic {
     const kx = bx + c * 4, kz = bz + s * 4;
     const home = this._roadHome(tug);
     const legs = [{ path: new Path([{ x: tug.x, z: tug.z }, { x: bx, z: bz }], 0), dir: -1 },
-      { path: new Path([{ x: bx, z: bz }, { x: kx, z: kz }, { x: kx, z: this.G.taxilaneZ - 60 }, { x: kx, z: home.laneZ }].concat(home.tail), 6) }];
+      { path: new Path([{ x: bx, z: bz }, { x: kx, z: kz }, { x: kx, z: kz - 25 }, { x: kx, z: home.laneZ }].concat(home.tail), 6) }];
     tug.state = 'RETURN';
     tug.task = null;
     tug.go(legs, () => { tug.released = null; this._park(tug); });
@@ -1272,12 +1417,18 @@ export class Traffic {
   _fly(ac, dt) {
     const A = ac.air;
     const R = this._rw();
-    const leg = this._leg(ac);
+    const leg = A.depart ? 0 : this._leg(ac);
     const rem = A.tdS - A.s;
     // targets per leg
     let vT = 95, altT = CIRCUIT_ALT, flapT = 0, gearT = 1;
     const agl = ac.alt;
     if (leg === 0) { vT = agl < 150 ? 86 : 103; flapT = agl < 250 ? 5 : ac.v > 95 ? 1 : 5; gearT = this.time - (ac.liftoffT || 0) > 3 ? 1 : 0; }
+    if (A.depart) {
+      // straight-out departure: climb to 5000 ft, accelerate to 250 kt, then leave the area
+      altT = DEPART_ALT; vT = agl < 150 ? 86 : agl < 900 ? 112 : 128;
+      flapT = agl < 250 ? 5 : ac.v > 105 ? 0 : 1;
+      if (A.s > A.path.length - 60) { this._removeList.push(ac); A.s = A.path.length - 59; }
+    }
     else if (leg === 1) { vT = 103; flapT = 0; }
     else if (leg === 2) {
       const toBase = A.legS[2 - A.legBase] !== undefined ? A.legS[2 - A.legBase] - A.s : 1e9;
@@ -1325,7 +1476,7 @@ export class Traffic {
       if (agl < 7) vsT = -(0.8 + 0.3 * agl);
     } else {
       altT = Math.max(altT, ground + 250);
-      vsT = clamp((altT - agl) * 0.06, leg === 3 ? -5 : -8, leg === 0 ? 12 : 8);
+      vsT = clamp((altT - agl) * 0.06, leg === 3 ? -5 : -8, leg === 0 ? 13 : 8);
     }
     ac.vs += clamp(vsT - ac.vs, -1.6 * dt, 1.6 * dt);
     ac.alt += ac.vs * dt;
@@ -1358,7 +1509,7 @@ export class Traffic {
   _spacingOk(ac) {
     const R = this._rw();
     // distance I would still have to fly if I turned base now
-    const mine = TURN_R * 2 + 5000 + Math.abs(ac.x - (R.tx + R.d * 250));
+    const mine = TURN_R * 2 + 4000 + Math.abs(ac.x - (R.tx + R.d * 250));
     for (const o of this.aircraft) {
       if (o === ac) continue;
       if (o.state === 'AIR' && o.air && !o.air.extended) {
@@ -1382,6 +1533,7 @@ export class Traffic {
     const hs = path.nearestS(pts[holdIdx].x, pts[holdIdx].z) - 70;
     ac.apronHold = ac.mover.hold(hs, 'apron');
     ac.state = 'ROLLOUT'; ac.vacated = false;
+    this.stats.landings++;
     ac.air = null;
     ac.goAround = false;
     this.env?.touchdown?.(ac);

@@ -44,6 +44,7 @@ STAND_XS = [-520.0 + 80.0 * k for k in range(14)]
 STAND_NOSE_Y = 488.0
 APRON_LINKS = [-640.0, -240.0, 240.0, 640.0]   # apron taxilane <-> taxiway A
 TAXILANE_Y = 262.0
+PUSH_Y = 340.0                                 # push-back / departure taxilane
 SERVICE_Y = 415.0                              # GSE service road behind the parked tails
 GSE_DEPOTS = [(-690.0, 460.0), (690.0, 460.0)]  # ground-equipment parking at the apron ends
 S_CG_FROM_NOSE = 31.85
@@ -369,6 +370,10 @@ def build_airfield(M, col):
     rect(mk, 0, 262, 1480, 0.3, 0, Z_MK, 1)
     for xl in APRON_LINKS:
         rect(mk, xl, (TWY_Y + TAXILANE_Y) / 2, 0.3, TAXILANE_Y - TWY_Y, 0, Z_MK, 1)
+    # inner push-back lane in front of the stands (departures taxi out along it)
+    rect(mk, 0, PUSH_Y, 1480, 0.3, 0, Z_MK, 1)
+    for xl in APRON_LINKS:
+        rect(mk, xl, (TAXILANE_Y + PUSH_Y) / 2, 0.3, PUSH_Y - TAXILANE_Y, 0, Z_MK, 1)
     # GSE service road (white edge lines, dashed centre) and equipment parking boxes
     for sy in (-6.0, 6.0):
         rect(mk, 0, SERVICE_Y + sy, 1480, 0.2, 0, Z_MK, 0)
@@ -1004,7 +1009,7 @@ def main():
         river=dict(x=RIVER_X, width=RIVER_W, z0=-9800.0, z1=-COAST_Y),
         lights=LIGHTS,
         # ground movement network (three.js x, z = -design y)
-        ground=dict(twyZ=-TWY_Y, taxilaneZ=-TAXILANE_Y, serviceZ=-SERVICE_Y, apronZ=[-APRON_Y1, -APRON_Y0],
+        ground=dict(twyZ=-TWY_Y, taxilaneZ=-TAXILANE_Y, pushZ=-PUSH_Y, serviceZ=-SERVICE_Y, apronZ=[-APRON_Y1, -APRON_Y0],
                     connectors=conns, apronLinks=APRON_LINKS, holdZ=-89.0,
                     rapidExits=[dict(rwy="27", x0=350.0, x1=350.0 - 310.0 * math.cos(math.radians(30))),
                                 dict(rwy="09", x0=-450.0, x1=-450.0 + 310.0 * math.cos(math.radians(30)))],

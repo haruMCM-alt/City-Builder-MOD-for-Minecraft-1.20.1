@@ -238,6 +238,7 @@ class App {
     $('retryBtn').onclick = () => { $('crash').classList.add('hidden'); this.startScenario(this.scenario, true); };
     $('menuBtn').onclick = () => { $('crash').classList.add('hidden'); this.openMenu(); };
     $('btnView').onclick = () => this.command('view');
+    $('atcHint').onclick = () => this.command('atc');
     $('btnPanel').onclick = () => this.command('panel');
     $('btnMenu').onclick = () => this.command('menu');
     $('resumeBtn').onclick = () => this.resume();
@@ -301,7 +302,7 @@ class App {
     $('pause').classList.add('hidden');
     this.paused = true;
     $('menu').classList.remove('hidden');
-    ['mcp', 'panel', 'status', 'corner', 'touch', 'atc'].forEach((i) => $(i).classList.add('hidden'));
+    ['mcp', 'panel', 'status', 'corner', 'touch', 'atc', 'atcHint'].forEach((i) => $(i).classList.add('hidden'));
   }
 
   applyLivery() {
@@ -497,7 +498,10 @@ class App {
       this.traffic.enabled = $('traffic') ? $('traffic').checked : true;
       this.radio.voice = $('atcVoice') ? $('atcVoice').checked : true;
       this.radio.enabled = run;
-      this.traffic.reset({ stands: W.stands, skipStand, randomLivery, runway: head27 < -3 ? '09' : '27', windDir: wdir, windKt: wkt });
+      const tel = (this.livery?.name || 'Claude').split(/\s+/)[0];
+      this.playerCallsign = `${tel} ${100 + Math.floor(Math.random() * 800)}`;
+      this.traffic.reset({ stands: W.stands, skipStand, randomLivery, runway: head27 < -3 ? '09' : '27', windDir: wdir, windKt: wkt,
+        playerCallsign: this.playerCallsign });
       this.radio.enabled = true;
       this.trafficFocus = null;
     }
@@ -595,6 +599,9 @@ class App {
         break;
       case 'direct': sys.lawDirect = !sys.lawDirect; this.toast('Flight controls ' + (sys.lawDirect ? 'DIRECT (Home/End でトリム)' : 'NORMAL')); break;
       case 'mute': this.audio.enabled = !this.audio.enabled; this.toast('Sound ' + (this.audio.enabled ? 'ON' : 'OFF')); break;
+      case 'atc':
+        if (this.traffic && !this.paused) this.traffic.pc.request();
+        break;
       case 'trafficNext':
         if (!this.traffic) break;
         if (this.rig.view !== 'traffic') { this.rig.setView('traffic'); $('panel').classList.add('hidden'); }
@@ -840,6 +847,15 @@ class App {
     b.classList.toggle('hidden', !txt);
     this.updateMCP(false);
     if (s._apWasOn !== s.ap.on) s._apWasOn = s.ap.on;
+    // radio: what the player can ask ATC next
+    if (this.traffic && this.traffic.enabled) {
+      const h = this.traffic.pc.hint();
+      const el = $('atcHint');
+      const txt = h ? `📻 ${this.playerCallsign} — <b>Y</b> ${h}` : `📻 ${this.playerCallsign}`;
+      if (el.innerHTML !== txt) el.innerHTML = txt;
+      el.classList.remove('hidden');
+      el.classList.toggle('ready', !!h);
+    }
   }
 }
 
