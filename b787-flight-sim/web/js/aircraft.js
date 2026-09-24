@@ -31,8 +31,12 @@ export class AircraftVisual {
     this.scene = scene;
     this.root = gltf.scene;
     this.quality = quality;
+    // wing flex law (787-9: bends outboard of 3 m, ~ (y/27 m)^2, everything ahead of x = -15.5 m)
+    const kS = (meta.span || 60.12) / 60.12, kL = (meta.length || 62.81) / 62.81, kW = (meta.fusW || 5.77) / 5.77;
+    this.flexR = 3.0 * kW; this.flexD = (27 * kS) ** 2; this.flexX = -15.5 * kL;
     this.flexUniforms = {
       uFlex: { value: 0 }, uRootInv: { value: new THREE.Matrix4() }, uRootUp: { value: new THREE.Vector3(0, 1, 0) },
+      uFlexK: { value: new THREE.Vector3(this.flexR, this.flexD, this.flexX) },
     };
     this.flex = 0; this.flexVel = 0;
     this.livU = meta.livery ? liveryUniforms(meta.livery) : null;
@@ -47,7 +51,8 @@ export class AircraftVisual {
     this.wheelR = [wr(0), wr(1)];
     this.cockpit = COCKPIT_PARTS.map((n) => this.root.getObjectByName(n)).filter(Boolean);
     // flight-deck fill lights (model frame: x fwd from the CG, y up): windshield and rear
-    this.fill = [[28.2, 1.3, 0], [26.4, 1.45, 0]].map(([x, y, z]) => {
+    const ey = meta.eye;
+    this.fill = [[ey[0] + 0.5, ey[1] + 0.22, 0], [ey[0] - 1.3, ey[1] + 0.37, 0]].map(([x, y, z]) => {
       const l = new THREE.PointLight(0xfff6ee, 0, 4.2, 1.5);
       l.position.set(x, y, z); l.castShadow = false;
       this.root.add(l);
@@ -114,13 +119,13 @@ export class AircraftVisual {
           Object.assign(sh.uniforms, self.flexUniforms);
           sh.vertexShader = sh.vertexShader
             .replace('#include <common>', `#include <common>
-uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
+uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 uFlexK;`)
             .replace('#include <begin_vertex>', `#include <begin_vertex>
 {
   vec4 wpF = modelMatrix * vec4(transformed, 1.0);
   vec3 lp = (uRootInv * wpF).xyz;
-  float span = max(abs(lp.z) - 3.0, 0.0);
-  float fl = uFlex * span * span / 729.0 * step(-15.5, lp.x);
+  float span = max(abs(lp.z) - uFlexK.x, 0.0);
+  float fl = uFlex * span * span / uFlexK.y * step(uFlexK.z, lp.x);
   transformed += inverse(mat3(modelMatrix)) * (uRootUp * fl);
 }`);
           if (m.name === 'B787_Fuselage' && self.livU) patchLiveryShader(sh, self.livU, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
@@ -148,8 +153,8 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
       o.add(sp);
       // the light meshes bend with the wing in the vertex shader; the glow sprite follows in JS
       const lp = c.clone().applyMatrix4(this.root.matrixWorld.clone().invert());
-      const span = Math.max(Math.abs(lp.z) - 3.0, 0);
-      const flexK = lp.x > -15.5 ? span * span / 729 : 0;
+      const span = Math.max(Math.abs(lp.z) - this.flexR, 0);
+      const flexK = lp.x > this.flexX ? span * span / this.flexD : 0;
       this.lights.push({ name, obj: o, sprite: sp, ...L, intensity: 0, base: sp.position.clone(), flexK });
     }
     // landing / taxi spotlights
@@ -165,9 +170,9 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
     };
     const eyeX = meta.eye[0];
     // scene units: sun ~3.4 = ~100 klx, so a 600 W landing light is a few thousand units
-    mk([8, -2.2, -3.5], [300, -30, -8], 0.16, 2500);
-    mk([8, -2.2, 3.5], [300, -30, 8], 0.16, 2500);
-    this.taxiSpot = mk([eyeX - 3.5, -3.2, 0], [80, -9, 0], 0.5, 180);
+    mk([8 * kL, -2.2 * kW, -3.5 * kW], [300, -30, -8], 0.16, 2500);
+    mk([8 * kL, -2.2 * kW, 3.5 * kW], [300, -30, 8], 0.16, 2500);
+    this.taxiSpot = mk([eyeX - 3.5 * kL, -3.2 * kW, 0], [80, -9, 0], 0.5, 180);
     scene.add(this.root);
     // particles (tyre smoke, contrails)
     this._initParticles();

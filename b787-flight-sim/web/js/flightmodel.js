@@ -96,10 +96,14 @@ export class FlightModel {
     const cg = this.cgOffset;
     const P = (a) => new V3(a[0] - cg.x, a[1] - cg.y, a[2] - cg.z);
     this.gearExt = 0.30;                      // strut stroke below the modelled static position
+    // spring / damper rates tuned for the 787-9, scaled with the aircraft's weight
+    const km = (meta.spec?.MTOW || 254011) / 254011;
+    this.kL = (meta.length || 62.81) / 62.81; this.kS = (meta.span || 60.12) / 60.12;
+    const kH = (meta.fusH || 5.97) / 5.97;
     this.gear = [
-      { name: 'nose', p: P(meta.noseGear), k: 1.3e6, c: 2.6e5, mu: 0.8, steer: true, brake: false },
-      { name: 'left', p: P(meta.mainGearL), k: 5.2e6, c: 1.15e6, mu: 0.8, steer: false, brake: true },
-      { name: 'right', p: P(meta.mainGearR), k: 5.2e6, c: 1.15e6, mu: 0.8, steer: false, brake: true },
+      { name: 'nose', p: P(meta.noseGear), k: 1.3e6 * km, c: 2.6e5 * km, mu: 0.8, steer: true, brake: false },
+      { name: 'left', p: P(meta.mainGearL), k: 5.2e6 * km, c: 1.15e6 * km, mu: 0.8, steer: false, brake: true },
+      { name: 'right', p: P(meta.mainGearR), k: 5.2e6 * km, c: 1.15e6 * km, mu: 0.8, steer: false, brake: true },
     ];
     for (const g of this.gear) { g.p.y -= this.gearExt; g.compression = 0; g.load = 0; g.onGround = false; }
     // structural contact points (crash / scrape)
@@ -109,8 +113,8 @@ export class FlightModel {
       { name: 'wingtipR', p: P(meta.wingTipR) },
       { name: 'engineL', p: P(meta.engineL) },
       { name: 'engineR', p: P(meta.engineR) },
-      { name: 'nose', p: P([meta.noseTip[0] - 1.0, meta.noseTip[1] - 2.2, 0]) },
-      { name: 'belly', p: P([0, -3.3, 0]) },
+      { name: 'nose', p: P([meta.noseTip[0] - 1.0 * this.kL, meta.noseTip[1] - 2.2 * kH, 0]) },
+      { name: 'belly', p: P([0, -3.3 * kH, 0]) },
     ];
     this.engAxis = [P(meta.engineAxisL), P(meta.engineAxisR)];
     this.engines = [new Engine(-1), new Engine(1)];
@@ -160,7 +164,9 @@ export class FlightModel {
 
   inertia() {
     const m = this.mass;
-    return new V3(85.5 * m, 199 * m, 122 * m);     // roll (x), yaw (y), pitch (z)
+    // radii of gyration scale with span (roll) and length (pitch / yaw)
+    const s2 = this.kS * this.kS, l2 = this.kL * this.kL;
+    return new V3(85.5 * m * s2, 199 * m * (0.5 * s2 + 0.5 * l2), 122 * m * l2);     // roll (x), yaw (y), pitch (z)
   }
 
   reset(pos, hdg, speedMS, pitchDeg = 0, onGround = true) {

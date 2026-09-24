@@ -19,7 +19,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import b787_geometry as G
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TEX = os.path.join(HERE, "textures")
+# type-specific maps (fuselage, fin, wing, flight-deck lining) go to textures/<asset>/ for the
+# 737 / 767 (the 787-9 keeps the original textures/ directory)
+TEX = os.path.join(HERE, "textures") if G.TYPE == "b789" else os.path.join(HERE, "textures", G.ASSET)
 os.makedirs(TEX, exist_ok=True)
 
 FONT_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
@@ -41,11 +43,20 @@ GLASS = srgb("#141a22")
 GASKET = srgb("#3a4048")
 DOORLINE = srgb("#59616b")
 
-# door stations (centre), width, height  - 787-9 has four pairs of Type-A doors
-DOORS = [6.95, 17.55, 40.45, 53.85]
-DOOR_W, DOOR_Z0, DOOR_Z1 = 1.07, -0.93, 1.00
-WIN_Z, WIN_W, WIN_H, WIN_PITCH = 0.30, 0.27, 0.47, 0.965
-CARGO = [(14.55, 2.69, -2.62, -0.98), (44.25, 2.69, -2.55, -0.95), (47.85, 0.95, -2.05, -0.95)]
+# door stations (centre), width, height, windows, cargo doors: per type (b787_geometry)
+DOORS = G.DOORS
+DOOR_W, DOOR_Z0, DOOR_Z1 = G.DOOR_W, G.DOOR_Z0, G.DOOR_Z1
+WIN_Z, WIN_W, WIN_H, WIN_PITCH = G.WIN_Z, G.WIN_W, G.WIN_H, G.WIN_PITCH
+CARGO = G.CARGO
+
+
+def CS(s):
+    """787 flight-deck station -> this type."""
+    return float(G.ck(np.array([s, 0.0, 0.0]))[0])
+
+
+def CZ(z):
+    return float(G.ck(np.array([0.0, 0.0, z]))[2])
 
 
 # ---------------------------------------------------------------------------
@@ -206,13 +217,16 @@ def side_feature(fm, s_c, z_c, hs, ha, side, r, pad=0.05):
 # ---------------------------------------------------------------------------
 # Cockpit window outlines
 # ---------------------------------------------------------------------------
-FRONT_PANE = [(0.07, 0.70), (0.98, 0.55), (1.03, 1.25), (0.07, 1.36)]   # front view (y, z), left
-SIDE_PANE_Z = (0.57, 1.30)
+FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
+              [(0.07, 0.70), (0.98, 0.55), (1.03, 1.25), (0.07, 1.36)]]   # front view (y, z), left
+SIDE_PANE_Z = (CZ(0.57), CZ(1.30))
 
 
-def skin_s_at(y_target, z_target, s_lo=1.0, s_hi=6.0):
+def skin_s_at(y_target, z_target, s_lo=None, s_hi=None):
     """Station where the left skin passes through (y_target, z_target) (approx)."""
     best = None
+    s_lo = CS(1.0) if s_lo is None else s_lo
+    s_hi = CS(6.0) if s_hi is None else s_hi
     for s in np.linspace(s_lo, s_hi, 400):
         phi, arcn, C = G.section_arc(s, 720)
         y, z = G.fus_section(s, phi)
@@ -226,9 +240,10 @@ def skin_s_at(y_target, z_target, s_lo=1.0, s_hi=6.0):
 
 
 def side_pane_poly():
-    s_fb = skin_s_at(FRONT_PANE[1][0] + 0.10, SIDE_PANE_Z[0]) + 0.02
-    s_ft = skin_s_at(FRONT_PANE[2][0] + 0.10, SIDE_PANE_Z[1]) + 0.02
-    return [(s_fb, SIDE_PANE_Z[0]), (4.92, SIDE_PANE_Z[0] + 0.05), (4.66, SIDE_PANE_Z[1] + 0.08),
+    ky, kz = G.CK[2], G.CK[3]
+    s_fb = skin_s_at(FRONT_PANE[1][0] + 0.10 * ky, SIDE_PANE_Z[0]) + 0.02
+    s_ft = skin_s_at(FRONT_PANE[2][0] + 0.10 * ky, SIDE_PANE_Z[1]) + 0.02
+    return [(s_fb, SIDE_PANE_Z[0]), (CS(4.92), SIDE_PANE_Z[0] + 0.05 * kz), (CS(4.66), SIDE_PANE_Z[1] + 0.08 * kz),
             (s_ft, SIDE_PANE_Z[1])]
 
 
@@ -237,12 +252,12 @@ def cockpit_window_masks(S, Y, Z, px):
     ay = np.abs(Y)
     glass = np.zeros(S.shape, np.float32)
     frame = np.zeros(S.shape, np.float32)
-    front = (S < 4.3)
+    front = (S < CS(4.3))
     d_front = sd_round_poly(ay, Z, FRONT_PANE, 0.07)
     d_front = np.where(front, d_front, 9.0)
     sp = side_pane_poly()
     d_side = sd_round_poly(S, Z, sp, 0.08)
-    d_side = np.where((ay > 0.95) & (S < 5.3), d_side, 9.0)
+    d_side = np.where((ay > 0.95 * G.CK[2]) & (S < CS(5.3)), d_side, 9.0)
     d = np.minimum(d_front, d_side)
     glass = aa(d, px)
     frame = aa(np.abs(d + 0.012) - 0.018, px) * (1 - glass * 0.0)
@@ -329,17 +344,36 @@ def belly_line(s):
 BELLY_S = [0, 5.5, 9.0, 14.0, 30.0, 36.0, 42.0, 47.0, 51.0, 55.0, 70]
 BELLY_Z = [-3.6, -3.4, -2.35, -1.62, -1.55, -1.45, -0.95, 0.10, 1.35, 3.5, 4.0]
 TITLE = dict(s0=10.4, zc=1.5, capHeight=1.2, maxLen=27.0)
-TAIL = dict(s0=46.0, s1=G.LENGTH, z0=G.VT_Z0, z1=G.VT_ZTIP, logo=[55.6, 7.6, 1.55])
+TAIL = dict(s0=46.0, s1=G.LENGTH, z0=G.VT_Z0, z1=G.VT_ZTIP, logo=[55.6, 7.6, 1.55], k=1.0, sRef=48.0)
+if G.TYPE != "b789":
+    # belly sweep / titles / fin logo mapped from the 787 layout (fuselage stations, fin fractions)
+    BELLY_S = [round(float(G.SMAP(s)), 3) if s <= 62.81 else round(G.LENGTH + s - 62.81, 3) for s in BELLY_S]
+    BELLY_Z = [round(z * G.HR, 3) for z in BELLY_Z]
+    TITLE = dict(s0=round(float(G.SMAP(10.4)), 3), zc=round(1.5 * G.HR, 3), capHeight=round(1.2 * G.HR, 3),
+                 maxLen=round(27.0 * (G._SNEW[2] - G._SNEW[1]) / 33.5, 2))
+    _zl = G.VT_Z0 + 0.5732 * (G.VT_ZTIP - G.VT_Z0)
+    _le = float(G.vt_le(_zl))
+    _c = float(G.vt_te(_zl)) - _le
+    _k = (G.VT_ZTIP - G.VT_Z0) / 9.77
+    TAIL = dict(s0=G.VT_S_LE0 - 3.25, s1=G.LENGTH, z0=G.VT_Z0, z1=G.VT_ZTIP,
+                logo=[round(_le + 0.2398 * _c, 3), round(_zl, 3), round(0.2841 * _c, 3)],
+                k=round(_k, 4), sRef=round(G.VT_S_LE0 - 1.25 * _k, 3))
 
 
-def write_livery_json():
-    import json
-    out = dict(
+def livery_layout():
+    return dict(
         note="design frame: s aft from nose, z up; three.js x = sCG - s, y = z, z = -y",
         sCG=G.S_CG, white="#f5f7f9",
         belly=dict(s=BELLY_S, z=BELLY_Z, fade=1.6, stripes=[[0.10, 0.075], [0.215, 0.022]], stripeS0=8.5),
         title=TITLE, tail=TAIL,
     )
+
+
+def write_livery_json():
+    import json
+    out = livery_layout()
+    if G.TYPE != "b789":
+        return          # the other types carry their layout in <asset>.json
     path = os.path.join(HERE, "..", "web", "assets", "livery.json")
     with open(path, "w") as fh:
         json.dump(out, fh, indent=1)
@@ -366,9 +400,9 @@ def fuselage_textures(W=8192, H=2048):
     # --- passenger windows -------------------------------------------------------
     print("windows ...")
     wins = []
-    s = 8.35
-    while s < 55.2:
-        if all(abs(s - d) > 0.95 for d in DOORS):
+    s = G.WIN_S[0]
+    while s < G.WIN_S[1]:
+        if all(abs(s - d) > G.DOOR_GAP for d in DOORS) and all(abs(s - e[0]) > e[1] / 2 + 0.05 for e in G.EXITS):
             wins.append(s)
         s += WIN_PITCH
     for side in (1, -1):
@@ -402,22 +436,39 @@ def fuselage_textures(W=8192, H=2048):
             blend(col[sl], DOORLINE, line)
             height[sl] -= 0.004 * line
             # door window
-            sl2, d2 = side_feature(fm, dc, 0.40, 0.11, 0.17, side, 0.09)
+            kd = DOOR_W / 1.07
+            sl2, d2 = side_feature(fm, dc, DOOR_Z0 + 1.33 / 1.93 * (DOOR_Z1 - DOOR_Z0), 0.11 * kd, 0.17 * kd, side, 0.09 * kd)
             if sl2 is not None:
                 g = aa(d2, px)
                 blend(col[sl2], GLASS, g)
                 rough[sl2] = rough[sl2] * (1 - g) + 0.05 * g
                 emis[sl2] = np.maximum(emis[sl2], g[..., None] * np.array([1.0, 0.78, 0.48], np.float32))
             # handle recess
-            sl3, d3 = side_feature(fm, dc - 0.02, 0.05, 0.13, 0.05, side, 0.03)
+            sl3, d3 = side_feature(fm, dc - 0.02, DOOR_Z0 + 0.98 / 1.93 * (DOOR_Z1 - DOOR_Z0), 0.13 * kd, 0.05, side, 0.03)
             if sl3 is not None:
                 a3 = aa(d3, px)
                 blend(col[sl3], srgb("#9aa2ab"), a3)
                 height[sl3] -= 0.002 * a3
             # red "door arming" stripe marks
-            sl4, d4 = side_feature(fm, dc + DOOR_W / 2 + 0.09, 0.02, 0.012, 0.25, side, 0.005)
+            sl4, d4 = side_feature(fm, dc + DOOR_W / 2 + 0.09, DOOR_Z0 + 0.95 / 1.93 * (DOOR_Z1 - DOOR_Z0), 0.012,
+                                   0.25, side, 0.005)
             if sl4 is not None:
                 blend(col[sl4], srgb("#c8202a"), aa(d4, px))
+        # over-wing emergency exits (737 / 767): outlined hatch with one window
+        for (ec, ew, ez0, ez1) in G.EXITS:
+            a0 = fm.arc_at_z(ez0, side)[fm.col(ec)]
+            a1 = fm.arc_at_z(ez1, side)[fm.col(ec)]
+            sl, d = side_feature(fm, ec, 0.5 * (ez0 + ez1), ew / 2, abs(a1 - a0) / 2, side, 0.08)
+            if sl is not None:
+                line = aa(np.abs(d) - 0.006, px)
+                blend(col[sl], DOORLINE, line)
+                height[sl] -= 0.004 * line
+            sl, d = side_feature(fm, ec, WIN_Z, WIN_W / 2, WIN_H / 2, side, 0.11)
+            if sl is not None:
+                g = aa(d, px)
+                blend(col[sl], GLASS, g)
+                rough[sl] = rough[sl] * (1 - g) + 0.05 * g
+                emis[sl] = np.maximum(emis[sl], g[..., None] * np.array([1.0, 0.78, 0.48], np.float32))
 
     # --- cargo doors (right side) -----------------------------------------------
     for (sc, w, z0, z1) in CARGO:
@@ -432,20 +483,20 @@ def fuselage_textures(W=8192, H=2048):
 
     # --- barrel splice & panel lines (normal map only, very faint in colour) --------
     print("panel lines ...")
-    for sj in (4.9, 12.35, 20.9, 35.9, 46.3, 52.6, 57.4):
+    for sj in G.SMAP([4.9, 12.35, 20.9, 35.9, 46.3, 52.6, 57.4]):
         d = np.abs(S - sj) - 0.003
         a = aa(d, px)
         height -= 0.0022 * a
         blend(col, srgb("#8e959d"), a * 0.18)
     # longitudinal skin laps at a few heights
-    for zz in (1.95, -1.9):
+    for zz in (1.95 * G.HR, -1.9 * G.HR):
         d = np.abs(Z - zz) - 0.0025
-        a = aa(d, px) * ((S > 5) & (S < 57))
+        a = aa(d, px) * ((S > G.SMAP(5)) & (S < G.SMAP(57)))
         height -= 0.0015 * a
     rng = np.random.default_rng(787)
     for k in range(70):
-        sc = float(rng.uniform(3.0, 58.0))
-        zc = float(rng.choice([-2.4, -2.1, -1.6, 1.9, 2.4, -0.2]))
+        sc = float(G.SMAP(rng.uniform(3.0, 58.0)))
+        zc = float(rng.choice([-2.4, -2.1, -1.6, 1.9, 2.4, -0.2])) * G.HR
         side = int(rng.choice([1, -1]))
         w = float(rng.uniform(0.18, 0.55))
         h = float(rng.uniform(0.14, 0.4))
@@ -460,13 +511,13 @@ def fuselage_textures(W=8192, H=2048):
 
     # --- cockpit windows ------------------------------------------------------------
     print("cockpit ...")
-    i1 = fm.col(5.6)
+    i1 = fm.col(CS(5.6))
     glass, frame, dwin = cockpit_window_masks(S[:, :i1], Y[:, :i1], Z[:, :i1], 0.009)
     sub = col[:, :i1]
     blend(sub, srgb("#1b2129"), frame)
     # slight vertical sky reflection gradient on the glass
     zz = Z[:, :i1]
-    refl = np.clip((zz - 0.5) / 1.0, 0, 1)[..., None]
+    refl = np.clip((zz - CZ(0.5)) / 1.0, 0, 1)[..., None]
     gcol = srgb("#0e1319") * (1 - refl) + srgb("#28323f") * refl
     sub[:] = sub * (1 - glass[..., None]) + gcol * glass[..., None]
     rough[:, :i1] = rough[:, :i1] * (1 - glass) + 0.03 * glass
@@ -474,19 +525,22 @@ def fuselage_textures(W=8192, H=2048):
     # windshield wiper hints
     # --- titles ------------------------------------------------------------------------
     print("titles ...")
-    stamp_text(col, fm, "787-9", FONT_BOLD_IT, 0.38, 5.3, -0.62, NAVY, tracking=0.02)
-    stamp_text(col, fm, "JA787C", FONT_BOLD, 0.40, 49.9, 1.48, NAVY, tracking=0.03)
+    kt = max(G.HR, 0.8)
+    stamp_text(col, fm, G.MODEL_LABEL, FONT_BOLD_IT, 0.38 * kt, CS(5.3), CZ(-0.62), NAVY, tracking=0.02)
+    s_reg = float(G.SMAP(49.9))
+    stamp_text(col, fm, G.REG, FONT_BOLD, 0.40 * kt, s_reg, 1.48 * G.HR, NAVY, tracking=0.03)
     # small door labels / static port markings
     for dc in DOORS:
         for side in (1, -1):
             pass
     # Japanese flag next to the registration (left & right)
     for side in (1, -1):
-        sl, d = side_feature(fm, 49.3, 1.49, 0.30, 0.20, side, 0.0)
+        s_fl = s_reg - 0.6 * kt
+        sl, d = side_feature(fm, s_fl, 1.49 * G.HR, 0.30 * kt, 0.20 * kt, side, 0.0)
         if sl is not None:
             blend(col[sl], srgb("#ffffff"), aa(d, px))
             blend(col[sl], srgb("#d8d8d8"), aa(np.abs(d) - 0.004, px))
-        sl, d = side_feature(fm, 49.3, 1.49, 0.12, 0.12, side, 0.12)
+        sl, d = side_feature(fm, s_fl, 1.49 * G.HR, 0.12 * kt, 0.12 * kt, side, 0.12 * kt)
         if sl is not None:
             blend(col[sl], srgb("#bc002d"), aa(d, px))
 
@@ -526,10 +580,23 @@ def write_normal(height, du, dv, path, size=None, strength=1.0):
 # Tail (fin + rudder) - planar side projection s in [46, L], z in [2, 11.77]
 # ---------------------------------------------------------------------------
 def tail_texture(W=2048, H=1536):
-    s0, s1, z0, z1 = 46.0, G.LENGTH, G.VT_Z0, G.VT_ZTIP
+    s0, s1, z0, z1 = TAIL["s0"], G.LENGTH, G.VT_Z0, G.VT_ZTIP
     u = (np.arange(W) + 0.5) / W
     v = 1 - (np.arange(H) + 0.5) / H
     S, Zt = np.meshgrid(s0 + u * (s1 - s0), z0 + v * (z1 - z0))
+    if G.TYPE != "b789":
+        # paint in 787 fin coordinates: same height fraction and chord fraction on the fin
+        k = TAIL["k"]
+        h = (Zt - z0) / (z1 - z0)
+        le = G.VT_S_LE0 + (Zt - z0) * math.tan(G.VT_LE_SWEEP)
+        c = G.vt_te(Zt) - le
+        x = (S - le) / c
+        Zt = 2.0 + h * 9.77
+        le7 = 49.25 + (Zt - 2.0) * math.tan(42.0 * G.D2R)
+        c7 = (57.8 + (61.197 - 57.8) * h) - le7
+        S = le7 + x * c7
+        s0, s1, z0, z1 = 46.0, 62.81, 2.0, 11.77
+        del k
     col = np.empty((H, W, 3), np.float32)
     # deep navy with a diagonal gradient
     t = np.clip((Zt - z0) / (z1 - z0) * 0.8 + (S - s0) / (s1 - s0) * 0.2, 0, 1)[..., None]
@@ -603,14 +670,15 @@ def wing_textures(W=2048, H=2048):
         height -= 0.0015 * a
         blend(col, srgb("#9aa1a9"), a * 0.2)
     # walkway (upper, inboard) - darker grey with "no step" border
-    wk = (span > 3.4) & (span < 8.6) & (x > 0.18) & (x < 0.52) & upper
+    w0, w1 = float(G.WY(3.4)), float(G.WY(8.6))
+    wk = (span > w0) & (span < w1) & (x > 0.18) & (x < 0.52) & upper
     blend(col, srgb("#b3b9c0"), wk.astype(np.float32) * 0.6)
-    edge = ((np.abs(span - 3.4) < 0.03) | (np.abs(span - 8.6) < 0.03)) & (x > 0.18) & (x < 0.52) & upper
+    edge = ((np.abs(span - w0) < 0.03) | (np.abs(span - w1) < 0.03)) & (x > 0.18) & (x < 0.52) & upper
     blend(col, srgb("#1c1f24"), edge.astype(np.float32) * 0.8)
     # fuel caps / access panels on the lower skin
     rng = np.random.default_rng(9)
     for k in range(40):
-        yy = rng.uniform(3, 26)
+        yy = float(G.WY(rng.uniform(3, 26)))
         xf = rng.uniform(0.25, 0.5)
         d = np.hypot(span - yy, (x - xf) * c) - 0.12
         a = aa(np.abs(d) - 0.004, px_s) * (~upper)
@@ -651,19 +719,19 @@ def cockpit_shell_texture():
     Uses the same UV as the fuselage (u = s/L) but only s in [0, 7] matters;
     the texture spans u = 0 .. 7/L."""
     W, H = 1024, 2048
-    s_max = 7.0
+    s_max = CS(7.0)
     fm = FuselageMaps(W, H, s_range=(0.0, s_max))
     glass, frame, d = cockpit_window_masks(fm.S, fm.Y, fm.Z, 0.01)
     # interior: lining grey, darker frame around windows
     col = np.empty((H, W, 3), np.float32)
     col[:] = srgb("#b3b7ba")                       # light grey flight-deck lining
-    zrel = np.clip((fm.Z + 0.2) / 2.0, 0, 1)[..., None]
+    zrel = np.clip((fm.Z - CZ(-0.2)) / 2.0, 0, 1)[..., None]
     col = col * (0.82 + 0.18 * zrel)
-    low = (fm.Z < -0.35)[..., None]                # darker kick panels low down
+    low = (fm.Z < CZ(-0.35))[..., None]                # darker kick panels low down
     col = np.where(low, col * 0.55, col)
     # lining panel seams every ~0.55 m along the fuselage and a horizontal seam
     seam = np.clip(1 - np.abs(((fm.S + 0.1) % 0.55) - 0.275) / 0.004, 0, 1) * (np.abs(d) > 0.08)
-    seam = np.maximum(seam, np.clip(1 - np.abs(fm.Z - 0.62) / 0.004, 0, 1))
+    seam = np.maximum(seam, np.clip(1 - np.abs(fm.Z - CZ(0.62)) / 0.004, 0, 1))
     col = col * (1 - 0.35 * seam[..., None])
     blend(col, srgb("#2a2e33"), aa(np.abs(d) - 0.05, 0.02))
     alpha = 1.0 - aa(d + 0.02, 0.01)

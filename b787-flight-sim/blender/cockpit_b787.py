@@ -29,7 +29,7 @@ from PIL import Image, ImageDraw, ImageFont
 import b787_geometry as G
 import common as C
 
-TB = G.to_blender
+TB = G.CockpitTB() if G.TYPE != "b789" else G.to_blender   # layout is drawn in 787 flight-deck coordinates
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEX = os.path.join(HERE, "textures")
 DZ = -0.30                      # flight-deck floor offset used by build_cockpit

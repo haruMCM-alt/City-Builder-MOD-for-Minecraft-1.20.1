@@ -1,8 +1,8 @@
-// B787-9 Flight Simulator - application entry point.
+// Boeing 787-9 / 767-300ER / 737-800 flight simulator - application entry point.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { FlightModel, FLAPS } from './flightmodel.js';
+import { FlightModel, FLAPS, SPEC } from './flightmodel.js';
 import { Systems, AUTOBRAKE } from './systems.js';
 import { configureTerrain, terrainHeight } from './terrain.js';
 import { World, HDR } from './world.js';
@@ -10,7 +10,7 @@ import { AircraftVisual } from './aircraft.js';
 import { Instruments } from './instruments.js';
 import { CameraRig, VIEW_NAMES } from './camera.js';
 import { Input } from './input.js';
-import { Audio } from './audio.js';
+import { Audio, setEngineSound } from './audio.js';
 import { LOGOS, logoById, drawLogoIcon, randomLivery, dressParked, loadSavedLivery, saveLivery, DEFAULT_LIVERY, liveryAssets } from './livery.js';
 import { Cabin } from './cabin.js';
 import { PostFX } from './postfx.js';
@@ -26,6 +26,15 @@ const DT = 1 / 240;
 const ASSET = './assets/';
 // model files: .glb by default; a host that cannot serve .glb can set window.B787_MODEL_EXT = '.gltf.json'
 const MODEL_EXT = window.B787_MODEL_EXT || '.glb';
+
+// aircraft types (Blender builds: blender/build_b787.py with AC_TYPE) and the AI fleet mix
+const TYPES = [
+  { id: 'b738', asset: 'b737-800', weight: 0.4, short: '737-800', cls: '単通路 Narrow-body' },
+  { id: 'b763', asset: 'b767-300er', weight: 0.3, short: '767-300ER', cls: '双通路 Wide-body' },
+  { id: 'b789', asset: 'b787-9', weight: 0.3, short: '787-9', cls: '双通路 Wide-body' },
+];
+const STAND_NOSE = 24.13;       // stands are marked for the 787-9 nose gear position
+const WEATHER_ICONS = { clear: ['☀', '快晴'], scattered: ['🌤', '晴れ時々曇り'], broken: ['⛅', '曇り'], overcast: ['☁', '曇天・低視程'], rain: ['🌧', '雨'] };
 
 // --------------------------------------------------------------------- loading
 function setLoad(p, msg) {
@@ -110,9 +119,22 @@ class App {
     this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 250000);
 
     setLoad(0.02, 'loading data…');
-    const [meta, world, livery] = await Promise.all([fetchJSON(ASSET + 'b787-9.json'), fetchJSON(ASSET + 'world.json'),
-      fetchJSON(ASSET + 'livery.json').catch(() => null)]);
-    meta.livery = livery;
+    const [world, livery, ...metas] = await Promise.all([fetchJSON(ASSET + 'world.json'),
+      fetchJSON(ASSET + 'livery.json').catch(() => null),
+      ...TYPES.map((t) => fetchJSON(ASSET + t.asset + '.json').catch(() => null))]);
+    this.types = {};
+    TYPES.forEach((t, i) => {
+      const m = metas[i];
+      if (!m) return;
+      m.type = m.type || t.id;
+      m.livery = m.liveryLayout || livery;
+      this.types[t.id] = { ...t, meta: m, gltf: null, lod: null };
+    });
+    if (!this.types.b789) throw new Error('b787-9.json missing');
+    let sel = 'b789';
+    try { sel = localStorage.getItem('b787.actype') || 'b789'; } catch (e) { /* storage unavailable */ }
+    if (!this.types[sel]) sel = 'b789';
+    const meta = this.types[sel].meta;
     this.meta = meta; this.worldData = world;
     configureTerrain(world);
     this.world = new World(renderer, this.scene, this.quality);
@@ -125,18 +147,24 @@ class App {
     } catch (e) {
       draco.setDecoderConfig({ type: 'js' });
     }
-    const loader = new GLTFLoader();
+    const loader = this.loader = new GLTFLoader();
     loader.setDRACOLoader(draco);
-    const prog = { ac: 0, world: 0, lod: 0, gse: 0 };
-    const upd = () => setLoad(0.05 + 0.85 * (prog.ac * 0.33 + prog.world * 0.47 + prog.lod * 0.13 + prog.gse * 0.07),
-      `787-9 ${Math.round(prog.ac * 100)}% · airport/city ${Math.round(prog.world * 100)}% · GSE ${Math.round(prog.gse * 100)}%`);
-    const [acGltf, worldGltf, lodGltf, gseGltf, gseInfo] = await Promise.all([
-      loadGLB(loader, ASSET + 'b787-9' + MODEL_EXT, (p) => { prog.ac = p; upd(); }),
+    const typeIds = Object.keys(this.types);
+    const prog = { ac: 0, world: 0, lod: {}, gse: 0 };
+    const lodP = () => typeIds.reduce((a, k) => a + (prog.lod[k] || 0), 0) / typeIds.length;
+    const upd = () => setLoad(0.05 + 0.85 * (prog.ac * 0.3 + prog.world * 0.45 + lodP() * 0.18 + prog.gse * 0.07),
+      `${this.types[sel].short} ${Math.round(prog.ac * 100)}% · airport/city ${Math.round(prog.world * 100)}% · AI fleet ${Math.round(lodP() * 100)}% · GSE ${Math.round(prog.gse * 100)}%`);
+    const [acGltf, worldGltf, gseGltf, gseInfo, ...lods] = await Promise.all([
+      loadGLB(loader, ASSET + this.types[sel].asset + MODEL_EXT, (p) => { prog.ac = p; upd(); }),
       loadGLB(loader, ASSET + 'world' + MODEL_EXT, (p) => { prog.world = p; upd(); }),
-      loadGLB(loader, ASSET + 'b787-9-lod' + MODEL_EXT, (p) => { prog.lod = p; upd(); }).catch(() => null),
       loadGLB(loader, ASSET + 'gse' + MODEL_EXT, (p) => { prog.gse = p; upd(); }).catch(() => null),
       fetchJSON(ASSET + 'gse.json').catch(() => null),
+      ...typeIds.map((k) => loadGLB(loader, ASSET + this.types[k].asset + '-lod' + MODEL_EXT, (p) => { prog.lod[k] = p; upd(); })
+        .catch(() => null)),
     ]);
+    this.types[sel].gltf = acGltf;
+    typeIds.forEach((k, i) => { this.types[k].lod = lods[i] ? lods[i].scene : null; });
+    const lodGltf = this.types.b789.lod ? { scene: this.types.b789.lod } : null;
     setLoad(0.92, 'building scene…');
     this.world.attachWorldGLB(worldGltf);
     this.world.buildTrees(world.trees);
@@ -146,33 +174,20 @@ class App {
     // airport traffic: AI 787s under ATC control and ground support equipment
     this.radio = new Radio($('atc'));
     this.traffic = this.lodTemplate ? new Traffic(this.scene, world, meta, {
-      gse: gseGltf ? gseGltf.scene : null, gseInfo, lodTemplate: this.lodTemplate, livery: meta.livery,
+      gse: gseGltf ? gseGltf.scene : null, gseInfo, lodTemplate: this.lodTemplate, livery,
       radio: this.radio, quality: this.quality,
+      types: typeIds.filter((k) => this.types[k].lod).map((k) => ({ meta: this.types[k].meta, lod: this.types[k].lod, weight: this.types[k].weight })),
     }) : null;
 
-    // aircraft
-    this.fm = new FlightModel(meta);
-    this.sys = new Systems(this.fm, world);
-    this.visual = new AircraftVisual(acGltf, meta, this.scene, this.quality);
-    this.cabin = new Cabin(this.visual, meta, () => loadGLB(loader, ASSET + 'b787-9-cabin' + MODEL_EXT, () => {}));
+    // aircraft (the selected type; the others are loaded when picked in the menu)
     this.post = new PostFX(renderer, this.scene, this.camera);
     this.rain = new Rain(this.scene);
-    this.vapor = new Vapor(this.scene, meta, this.visual);
     this._camPrev = new THREE.Vector3(); this.camVel = new THREE.Vector3();
     this.resize();
-    // baked ambient occlusion (Blender / Cycles) for the fuselage and wings
-    {
-      const tl = new THREE.TextureLoader();
-      const ld = (f) => new Promise((res) => tl.load(ASSET + f, (t) => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; res(t); }, undefined, () => res(null)));
-      Promise.all([ld('ao_fuselage.png'), ld('ao_wing.png')]).then(([f, w]) => this.visual.setAO(f, w));
-    }
     this.livery = loadSavedLivery();
-    this.applyLivery();
     this.instruments = new Instruments($('pfd'), $('nd'), $('eicas'), $('hud'), world);
-    this.visual.setDisplayTextures(this.instruments.textures);
-    // live face of the 3-D MCP on the glareshield
-    if (meta.mcp) { this.mcp3d = new MCP3D(meta.mcp); this.mcp3d.apply(this.visual.displayMats.MCP); }
     this.rig = new CameraRig(this.camera, canvas, meta, world);
+    this.installType(sel);
     this.input = new Input((c) => this.command(c));
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     if (this.isTouch) this.input.bindTouch($('touch'));
@@ -192,6 +207,75 @@ class App {
     this.last = performance.now();
     this.fps = 60;
     renderer.setAnimationLoop((t) => this.frame(t));
+  }
+
+  // make type `id` (already loaded) the flown aircraft: visual, cabin, vapour, flight model, systems
+  installType(id) {
+    const T = this.types[id];
+    const prev = this.cur;
+    if (prev && prev !== T) {
+      prev.visual.root.visible = false;
+      if (prev.visual.particles) prev.visual.particles.visible = false;
+      prev.vapor.setActive(false);
+      prev.cabin.update(false, 0);
+    }
+    if (!T.visual) {
+      const m = T.meta;
+      T.visual = new AircraftVisual(T.gltf, m, this.scene, this.quality);
+      T.visual.setDisplayTextures(this.instruments.textures);
+      // live face of the 3-D MCP on the glareshield
+      if (m.mcp && T.visual.displayMats.MCP) { T.mcp3d = new MCP3D(m.mcp); T.mcp3d.apply(T.visual.displayMats.MCP); }
+      T.cabin = new Cabin(T.visual, m, () => loadGLB(this.loader, ASSET + T.asset + '-cabin' + MODEL_EXT, () => {}));
+      T.vapor = new Vapor(this.scene, m, T.visual);
+      if (m.ao !== false && T.id === 'b789') {
+        // baked ambient occlusion (Blender / Cycles) for the 787 fuselage and wings
+        const tl = new THREE.TextureLoader();
+        const ld = (f) => new Promise((res) => tl.load(ASSET + f, (t) => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; res(t); }, undefined, () => res(null)));
+        Promise.all([ld('ao_fuselage.png'), ld('ao_wing.png')]).then(([f, w]) => T.visual.setAO(f, w));
+      }
+    }
+    T.visual.root.visible = true;
+    if (T.visual.particles) T.visual.particles.visible = true;
+    T.vapor.setActive(true);
+    this.cur = T; this.typeId = id;
+    this.meta = T.meta; this.visual = T.visual; this.cabin = T.cabin; this.vapor = T.vapor; this.mcp3d = T.mcp3d || null;
+    Object.assign(SPEC, T.meta.spec || {});
+    this.fm = new FlightModel(T.meta);
+    this.sys = new Systems(this.fm, this.worldData);
+    this.rig.meta = T.meta;
+    setEngineSound(id);
+    if (this.traffic) this.traffic.setPlayerMeta(T.meta);
+    this.applyLivery();
+    this.updateWeights();
+    try { localStorage.setItem('b787.actype', id); } catch (e) { /* ignore */ }
+    const t = $('menuTitle');
+    if (t) t.innerHTML = `B${T.short} <span>Flight Simulator</span>`;
+    document.title = `B${T.short} Flight Simulator`;
+  }
+
+  // menu: pick a type (loads its model the first time)
+  async selectType(id) {
+    const T = this.types[id];
+    if (!T || this._typeLoading) return;
+    if (!T.gltf) {
+      this._typeLoading = true;
+      const btn = document.querySelector(`#typePick button[data-id="${id}"]`);
+      const note = $('typeNote');
+      if (btn) btn.classList.add('loading');
+      try {
+        T.gltf = await loadGLB(this.loader, ASSET + T.asset + MODEL_EXT, (p) => { if (note) note.textContent = `${T.short} を読み込み中… ${Math.round(p * 100)}%`; });
+      } catch (e) {
+        if (note) note.textContent = `読み込みに失敗しました: ${e.message}`;
+        this._typeLoading = false;
+        if (btn) btn.classList.remove('loading');
+        return;
+      }
+      if (btn) btn.classList.remove('loading');
+      this._typeLoading = false;
+    }
+    this.installType(id);
+    this.startScenario(this.scenario, false);
+    this.refreshTypePick();
   }
 
   resize() {
@@ -217,6 +301,7 @@ class App {
       b.onclick = () => {
         this.scenario = s.id;
         box.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x.dataset.id === s.id));
+        this.updateSummary();
       };
       if (s.id === this.scenario) b.classList.add('sel');
       box.appendChild(b);
@@ -230,10 +315,14 @@ class App {
     bind('windSpd', 'windVal', (v) => `${v} kt`);
     bind('windDir', 'windDirVal', (v) => `${String(v).padStart(3, '0')}°`);
     bind('turb', 'turbVal', (v) => (v === 0 ? 'なし' : v.toFixed(1)));
-    bind('fuel', 'fuelVal', (v) => `${(v / 1000).toFixed(0)} t`);
-    bind('payload', 'payVal', (v) => `${(v / 1000).toFixed(0)} t` +
+    ['tod', 'windSpd', 'windDir'].forEach((id) => $(id).addEventListener('input', () => this.updateSummary()));
+    bind('fuel', 'fuelVal', (v) => `${(v / 1000).toFixed(1)} t`);
+    bind('payload', 'payVal', (v) => `${(v / 1000).toFixed(1)} t` +
       (this.meta.cabin ? `（乗客 ${Math.min(this.meta.cabin.total, Math.floor(v / (this.meta.cabin.paxMass || 100)))} 名）` : ''));
     this.buildLiveryMenu();
+    this.buildTypePick();
+    this.buildWeatherPick();
+    this.buildWizard();
     $('startBtn').onclick = () => this.startFromMenu();
     $('retryBtn').onclick = () => { $('crash').classList.add('hidden'); this.startScenario(this.scenario, true); };
     $('menuBtn').onclick = () => { $('crash').classList.add('hidden'); this.openMenu(); };
@@ -272,9 +361,117 @@ class App {
 
   updateGW() {
     const f = +$('fuel').value, p = +$('payload').value;
-    const gw = 128850 + f + p;
-    $('gwVal').textContent = `${(gw / 1000).toFixed(1)} t` + (gw > 254011 ? ' ⚠ > MTOW' : '');
-    $('gwVal').style.color = gw > 254011 ? 'var(--bad)' : '';
+    const gw = SPEC.OEW + f + p;
+    $('gwVal').textContent = `${(gw / 1000).toFixed(1)} t` + (gw > SPEC.MTOW ? ' ⚠ > MTOW' : ` (MTOW ${(SPEC.MTOW / 1000).toFixed(1)} t)`);
+    $('gwVal').style.color = gw > SPEC.MTOW ? 'var(--bad)' : '';
+    this.updateSummary?.();
+  }
+
+  // fuel / payload ranges for the current type (keeps the same fraction of capacity)
+  updateWeights() {
+    const fuel = $('fuel'), pay = $('payload');
+    if (!fuel || !pay) return;
+    const fr = (+fuel.value - +fuel.min) / Math.max(1, +fuel.max - +fuel.min);
+    const pr = +pay.value / Math.max(1, +pay.max);
+    const fmax = Math.floor(SPEC.fuelCapacity / 500) * 500, pmax = Math.floor((SPEC.MZFW - SPEC.OEW) / 500) * 500;
+    const fmin = Math.round(fmax * 0.08 / 500) * 500;
+    fuel.min = fmin; fuel.max = fmax; fuel.step = 500;
+    pay.max = pmax; pay.step = 500;
+    if (this._wInit) { fuel.value = Math.round((fmin + fr * (fmax - fmin)) / 500) * 500; pay.value = Math.round(pr * pmax / 500) * 500; }
+    else { fuel.value = Math.round(fmax * 0.45 / 500) * 500; pay.value = Math.round(pmax * 0.5 / 500) * 500; this._wInit = true; }
+    fuel.dispatchEvent(new Event('input')); pay.dispatchEvent(new Event('input'));
+  }
+
+  // ------------------------------------------------------------------- menu wizard
+  buildWizard() {
+    this.wizStep = 0;
+    const go = (i) => {
+      this.wizStep = Math.max(0, Math.min(2, i));
+      $('wizTrack').style.transform = `translateX(${-100 * this.wizStep}%)`;
+      document.querySelectorAll('#wizSteps li').forEach((li, k) => {
+        li.classList.toggle('on', k === this.wizStep); li.classList.toggle('done', k < this.wizStep);
+      });
+      document.querySelectorAll('#wizDots i').forEach((d, k) => d.classList.toggle('on', k === this.wizStep));
+      $('wizBack').disabled = this.wizStep === 0;
+      $('wizNext').classList.toggle('hidden', this.wizStep === 2);
+      $('startBtn').classList.toggle('hidden', this.wizStep !== 2);
+      document.querySelectorAll('#wizTrack .slide').forEach((s, k) => { s.inert = k !== this.wizStep; s.scrollTop = 0; });
+      this.updateSummary();
+    };
+    this.wizGo = go;
+    $('wizBack').onclick = () => go(this.wizStep - 1);
+    $('wizNext').onclick = () => go(this.wizStep + 1);
+    document.querySelectorAll('#wizSteps li').forEach((li) => { li.onclick = () => go(+li.dataset.i); });
+    // swipe between the slides on touch screens
+    let sx = null;
+    const tr = $('wizTrack');
+    tr.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+    tr.addEventListener('touchend', (e) => {
+      if (sx === null) return;
+      const dx = e.changedTouches[0].clientX - sx; sx = null;
+      if (Math.abs(dx) > 60 && !(e.target.closest && e.target.closest('input, select, .logos'))) go(this.wizStep + (dx < 0 ? 1 : -1));
+    }, { passive: true });
+    go(0);
+  }
+
+  updateSummary() {
+    const el = $('wizSummary');
+    if (!el || !this.types || !this.cur) return;
+    const sc = SCENARIOS.find((s) => s.id === this.scenario);
+    const wx = WEATHER_ICONS[$('weather').value] || ['', $('weather').value];
+    const tod = +$('tod').value;
+    const gw = SPEC.OEW + +$('fuel').value + +$('payload').value;
+    el.innerHTML = `<b>${sc ? sc.name : ''}</b> · <b>Boeing ${this.cur.short}</b>（${(this.livery?.name || '')}）` +
+      ` · 総重量 <b>${(gw / 1000).toFixed(1)} t</b> · <b>${String(Math.floor(tod)).padStart(2, '0')}:${String(Math.round((tod % 1) * 60)).padStart(2, '0')}</b>` +
+      ` · ${wx[0]} ${wx[1]} · 風 <b>${String($('windDir').value).padStart(3, '0')}° / ${$('windSpd').value} kt</b>`;
+  }
+
+  buildTypePick() {
+    const box = $('typePick');
+    if (!box) return;
+    box.innerHTML = '';
+    for (const t of TYPES) {
+      const T = this.types[t.id];
+      if (!T) continue;
+      const m = T.meta, s = m.spec || {};
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.id = t.id;
+      const seats = m.cabin ? m.cabin.total : '—';
+      b.innerHTML = `<img alt="" src="${ASSET}type_${t.id}.jpg" onerror="this.style.display='none'">` +
+        `<div class="tb"><div class="tn">Boeing ${t.short}<em>${t.cls}</em></div>` +
+        `<div class="ts">全長 ${m.length.toFixed(2)} m · 全幅 ${m.span.toFixed(2)} m · 全高 ${m.height.toFixed(2)} m<br>` +
+        `最大離陸重量 ${(s.MTOW / 1000).toFixed(1)} t · 座席 ${seats}<br>${m.engineName || ''} ×2 · Mmo ${s.MMO}</div></div>`;
+      b.onclick = () => this.selectType(t.id);
+      box.appendChild(b);
+    }
+    this.refreshTypePick();
+  }
+
+  refreshTypePick() {
+    document.querySelectorAll('#typePick button').forEach((b) => b.classList.toggle('sel', b.dataset.id === this.typeId));
+    const note = $('typeNote');
+    if (note && this.cur) {
+      const s = SPEC;
+      note.textContent = `${this.cur.short}: 燃料容量 ${(s.fuelCapacity / 1000).toFixed(1)} t · 最大着陸重量 ${(s.MLW / 1000).toFixed(1)} t · ` +
+        `推力 ${(s.thrustSL / 1000).toFixed(0)} kN ×2 — 機種を変えると重量の範囲も切り替わります。`;
+    }
+    this.updateSummary();
+  }
+
+  buildWeatherPick() {
+    const box = $('wxPick'), sel = $('weather');
+    if (!box) return;
+    const upd = () => box.querySelectorAll('button').forEach((b) => b.classList.toggle('sel', b.dataset.id === sel.value));
+    for (const o of sel.options) {
+      const [icon, name] = WEATHER_ICONS[o.value] || ['', o.textContent];
+      const b = document.createElement('button');
+      b.type = 'button'; b.dataset.id = o.value;
+      b.innerHTML = `<b>${icon}</b>${name}`;
+      b.onclick = () => { sel.value = o.value; upd(); this.updateSummary(); };
+      box.appendChild(b);
+    }
+    upd();
   }
 
   pause() {
@@ -397,7 +594,7 @@ class App {
     const r27 = W.runways.find((r) => r.ident === '27'), r09 = W.runways.find((r) => r.ident === '09');
     const L = this.visual.lightsOn;
     Object.assign(L, { nav: true, beacon: true, strobe: false, landing: false, taxi: false, logo: true });
-    const gy = 5.0 - 0.17;
+    const gy = -this.meta.groundY - 0.42;          // CG height at rest on the gear
     const setAir = (flapLever, gearDown) => {
       sys.flapLever = flapLever; fm.ctl.flapAngle = FLAPS[flapLever].angle; fm.ctl.slat = flapLever > 0 ? 1 : 0;
       sys.gearLever = gearDown; fm.ctl.gearPos = gearDown ? 0 : 1;
@@ -419,7 +616,7 @@ class App {
     } else if (id === 'gate') {
       const st = W.stands[6];
       skipStand = st.id;
-      fm.reset(new V3(st.cg[0], gy, st.cg[2]), 0, 0, 0, true);
+      fm.reset(new V3(st.cg[0], gy, st.cg[2] - (STAND_NOSE - this.meta.noseGear[0])), 0, 0, 0, true);
       fm.ctl.parkingBrake = true;
       sys.mcp = { spd: 160, hdg: 270, alt: 5000, vs: 2000 };
       sys.selectRunway(r27);
@@ -444,7 +641,7 @@ class App {
         this.rig.setView('chase');
       } else {
         const dist = 4 * 1852;
-        const h = Math.tan(3 * DEG) * (dist + r.ils.gsAntennaFromThr) + 1.5 + 5.25;
+        const h = Math.tan(3 * DEG) * (dist + r.ils.gsAntennaFromThr) + 1.5 - this.meta.groundY;
         const p = new V3(r.threshold[0] - d.x * dist, h, r.threshold[2] - d.z * dist);
         setAir(6, true);
         const vref = sys.vspeeds().vref30;
@@ -475,7 +672,7 @@ class App {
       this.rig.setView('chase');
     } else if (id === 'cruise') {
       const alt = 35000 * FT;
-      fm.reset(new V3(-70000, alt, 9000), 75, 0.85 * 296.5, 2, false);
+      fm.reset(new V3(-70000, alt, 9000), 75, Math.min(0.85, SPEC.MMO - 0.04) * 296.5, 2, false);
       setAir(0, false);
       sys.mcp = { spd: 270, hdg: 75, alt: 35000, vs: -1500 };
       sys.ap.roll = 'HDG'; sys.ap.pitch = 'ALT'; sys.ap.on = true;
@@ -664,7 +861,7 @@ class App {
 
   // ------------------------------------------------------------------- per frame
   frame(now) {
-    const dt = Math.min((now - this.last) / 1000, 0.1);
+    const dt = Math.max(0, Math.min((now - this.last) / 1000, 0.1));
     this.last = now;
     this.fps += ((1 / Math.max(dt, 1e-3)) - this.fps) * 0.05;
     const fm = this.fm, sys = this.sys;
@@ -756,8 +953,9 @@ class App {
   // AI traffic: tyre smoke on touchdown
   aiTouchdown(ac) {
     const c = Math.cos(ac.a), s = Math.sin(ac.a);
+    const aft = ac.tm ? ac.tm.mainAft : 1.7, tr = ac.tm ? Math.abs(ac.tm.meta.mainGearL[2]) : 4.9;
     for (const side of [-1, 1]) {
-      const p = { x: ac.x - c * 1.7 - s * 4.9 * side, y: 0.5, z: ac.z - s * 1.7 + c * 4.9 * side };
+      const p = { x: ac.x - c * aft - s * tr * side, y: 0.5, z: ac.z - s * aft + c * tr * side };
       for (let i = 0; i < 6; i++) {
         this.visual.emit(p, { x: c * ac.v * 0.5 + (Math.random() - 0.5) * 3, y: 0.8 + Math.random(), z: s * ac.v * 0.5 + (Math.random() - 0.5) * 3 },
           1.6 + Math.random(), 1.2, 3.5, 0.35);
@@ -792,7 +990,7 @@ class App {
     this._pl = this._pl || [0, 1].map(() => ({ start: new THREE.Vector3(), end: new THREE.Vector3(), r0: 0.9, r1: 5, strength: 0 }));
     [this.meta.engineAxisL, this.meta.engineAxisR].forEach((ax, i) => {
       const e = this.fm.engines[i], p = this._pl[i];
-      p.start.set(ax[0] - 2.0, ax[1], ax[2]).applyMatrix4(mw);
+      p.start.set(ax[0] - 2.0 * ((this.meta.fanRadius || 1.41) / 1.41), ax[1], ax[2]).applyMatrix4(mw);
       p.end.set(ax[0] - 38, ax[1] - 0.8, ax[2]).applyMatrix4(mw);
       const n = Math.max(0, Math.min(1, (e.n1 - 15) / 85));
       p.strength = e.running ? 0.35 + 0.65 * n : 0;

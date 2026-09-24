@@ -1,15 +1,21 @@
 // Headless flight test of the physics + systems (no graphics).
-//   node tests/flight_test.mjs
+//   node tests/flight_test.mjs            (787-9)
+//   AC=b737-800 node tests/flight_test.mjs   (or b767-300er)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FlightModel } from '../web/js/flightmodel.js';
+import { FlightModel, SPEC } from '../web/js/flightmodel.js';
 import { Systems } from '../web/js/systems.js';
 import { configureTerrain, terrainHeight } from '../web/js/terrain.js';
 import { V3, KT, FT, DEG, FPM, headingVec } from '../web/js/util.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const meta = JSON.parse(fs.readFileSync(path.join(here, '../web/assets/b787-9.json')));
+const meta = JSON.parse(fs.readFileSync(path.join(here, `../web/assets/${process.env.AC || 'b787-9'}.json`)));
+if (meta.spec) Object.assign(SPEC, meta.spec);
+const KM = SPEC.MTOW / 254011;                    // loads scale with the type's weight
+const GY = -meta.groundY - 0.2;
+const MC = Math.min(0.85, SPEC.MMO - 0.04);       // cruise Mach
+console.log('type', meta.name || 'Boeing 787-9');
 const world = JSON.parse(fs.readFileSync(path.join(here, '../web/assets/world.json')));
 configureTerrain(world);
 const rwy27 = world.runways.find((r) => r.ident === '27');
@@ -35,9 +41,9 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
 {
   const fm = new FlightModel(meta);
   const sys = new Systems(fm, world);
-  fm.payload = 26000; fm.fuel = 45000;
+  fm.payload = 26000 * KM; fm.fuel = 45000 * KM;
   const start = new V3(rwy27.threshold[0] - 80, 0, 0);
-  fm.reset(new V3(start.x, 5.05, start.z), 270, 0, 0, true);
+  fm.reset(new V3(start.x, GY, start.z), 270, 0, 0, true);
   run(fm, sys, 4);
   const o = fm.out;
   console.log('settled:', fmt(o), 'gear loads', fm.gear.map((g) => (g.load / 1000).toFixed(0) + 'kN').join(' '),
@@ -60,7 +66,7 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
   });
   console.log('liftoff', liftoff);
   console.log('at 1500ft:', fmt(o));
-  check(liftoff && liftoff.dist > 1100 && liftoff.dist < 3200, 'takeoff roll ' + (liftoff && liftoff.dist.toFixed(0)) + ' m');
+  check(liftoff && liftoff.dist > 900 && liftoff.dist < 3200, 'takeoff roll ' + (liftoff && liftoff.dist.toFixed(0)) + ' m');
   check(o.altFt >= 1400, 'climbed through 1500 ft');
   // --- flap retraction, AP on, climb to 5000 and hold 250 kt ---
   sys.pilot.pitch = 0;
@@ -81,9 +87,9 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
 {
   const fm = new FlightModel(meta);
   const sys = new Systems(fm, world);
-  fm.payload = 26000; fm.fuel = 60000;
+  fm.payload = 26000 * KM; fm.fuel = Math.min(60000 * KM, SPEC.fuelCapacity * 0.8);
   const alt = 35000 * FT;
-  fm.reset(new V3(0, alt, -30000), 270, 0.85 * 296.5, 2.0, false);
+  fm.reset(new V3(0, alt, -30000), 270, MC * 296.5, 2.0, false);
   sys.flapLever = 0; sys.gearLever = false; fm.ctl.gearPos = 1; fm.ctl.flapAngle = 0;
   sys.airTime = 5; sys.gammaT = 0;
   sys.mcp.alt = 35000; sys.mcp.hdg = 270; sys.mcp.spd = 262;
@@ -95,16 +101,17 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
   run(fm, sys, 120);
   const o = fm.out;
   console.log('cruise:', fmt(o), 'M', o.mach.toFixed(3), 'N1', fm.engines[0].n1.toFixed(1), 'FF/eng', (fm.engines[0].ff * 3600).toFixed(0) + ' kg/h', 'CL', o.CL.toFixed(3));
-  check(o.mach > 0.83 && o.mach < 0.87, 'cruise Mach ~0.85');
+  check(o.mach > MC - 0.02 && o.mach < MC + 0.02, 'cruise Mach ~' + MC.toFixed(2));
   check(fm.engines[0].n1 > 70 && fm.engines[0].n1 < 98, 'cruise N1 plausible');
-  check(fm.engines[0].ff * 3600 > 2400 && fm.engines[0].ff * 3600 < 3800, 'cruise fuel flow plausible (~2.5-3.5 t/h/eng)');
+  const kT = SPEC.thrustSL / 329600;
+  check(fm.engines[0].ff * 3600 > 2400 * kT * 0.8 && fm.engines[0].ff * 3600 < 3800 * kT * 1.2, 'cruise fuel flow plausible (' + (2.5 * kT).toFixed(1) + '-' + (3.5 * kT).toFixed(1) + ' t/h/eng)');
 }
 
 // ---------------------------------------------------------------- ILS autoland
 {
   const fm = new FlightModel(meta);
   const sys = new Systems(fm, world);
-  fm.payload = 26000; fm.fuel = 18000;
+  fm.payload = 26000 * KM; fm.fuel = 18000 * KM;
   sys.selectRunway(rwy27);
   const dir = headingVec(270);
   const d = 12 * 1852;

@@ -1,13 +1,15 @@
 """
-Procedural Boeing 787-9 for Blender (run with Blender's Python or `pip install bpy`).
+Procedural Boeing airliners for Blender (run with Blender's Python or `pip install bpy`).
 
     python3 build_b787.py            # full build (textures + .blend + .glb)
     python3 build_b787.py --quick    # skip texture generation (reuse existing)
+    python3 build_b787.py --lod      # low-poly model for parked / AI aircraft
+    AC_TYPE=b738 python3 build_b787.py   # Boeing 737-800   (b763: 767-300ER, default b789: 787-9)
 
-Output:
-    output/b787-9.blend
-    ../web/assets/b787-9.glb
-    ../web/assets/b787-9.json   (physical / animation metadata for the simulator)
+Output (<asset> = b787-9 / b737-800 / b767-300er):
+    output/<asset>.blend
+    ../web/assets/<asset>.glb, <asset>-lod.glb, <asset>-cabin.glb
+    ../web/assets/<asset>.json   (physical / animation metadata for the simulator)
 
 Every animated part is its own object whose local +X axis is the hinge axis,
 oriented so that a POSITIVE rotation is the "natural" deflection named in the
@@ -43,8 +45,11 @@ PARTS = []          # animation metadata
 # Materials
 # ---------------------------------------------------------------------------
 def tex(name):
-    p = os.path.join(C.TEX_DIR, name)
-    return p if os.path.exists(p) else None
+    for d in (os.path.join(C.TEX_DIR, G.ASSET), C.TEX_DIR):
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return None
 
 
 def make_materials():
@@ -336,6 +341,7 @@ def build_fuselage(M, root, col):
 # Main wing + moving surfaces
 # ---------------------------------------------------------------------------
 WING_BASE = None
+FTF = [float(G.WY(v)) for v in (6.3, 13.9, 17.4, 20.6)]   # flap-track fairings (span stations)
 
 
 def wing_fun(side):
@@ -372,11 +378,18 @@ def build_wing(M, root, col, side):
         spans = span_stations(y0, y1, base)
         lifting_loop(mb, f, spans, x0, x1, front, 0, up, cap_dir=sd, uv_span=G.Y_TIP,
                      mat_le=2, le_split=0.06 if front == "le" else None)
+    if G.WINGLET:
+        # blended winglet: lofted from the wing tip chord, sweeping up and back
+        def fw(S, X, U):
+            return G.winglet_point(S, X, U, side)
+        wl_sp = np.linspace(0.0, 1.0, RS(24, 8))
+        lifting_loop(mb, fw, wl_sp, 0.0, 1.0, "le", 0, (0, -side, 0.3), cap_dir=(0, 0, 1),
+                     uv_span=1.0, mat_le=2, le_split=0.06)
     wing = mb.build("Wing_" + L, [M["wing"], M["wing_dark"], M["le"]], col=col)
     C.set_parent(wing, root)
 
     # --- flap track fairings (fixed forward halves) --------------------------
-    ftf_y = [6.3, 13.9, 17.4, 20.6] if True else []
+    ftf_y = FTF
     fair = C.MeshBuilder(TB)
     moving_fairings = {}
     for yf in ftf_y:
@@ -390,7 +403,7 @@ def build_wing(M, root, col, side):
         ss = s0 + t * length
         # depth below the wing lower surface
         depth = 0.62 * c * 0.14 * np.sin(np.clip(t, 0, 1) ** 0.6 * math.pi) ** 0.9 + 0.02
-        width = 0.34 * np.sin(np.clip(t, 0, 1) ** 0.5 * math.pi) ** 0.8 + 0.01
+        width = 0.34 * max(G.WR, 0.75) * np.sin(np.clip(t, 0, 1) ** 0.5 * math.pi) ** 0.8 + 0.01
         xs = np.clip((ss - le) / c, 0, 1)
         zl = G.wing_point(np.full_like(xs, yf), xs, np.zeros_like(xs, bool), side)[:, 2]
         # beyond TE continue straight
@@ -457,11 +470,11 @@ def build_wing(M, root, col, side):
         return ob
 
     surf_part("FlapInbd_" + L, "flap", (G.FLAP_IN["y0"], G.FLAP_IN["y1"]), G.FLAP_IN["x0"] - 0.035, 1.0,
-              G.FLAP_IN["x0"] + 0.02, 0.42, TE_DOWN, 36, fairings=(6.3,))
+              G.FLAP_IN["x0"] + 0.02, 0.42 * G.WR, TE_DOWN, 36, fairings=(FTF[0],))
     surf_part("Flaperon_" + L, "flaperon", (G.FLAPERON["y0"], G.FLAPERON["y1"]), G.FLAPERON["x0"] - 0.03, 1.0,
               G.FLAPERON["x0"] + 0.015, 0.0, TE_DOWN, 30)
     surf_part("FlapOutbd_" + L, "flap", (G.FLAP_OUT["y0"], G.FLAP_OUT["y1"]), G.FLAP_OUT["x0"] - 0.035, 1.0,
-              G.FLAP_OUT["x0"] + 0.02, 0.36, TE_DOWN, 36, fairings=(13.9, 17.4, 20.6))
+              G.FLAP_OUT["x0"] + 0.02, 0.36 * G.WR, TE_DOWN, 36, fairings=tuple(FTF[1:]))
     surf_part("Aileron_" + L, "aileron", (G.AILERON["y0"], G.AILERON["y1"]), G.AILERON["x0"] - 0.03, 1.0,
               G.AILERON["x0"] + 0.015, 0.0, TE_DOWN, 25)
     for i, (a, b) in enumerate(G.SPOILERS, start=1):
@@ -527,7 +540,10 @@ def revolve_grid(prof, center, n=96, theta=None, a_override=None, r_override=Non
 def build_engine(M, root, col, side):
     L = "L" if side > 0 else "R"
     cen = np.array([G.ENG_S_HL, side * G.ENG_Y, G.ENG_Z])
-    mb = C.MeshBuilder(TB)
+    K = (G.ENG_KA, G.ENG_KR, G.ENG_KR)
+    TBe = G.ScaledTB(cen, K, G.ENG_FLAT) if G.TYPE != "b789" else TB
+    TBf = G.ScaledTB(cen, K) if G.TYPE != "b789" else TB
+    mb = C.MeshBuilder(TBe)
     n = RS(128, 24)
     th = np.linspace(0, 2 * math.pi, n + 1)
     # ---- inlet (inner) + lip + outer cowl -----------------------------------
@@ -549,7 +565,7 @@ def build_engine(M, root, col, side):
     # ---- chevron nozzle -------------------------------------------------------
     a_start, r_start = G.NAC_OUTER[-1]
     t = (th * G.CHEVRONS / (2 * math.pi)) % 1.0
-    tri = np.abs(2 * t - 1)                  # 1 at valleys, 0 at tips
+    tri = np.abs(2 * t - 1) if G.CHEVRONS else np.ones_like(t)   # 1 at valleys, 0 at tips
     a_exit = a_start + 0.38 - 0.30 * tri
     k = 10
     ss = np.linspace(0, 1, k)[:, None]
@@ -629,7 +645,7 @@ def build_engine(M, root, col, side):
     C.set_parent(ob, root)
 
     # ---- fan (spinner + blades) : separate object rotating about local X -----
-    fb = C.MeshBuilder(TB)
+    fb = C.MeshBuilder(TBf)
     spin = np.array([(0.62, 0.0), (0.66, 0.12), (0.75, 0.22), (0.90, 0.33), (1.08, 0.42),
                      (1.30, 0.48), (1.70, 0.50)])
     Ps, Ns, UVs = revolve_grid(spin, cen, RS(64, 12))
@@ -638,13 +654,13 @@ def build_engine(M, root, col, side):
         Ns = -Ns
         Ns[0] = (-1, 0, 0)
     fb.add_grid(Ps, UVs, N=Ns, mat=1)
-    nb = 18
+    nb = G.FAN_BLADES
     nr, nc = RS(12, 3), RS(11, 4)
     rr = np.linspace(0.46, 1.395, nr)
     for b in range(nb):
         th0 = 2 * math.pi * b / nb
         beta = np.radians(28 + 34 * ((rr - 0.46) / 0.935) ** 0.9)
-        chord = 0.42 + 0.18 * ((rr - 0.46) / 0.935)
+        chord = (0.42 + 0.18 * ((rr - 0.46) / 0.935)) * min(1.0, 22.0 / nb)
         ac = G.FAN_A + 0.02 + 0.12 * ((rr - 0.46) / 0.935) ** 2
         xs = G.cos_space(0, 1, nc)
         th_ = 0.035 * np.sin(math.pi * xs) ** 0.8 * (1.2 - 0.6 * (rr[:, None] - 0.46))
@@ -668,7 +684,7 @@ def build_engine(M, root, col, side):
         if np.sum(fb.norms[-1].reshape(loop.shape) * d) < 0:
             fb.norms[-1] = -fb.norms[-1]
         fb.add_poly(loop[-1], mat=0, outward=("dir", (0, 0, 0)) if False else None)
-    Mf = pivot_matrix(TB(np.array([cen[0] + G.FAN_A, cen[1], cen[2]])), (1, 0, 0))
+    Mf = pivot_matrix(TB(np.array([cen[0] + G.FAN_A * G.ENG_KA, cen[1], cen[2]])), (1, 0, 0))
     fan = fb.build("Fan_" + L, [M["fan"], M["spinner"]], col=col, matrix=Mf)
     C.set_parent(fan, root)
     PARTS.append(dict(name="Fan_" + L, kind="fan", max=0))
@@ -683,20 +699,26 @@ def build_pylon(M, root, col, side, cen):
     le = float(G.wing_le(y))
     te = float(G.wing_te(y))
     c = te - le
-    s0 = cen[0] + 1.45
-    s1 = te + 0.9
+    ka, kr = G.ENG_KA, G.ENG_KR
+    s0 = cen[0] + 1.45 * ka
+    s1 = te + 0.9 * ka
     ns = RS(60, 14)
     ss = np.linspace(s0, s1, ns)
     xs = np.clip((ss - le) / c, 0, 1)
     zlow = G.wing_point(np.full(ns, y), xs, np.zeros(ns, bool), 1)[:, 2]
-    nac_top = cen[2] + 1.70
-    top = np.where(ss < le + 0.4, nac_top + 0.30 + 0.12 * np.clip((ss - s0) / (le - s0), 0, 1), zlow + 0.2)
+    nac_top = cen[2] + 1.70 * kr
+    top = np.where(ss < le + 0.4, nac_top + (0.30 + 0.12 * np.clip((ss - s0) / (le - s0), 0, 1)) * kr,
+                   zlow + 0.2 * kr)
     top = np.convolve(np.pad(top, 3, mode="edge"), np.ones(7) / 7, mode="valid")
-    t_exit = cen[0] + G.NOZZLE_A
-    bottom = np.interp(ss, [s0, t_exit - 0.1, t_exit + 0.4, cen[0] + 6.5, te - 0.5, s1],
-                       [nac_top - 0.05, nac_top - 0.05, cen[2] + 1.02, cen[2] + 0.92,
-                        zlow[-1] - 0.25, zlow[-1] + 0.12])
-    halfw = 0.27 * np.sin(np.clip((ss - s0) / (s1 - s0), 0, 1) ** 0.35 * math.pi) ** 0.55 + 0.01
+    t_exit = cen[0] + G.NOZZLE_A * ka
+    kn = [s0, t_exit - 0.1 * ka, t_exit + 0.4 * ka, cen[0] + 6.5 * ka, te - 0.5 * ka, s1]
+    kn = np.array(kn)
+    if np.any(np.diff(kn) <= 0):
+        kn = np.maximum.accumulate(kn + np.arange(6) * 1e-3)
+    bottom = np.interp(ss, kn,
+                       [nac_top - 0.05 * kr, nac_top - 0.05 * kr, cen[2] + 1.02 * kr, cen[2] + 0.92 * kr,
+                        zlow[-1] - 0.25 * kr, zlow[-1] + 0.12 * kr])
+    halfw = 0.27 * kr * np.sin(np.clip((ss - s0) / (s1 - s0), 0, 1) ** 0.35 * math.pi) ** 0.55 + 0.01
     na = RS(40, 10)
     ang = np.linspace(0, 2 * math.pi, na + 1)
     P = np.zeros((ns, na + 1, 3))
@@ -761,6 +783,9 @@ def build_htail(M, root, col):
         add_part("Elevator_" + L, "elevator", mb2, [M["wing"]], hp(y0), hp(y1), test, TE_DOWN, 30, stab, col)
 
 
+TAIL_S0 = G.VT_S_LE0 - 3.25       # tail texture window (787: 46.0)
+
+
 def build_vtail(M, root, col):
     def f(S, X, U):
         side = np.where(U, 1.0, -1.0)
@@ -775,7 +800,7 @@ def build_vtail(M, root, col):
                      uv_span=1.0, nch=40)
     # tail texture UVs: planar side projection (s, z)
     ob = mb.build("VTail", [M["tail"]], col=col)
-    planar_uv(ob, s0=46.0, s1=G.LENGTH, z0=G.VT_Z0, z1=G.VT_ZTIP)
+    planar_uv(ob, s0=TAIL_S0, s1=G.LENGTH, z0=G.VT_Z0, z1=G.VT_ZTIP)
     C.set_parent(ob, root)
     mb2 = C.MeshBuilder(TB)
     z0, z1 = G.RUDDER["z0"] + 0.02, G.RUDDER["z1"] - 0.02
@@ -788,7 +813,7 @@ def build_vtail(M, root, col):
     test = f(spans, np.ones_like(spans), np.ones_like(spans, bool))
     rud = add_part("Rudder", "rudder", mb2, [M["tail"]], hp(z0), hp(z1), test, TE_RIGHT, 27, root, col,
                    up_hint=(-1, 0, 0))
-    planar_uv(rud, s0=46.0, s1=G.LENGTH, z0=G.VT_Z0, z1=G.VT_ZTIP)
+    planar_uv(rud, s0=TAIL_S0, s1=G.LENGTH, z0=G.VT_Z0, z1=G.VT_ZTIP)
 
 
 def planar_uv(ob, s0, s1, z0, z1):
@@ -875,29 +900,38 @@ def wheel(mb, center, axis_y, D, W, mat_tire, mat_hub, n=48, outboard=1):
 
 
 def build_gear(M, root, col):
+    """Gear modelled at 787-9 proportions: heights are mapped between the belly and the ground
+    at each gear station, lengths scale with the tyre size (identity for the 787-9)."""
     g = G.GROUND_Z
     # ---------------- nose gear ------------------------------------------------
     sN = G.S_NOSE
     rN = G.NOSE_TIRE_D / 2
+    SN = G.NOSE_TIRE_D / 1.02
+    zbN = float(G.fus_profile(sN)[1])
+    kN = (g - zbN) / (-5.25 + 2.97515744)
+
+    def zn(z):
+        return zbN + (z + 2.97515744) * kN
     axle_z = g + rN
-    hinge = np.array([sN - 0.25, 0.0, -2.30])
+    hinge = np.array([sN - 0.25 * SN, 0.0, zn(-2.30)])
     mb = C.MeshBuilder(TB)
-    cyl(mb, (sN, 0, -2.25), (sN, 0, -3.65), 0.135, 0)                  # outer cylinder
-    cyl(mb, (sN, 0, -3.60), (sN, 0, axle_z + 0.12), 0.10, 1)           # chrome piston
-    cyl(mb, (sN, 0, -3.35), (sN, 0, -3.55), 0.19, 0)                   # steering collar
-    cyl(mb, (sN, -G.NOSE_WHEEL_DY - 0.05, axle_z), (sN, G.NOSE_WHEEL_DY + 0.05, axle_z), 0.07, 0)  # axle
-    mb.add_box((sN + 0.05, 0, axle_z + 0.16), (0.36, 0.30, 0.22), mat=0)   # axle housing
+    cyl(mb, (sN, 0, zn(-2.25)), (sN, 0, zn(-3.65)), 0.135 * SN, 0)                  # outer cylinder
+    cyl(mb, (sN, 0, zn(-3.60)), (sN, 0, axle_z + 0.12 * SN), 0.10 * SN, 1)           # chrome piston
+    cyl(mb, (sN, 0, zn(-3.35)), (sN, 0, zn(-3.55)), 0.19 * SN, 0)                   # steering collar
+    cyl(mb, (sN, -G.NOSE_WHEEL_DY - 0.05 * SN, axle_z), (sN, G.NOSE_WHEEL_DY + 0.05 * SN, axle_z), 0.07 * SN, 0)
+    mb.add_box((sN + 0.05 * SN, 0, axle_z + 0.16 * SN), (0.36 * SN, min(0.30 * SN, 2 * G.NOSE_WHEEL_DY - 0.1),
+                                                          0.22 * SN), mat=0)   # axle housing
     # torque links
-    mb.add_box((sN + 0.2, 0, -3.95), (0.34, 0.07, 0.07), mat=0)
-    mb.add_box((sN + 0.2, 0, -4.2), (0.30, 0.07, 0.07), mat=0)
+    mb.add_box((sN + 0.2 * SN, 0, zn(-3.95)), (0.34 * SN, 0.07 * SN, 0.07 * SN), mat=0)
+    mb.add_box((sN + 0.2 * SN, 0, zn(-4.2)), (0.30 * SN, 0.07 * SN, 0.07 * SN), mat=0)
     # drag brace (forward)
-    cyl(mb, (sN, 0, -3.25), (sN - 1.55, 0, -2.45), 0.065, 0)
-    cyl(mb, (sN, 0.12, -3.25), (sN - 1.55, 0.25, -2.45), 0.045, 0)
-    cyl(mb, (sN, -0.12, -3.25), (sN - 1.55, -0.25, -2.45), 0.045, 0)
+    cyl(mb, (sN, 0, zn(-3.25)), (sN - 1.55 * SN, 0, zn(-2.45)), 0.065 * SN, 0)
+    cyl(mb, (sN, 0.12 * SN, zn(-3.25)), (sN - 1.55 * SN, 0.25 * SN, zn(-2.45)), 0.045 * SN, 0)
+    cyl(mb, (sN, -0.12 * SN, zn(-3.25)), (sN - 1.55 * SN, -0.25 * SN, zn(-2.45)), 0.045 * SN, 0)
     # taxi / turnoff lights on the strut
-    mb.add_box((sN - 0.17, 0, -3.10), (0.10, 0.34, 0.14), mat=0)
-    for dy in (-0.1, 0.1):
-        cyl(mb, (sN - 0.20, dy, -3.10), (sN - 0.235, dy, -3.10), 0.055, 3, n=16)
+    mb.add_box((sN - 0.17 * SN, 0, zn(-3.10)), (0.10 * SN, 0.34 * SN, 0.14 * SN), mat=0)
+    for dy in (-0.1 * SN, 0.1 * SN):
+        cyl(mb, (sN - 0.20 * SN, dy, zn(-3.10)), (sN - 0.235 * SN, dy, zn(-3.10)), 0.055 * SN, 3, n=16)
     test = np.array([[sN, 0, axle_z]])
     nose = add_part("NoseGear", "gear", mb, [M["gear"], M["chrome"], M["tire"], M["landing"], M["hub"]],
                     hinge, hinge + np.array([0, 1.0, 0]), test, MOVE_FWD, 98, root, col,
@@ -914,9 +948,9 @@ def build_gear(M, root, col):
     for side in (1, -1):
         L = "L" if side > 0 else "R"
         mbd = C.MeshBuilder(TB)
-        s_a, s_b = sN - 2.75, sN + 0.30
+        s_a, s_b = sN - 2.75 * SN, sN + 0.30 * SN
         ss = np.linspace(s_a, s_b, 14)
-        ys = np.linspace(0.015, 0.60, 8) * side
+        ys = np.linspace(0.015, 0.60 * G.WR, 8) * side
         P = np.zeros((len(ss), len(ys), 3))
         for i, s in enumerate(ss):
             phi, arc, Cc = G.section_arc(s, 720)
@@ -939,40 +973,54 @@ def build_gear(M, root, col):
     # ---------------- main gear --------------------------------------------------
     sM = G.S_MAIN
     rM = G.MAIN_TIRE_D / 2
+    SG = G.MAIN_TIRE_D / 1.37
+    zbM = float(G.fus_profile(sM)[1])
+    kM = (g - zbM) / (-5.25 + 2.985)
+
+    def zm(z):
+        return zbM + (z + 2.985) * kM
     axle_z = g + rM
+    AX = G.MAIN_AXLES
+    WDY = G.MAIN_WHEEL_DY
     for side in (1, -1):
         L = "L" if side > 0 else "R"
         yM = side * G.Y_MAIN
-        top = np.array([sM - 0.25, yM, -2.05])
-        pivot_bog = np.array([sM - 0.05, yM, axle_z + 0.05])
+        top = np.array([sM - 0.25 * SG, yM, zm(-2.05)])
+        pivot_bog = np.array([sM - 0.05 * SG, yM, axle_z + 0.05 * SG])
         mb = C.MeshBuilder(TB)
-        cyl(mb, top, (sM - 0.12, yM, -3.55), 0.215, 0, n=24)
-        cyl(mb, (sM - 0.12, yM, -3.50), pivot_bog + np.array([0, 0, 0.18]), 0.165, 1, n=24)
-        cyl(mb, (sM - 0.10, yM, -3.40), (sM - 0.10, yM, -3.62), 0.26, 0, n=24)  # gland nut
-        # bogie beam
-        mb.add_box((sM, yM, axle_z + 0.02), (2 * G.MAIN_AXLE_DS + 0.35, 0.26, 0.30), mat=0)
-        cyl(mb, (sM - 0.05, yM - 0.25, axle_z + 0.05), (sM - 0.05, yM + 0.25, axle_z + 0.05), 0.12, 0)
-        for ds in (-G.MAIN_AXLE_DS, G.MAIN_AXLE_DS):
-            cyl(mb, (sM + ds, yM - G.MAIN_WHEEL_DY - 0.1, axle_z), (sM + ds, yM + G.MAIN_WHEEL_DY + 0.1, axle_z),
-                0.09, 0)
+        cyl(mb, top, (sM - 0.12 * SG, yM, zm(-3.55)), 0.215 * SG, 0, n=24)
+        cyl(mb, (sM - 0.12 * SG, yM, zm(-3.50)), pivot_bog + np.array([0, 0, 0.18 * SG]), 0.165 * SG, 1, n=24)
+        cyl(mb, (sM - 0.10 * SG, yM, zm(-3.40)), (sM - 0.10 * SG, yM, zm(-3.62)), 0.26 * SG, 0, n=24)  # gland nut
+        if len(AX) > 1:
+            # bogie beam
+            mb.add_box((sM, yM, axle_z + 0.02 * SG), (2 * G.MAIN_AXLE_DS + 0.35 * SG, 0.26 * SG, 0.30 * SG), mat=0)
+            cyl(mb, (sM - 0.05 * SG, yM - 0.25 * SG, axle_z + 0.05 * SG),
+                (sM - 0.05 * SG, yM + 0.25 * SG, axle_z + 0.05 * SG), 0.12 * SG, 0)
+        for ds in AX:
+            cyl(mb, (sM + ds, yM - WDY - 0.1 * SG, axle_z), (sM + ds, yM + WDY + 0.1 * SG, axle_z),
+                0.09 * SG, 0)
             for dy in (-1, 1):
                 # brake housing
-                cyl(mb, (sM + ds, yM + dy * (G.MAIN_WHEEL_DY - 0.22), axle_z),
-                    (sM + ds, yM + dy * (G.MAIN_WHEEL_DY - 0.30), axle_z), 0.36, 0, n=24)
+                cyl(mb, (sM + ds, yM + dy * (WDY - 0.22 * SG), axle_z),
+                    (sM + ds, yM + dy * (WDY - 0.30 * SG), axle_z), 0.36 * SG, 0, n=24)
         # torque links & brake rods
-        mb.add_box((sM + 0.18, yM, -3.95), (0.40, 0.10, 0.09), mat=0)
-        mb.add_box((sM + 0.18, yM, -4.25), (0.36, 0.10, 0.09), mat=0)
-        for ds in (-1, 1):
-            cyl(mb, (sM - 0.1, yM + 0.2, axle_z + 0.35), (sM + ds * 0.7, yM + 0.2, axle_z + 0.1), 0.03, 0, n=8)
+        mb.add_box((sM + 0.18 * SG, yM, zm(-3.95)), (0.40 * SG, 0.10 * SG, 0.09 * SG), mat=0)
+        mb.add_box((sM + 0.18 * SG, yM, zm(-4.25)), (0.36 * SG, 0.10 * SG, 0.09 * SG), mat=0)
+        if len(AX) > 1:
+            for ds in (-1, 1):
+                cyl(mb, (sM - 0.1 * SG, yM + 0.2 * SG, axle_z + 0.35 * SG),
+                    (sM + ds * 0.7 * SG, yM + 0.2 * SG, axle_z + 0.1 * SG), 0.03 * SG, 0, n=8)
         # side brace (to wing / fuselage) and drag brace
-        cyl(mb, (sM - 0.12, yM, -3.05), (sM - 0.2, side * 2.55, -2.25), 0.08, 0)
-        cyl(mb, (sM - 0.12, yM, -3.05), (sM - 1.6, yM - side * 0.2, -2.1), 0.085, 0)
+        cyl(mb, (sM - 0.12 * SG, yM, zm(-3.05)), (sM - 0.2 * SG, side * 2.55 * G.WR, zm(-2.25)), 0.08 * SG, 0)
+        cyl(mb, (sM - 0.12 * SG, yM, zm(-3.05)), (sM - 1.6 * SG, yM - side * 0.2 * SG, zm(-2.1)), 0.085 * SG, 0)
         # hydraulic lines
-        cyl(mb, (sM - 0.34, yM + side * 0.18, -2.1), (sM - 0.32, yM + side * 0.18, -3.4), 0.018, 1, n=6)
+        cyl(mb, (sM - 0.34 * SG, yM + side * 0.18 * SG, zm(-2.1)), (sM - 0.32 * SG, yM + side * 0.18 * SG, zm(-3.4)),
+            0.018 * SG, 1, n=6)
         # strut door (flat fairing on the outboard side of the leg)
         door = []
-        ys_ = yM + side * 0.33
-        for (s, z) in ((sM - 0.95, -2.05), (sM + 0.55, -2.05), (sM + 0.45, -3.45), (sM - 0.75, -3.55)):
+        ys_ = yM + side * 0.33 * SG
+        for (s, z) in ((sM - 0.95 * SG, zm(-2.05)), (sM + 0.55 * SG, zm(-2.05)), (sM + 0.45 * SG, zm(-3.45)),
+                       (sM - 0.75 * SG, zm(-3.55))):
             door.append((s, ys_, z))
         door = np.array(door)
         mb.add_poly(door, mat=5, outward=("dir", (0, side, 0)))
@@ -985,20 +1033,22 @@ def build_gear(M, root, col):
                                                M["fuselage"], M["bay"]],
                  top, top + np.array([1.0, 0, 0]), test, inboard, 88, root, col,
                  extra=dict(contact=G.to_three([sM, yM, g]), radius=rM,
-                            wheels=[G.to_three([sM + ds, yM + dy * G.MAIN_WHEEL_DY, g])
-                                    for ds in (-G.MAIN_AXLE_DS, G.MAIN_AXLE_DS) for dy in (-1, 1)]))
-        for k, ds in enumerate((-G.MAIN_AXLE_DS, G.MAIN_AXLE_DS)):
+                            wheels=[G.to_three([sM + ds, yM + dy * WDY, g])
+                                    for ds in AX for dy in (-1, 1)]))
+        for k, ds in enumerate(AX):
             mbw = C.MeshBuilder(TB)
             for dy in (-1, 1):
-                wheel(mbw, (sM + ds, yM + dy * G.MAIN_WHEEL_DY, axle_z), 0, G.MAIN_TIRE_D, G.MAIN_TIRE_W, 0, 1, n=48)
+                wheel(mbw, (sM + ds, yM + dy * WDY, axle_z), 0, G.MAIN_TIRE_D, G.MAIN_TIRE_W, 0, 1, n=48)
             ax = np.array([sM + ds, yM, axle_z])
             add_part("MainWheels_%s%d" % (L, k), "wheel", mbw, [M["tire"], M["hub"]], ax, ax + np.array([0, 1.0, 0]),
                      np.array([[sM + ds, yM, axle_z + rM]]), MOVE_FWD, 360, leg, col,
                      extra=dict(radius=rM, gear=1 if side > 0 else 2))
+        if G.TYPE == "b738":
+            continue          # 737: the main wheels retract into open wells (no belly doors)
         # belly wheel-well door (hinged near the keel, opens downward)
         mbd = C.MeshBuilder(TB)
-        ss = np.linspace(sM - 1.55, sM + 1.75, 16)
-        ys = np.linspace(0.25, 2.55, 12) * side
+        ss = np.linspace(sM - 1.55 * SG, sM + 1.75 * SG, 16)
+        ys = np.linspace(0.25 * G.WR, 2.55 * G.WR, 12) * side
         P = np.zeros((len(ss), len(ys), 3))
         for i, s in enumerate(ss):
             phi, arc, Cc = G.section_arc(s, 1440)
@@ -1061,18 +1111,21 @@ def fus_point(s, side_angle_deg):
 def build_details(M, root, col):
     mb = C.MeshBuilder(TB)
     # blade antennas top / bottom
-    for s in (11.5, 19.0, 38.5, 44.0):
+    SM = lambda s: float(G.SMAP(s))  # noqa: E731
+    for s in (SM(11.5), SM(19.0), SM(38.5), SM(44.0)):
         p = fus_point(s, 0)
         blade_antenna(mb, s, 0.0, p[2] - 0.02, True, mat=0)
-    for s in (9.8, 14.5, 41.0):
+    for s in (SM(9.8), SM(14.5), SM(41.0)):
         p = fus_point(s, 180)
         blade_antenna(mb, s, 0.0, p[2] + 0.02, False, h=0.24, mat=0)
     # SATCOM radome on the crown
-    p = fus_point(27.5, 0)
-    dome(mb, p - np.array([0, 0, 0.05]), (0, 0, 1), 1.05, 0, n=28, h=0.28)
+    if G.TYPE != "b738":
+        p = fus_point(SM(27.5), 0)
+        dome(mb, p - np.array([0, 0, 0.05]), (0, 0, 1), 1.05 * G.WR, 0, n=28, h=0.28 * G.WR)
+    CS = lambda s: float(G.ck(np.array([s, 0, 0]))[0])  # noqa: E731
     # pitot probes + AOA vanes (both sides)
     for side in (1, -1):
-        for (s, ang) in ((2.35, 72), (2.55, 95), (2.35, 112)):
+        for (s, ang) in ((CS(2.35), 72), (CS(2.55), 95), (CS(2.35), 112)):
             p = fus_point(s, side * ang)
             nrm = np.array([0, p[1], p[2] - float(G.fus_profile(s)[3])])
             nrm /= np.linalg.norm(nrm)
@@ -1080,7 +1133,7 @@ def build_details(M, root, col):
             tip = p + nrm * 0.16
             cyl(mb, base, tip, 0.025, 1, n=8)
             cyl(mb, tip, tip + np.array([-0.24, 0, 0]), 0.012, 1, n=8)
-        p = fus_point(3.4, side * 102)
+        p = fus_point(CS(3.4), side * 102)
         nrm = np.array([0, p[1], p[2]])
         nrm /= np.linalg.norm(nrm)
         vane = np.array([p - np.array([0.06, 0, 0]), p + np.array([0.08, 0, 0]),
@@ -1089,10 +1142,10 @@ def build_details(M, root, col):
         mb.add_poly(vane[::-1], mat=1)
     # static wicks on ailerons, elevators, rudder, wing tips
     for side in (1, -1):
-        for yy in (23.0, 24.8, 26.5, 28.5, 29.6):
+        for yy in G.WY([23.0, 24.8, 26.5, 28.5, 29.6]):
             te = G.wing_point(np.array(yy), np.array(1.0), np.array(True), side)
             cyl(mb, te, te + np.array([0.42, 0, -0.01]), 0.008, 1, n=5, caps=False)
-        for yy in (6.0, 8.0, 9.4):
+        for yy in np.array([6.0, 8.0, 9.4]) * G.HT_SEMI / 9.72:
             te = G.ht_point(np.array(yy), np.array(1.0), np.array(True), side)
             cyl(mb, te, te + np.array([0.36, 0, 0]), 0.008, 1, n=5, caps=False)
     ob = mb.build("Details", [M["antenna"], M["chrome"]], col=col)
@@ -1113,19 +1166,19 @@ def build_details(M, root, col):
         light("Strobe_" + L, tip_te + np.array([0.05, side * 0.04, -0.01]), (1, side * 0.4, 0), 0.06, M["strobe"])
         light("NavTail_" + L, tip_te + np.array([0.02, 0, 0.03]), (1, 0, 0.2), 0.04, M["white_light"])
         # landing lights in the wing root leading edge
-        lp = G.wing_point(np.array(4.6), np.array(0.02), np.array(False), side)
+        lp = G.wing_point(G.WY(4.6), np.array(0.02), np.array(False), side)
         light("LandingLight_" + L, lp + np.array([-0.02, 0, 0]), (-1, 0, -0.05), 0.16, M["landing"], h=0.05)
         # runway turn-off light
-        lp2 = G.wing_point(np.array(3.7), np.array(0.03), np.array(False), side)
+        lp2 = G.wing_point(G.WY(3.7), np.array(0.03), np.array(False), side)
         light("TurnoffLight_" + L, lp2, (-1, side * 0.5, -0.1), 0.09, M["landing"], h=0.04)
-    light("Beacon_Top", fus_point(29.5, 0) + np.array([0, 0, -0.03]), (0, 0, 1), 0.14, M["beacon"], h=0.10)
-    light("Beacon_Bottom", fus_point(37.0, 180) + np.array([0, 0, 0.03]), (0, 0, -1), 0.14, M["beacon"], h=0.10)
+    light("Beacon_Top", fus_point(SM(29.5), 0) + np.array([0, 0, -0.03]), (0, 0, 1), 0.14, M["beacon"], h=0.10)
+    light("Beacon_Bottom", fus_point(SM(37.0), 180) + np.array([0, 0, 0.03]), (0, 0, -1), 0.14, M["beacon"], h=0.10)
     light("Strobe_Tail", np.array([G.LENGTH - 0.02, 0, G.fus_profile(G.LENGTH)[0] - 0.05]), (1, 0, 0), 0.05,
           M["strobe"])
     # logo lights on the stabiliser (pointing at the fin)
     for side in (1, -1):
         L = "L" if side > 0 else "R"
-        p = G.ht_point(np.array(3.8), np.array(0.35), np.array(True), side)
+        p = G.ht_point(np.array(3.8 * G.HT_SEMI / 9.72), np.array(0.35), np.array(True), side)
         light("LogoLight_" + L, p, (0, 0, 1), 0.07, M["landing"], h=0.03)
 
 
@@ -1148,8 +1201,11 @@ def build_cockpit(M, root, col):
         "metal": C.pbr_material("Cockpit_Metal", color=C.hex_color("#9aa1a8"), roughness=0.3, metallic=0.9),
         "knob": C.pbr_material("Cockpit_Knob", color=C.hex_color("#e7e9eb"), roughness=0.4),
     }
+    TBc = G.CockpitTB() if G.TYPE != "b789" else TB
+    CK = G.ck if G.TYPE != "b789" else (lambda p: np.asarray(p, dtype=np.float64))
+    CS = lambda s: float(G.ck(np.array([s, 0.0, 0.0]))[0])  # noqa: E731
     # --- inner shell (inward facing copy of the nose skin) ------------------
-    st = np.linspace(1.3, 6.9, 60)
+    st = np.linspace(CS(1.3), CS(6.9), 60)
     nv = 128
     phi = np.linspace(0, 2 * math.pi, nv + 1)
     P = np.zeros((len(st), nv + 1, 3))
@@ -1163,7 +1219,7 @@ def build_cockpit(M, root, col):
         P[i, :, 0] = s
         P[i, :, 1] = y * k
         P[i, :, 2] = zc + (z - zc) * k
-        UV[i, :, 0] = s / 7.0
+        UV[i, :, 0] = s / CS(7.0)
         UV[i, :, 1] = arc / arc[-1]
     mb = C.MeshBuilder(TB)
     N, _ = mb.grid_normals(P, wrap_v=True)
@@ -1175,7 +1231,7 @@ def build_cockpit(M, root, col):
     C.set_parent(ob, root)
 
     # --- solid interior furniture (design coords) -----------------------------
-    fb = C.MeshBuilder(TB)
+    fb = C.MeshBuilder(TBc)
     DZ = -0.30          # furniture height offset (floor raised above main deck)
     fl = DZ + 0.02      # floor height (design z)
     # floor
@@ -1183,9 +1239,13 @@ def build_cockpit(M, root, col):
                 outward=("dir", (0, 0, 1)))
     # rear bulkhead with door
     phb = np.linspace(math.pi * 0.5, math.pi * 1.5, 40)
-    yb, zb = G.fus_section(6.85, phb)
-    zcb = float(G.fus_profile(6.85)[3])
-    bulk = [(6.85, 0.95 * yy, max(fl, zcb + 0.95 * (zz - zcb))) for yy, zz in zip(yb, zb)]
+    sb_ = CS(6.85)
+    yb, zb = G.fus_section(sb_, phb)
+    zcb = float(G.fus_profile(sb_)[3])
+    flb = float(CK(np.array([6.85, 0, fl]))[2])
+    bulk = [(sb_, 0.95 * yy, max(flb, zcb + 0.95 * (zz - zcb))) for yy, zz in zip(yb, zb)]
+    if G.TYPE != "b789":
+        bulk = [tuple(G.ck_inv(np.array(p))) for p in bulk]
     fb.add_poly(bulk, mat=2, outward=("dir", (-1, 0, 0)))
     fb.add_box((6.82, 0.0, fl + 1.0), (0.04, 0.8, 1.95), mat=1)
     # main instrument panel (slanted, facing aft/up)
@@ -1212,7 +1272,7 @@ def build_cockpit(M, root, col):
     for nm, yc in zip(names, ys):
         mat = C.pbr_material("Display_" + nm, color=(0.0, 0.0, 0.0, 1), roughness=0.15,
                              emission=(0.02, 0.02, 0.03, 1), emission_strength=1.0)
-        db = C.MeshBuilder(TB)
+        db = C.MeshBuilder(TBc)
         zc = 0.61 + DZ
         dx = 0.006                      # just proud of the panel face, inside the bezel
         s_top = ps + dx - (zc + h / 2 - pz0) * math.tan(tilt)
@@ -1225,8 +1285,8 @@ def build_cockpit(M, root, col):
         C.set_parent(ob, root)
     # HUD combiner glass above the captain
     hud = C.pbr_material("HUD_Glass", color=(0.6, 0.9, 0.7, 1), roughness=0.05, alpha=0.12, blend=True)
-    hb = C.MeshBuilder(TB)
-    e = np.array(G.EYE)
+    hb = C.MeshBuilder(TBc)
+    e = np.array(G.EYE787)
     hs = e[0] - 0.42
     hb.add_poly([(hs, e[1] + 0.16, e[2] - 0.13), (hs, e[1] - 0.16, e[2] - 0.13),
                  (hs - 0.03, e[1] - 0.16, e[2] + 0.13), (hs - 0.03, e[1] + 0.16, e[2] + 0.13)], mat=0,
@@ -1239,7 +1299,7 @@ def build_cockpit(M, root, col):
     # TO/GA and A/T disconnect switches, piggy-back reverse-thrust lever
     for side in (1, -1):
         L = "L" if side > 0 else "R"
-        tb = C.MeshBuilder(TB)
+        tb = C.MeshBuilder(TBc)
         base = np.array([4.25, side * 0.07, 0.62 + DZ])
         top = base + np.array([-0.05, 0, 0.19])
         cyl(tb, base, top, 0.011, 0, n=10)
@@ -1249,12 +1309,12 @@ def build_cockpit(M, root, col):
         cyl(tb, rv, rv + np.array([-0.035, 0, 0.03]), 0.006, 0, n=8)
         tb.add_box(tuple(rv + np.array([-0.04, 0, 0.035])), (0.02, 0.05, 0.012), mat=1)
         test = np.array([top])
-        add_part("Throttle_" + L, "throttle", tb, [Mi["metal"], Mi["black"], Mi["grey"]], base, base + np.array([0, 1, 0]),
-                 test, MOVE_FWD, 30, root, col)
+        add_part("Throttle_" + L, "throttle", tb, [Mi["metal"], Mi["black"], Mi["grey"]], CK(base),
+                 CK(base + np.array([0, 1, 0])), CK(test), MOVE_FWD, 30, root, col)
     # control columns and wheels (787: open-top "ram's horn" wheel with grips, PTT and trim switches)
     for sy in (0.53, -0.53):
         L = "L" if sy > 0 else "R"
-        yb = C.MeshBuilder(TB)
+        yb = C.MeshBuilder(TBc)
         c0 = np.array([3.72, sy, 0.05 + DZ])
         c1 = np.array([3.9, sy, 0.6 + DZ])
         cyl(yb, c0 + np.array([0, 0, -0.02]), c0 + np.array([0.03, 0, 0.12]), 0.07, 1, n=14, r1=0.035)   # boot
@@ -1274,8 +1334,9 @@ def build_cockpit(M, root, col):
             cyl(yb, pts[2], pts[3], 0.021, 1, n=12)
             yb.add_box(tuple(pts[4] + np.array([0.012, 0, 0.004])), (0.014, 0.018, 0.012), mat=3 if s_ * sy > 0 else 2)
         test = np.array([hub])
-        add_part("Yoke_" + L, "yoke", yb, [Mi["metal"], Mi["black"], Mi["grey"], Mi["knob"]], (3.72, sy, 0.05 + DZ),
-                 (3.72, sy + 1, 0.05 + DZ), test, MOVE_FWD, 12, root, col)
+        add_part("Yoke_" + L, "yoke", yb, [Mi["metal"], Mi["black"], Mi["grey"], Mi["knob"]],
+                 CK(np.array([3.72, sy, 0.05 + DZ])), CK(np.array([3.72, sy + 1, 0.05 + DZ])), CK(test),
+                 MOVE_FWD, 12, root, col)
 
 
 # ---------------------------------------------------------------------------
@@ -1345,19 +1406,24 @@ def main():
     build_gear(M, root, col)
     if LOD:
         # parked-aircraft level of detail: no cockpit / antennas / lights
-        C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9-lod.glb"), draco=True)
+        C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + "-lod.glb"), draco=True)
         tris = sum(len(o.data.polygons) for o in bpy.data.objects if o.type == "MESH")
         print("LOD polygons:", tris)
         return
     build_details(M, root, col)
     build_cockpit(M, root, col)
-    if "--bake" in sys.argv:
+    if "--bake" in sys.argv and G.TYPE == "b789":
         bake_ao()
 
     # --- metadata for the simulator ------------------------------------------
     area, mac, y_mac, le_mac = G.wing_area_mac()
     meta = dict(
-        name="Boeing 787-9",
+        name=G.NAME, type=G.TYPE, asset=G.ASSET, label=G.MODEL_LABEL, reg=G.REG,
+        engineName=G.ENGINE_NAME, fanBlades=G.FAN_BLADES, fanRadius=round(G.FAN_R, 3),
+        spec=G.SPEC, ao=G.TYPE == "b789", sCG=G.S_CG, fusW=G.FUS_W, fusH=G.FUS_H,
+        doors=[round(G.S_CG - d, 3) for d in G.DOORS],
+        cargo=[[round(G.S_CG - c[0], 3), c[2], c[3]] for c in G.CARGO],
+        seats=None,
         frame="three.js aircraft frame: +x forward, +y up, +z right; origin = reference CG",
         length=G.LENGTH, span=G.SPAN, height=G.HEIGHT,
         wingArea=round(area, 2), mac=round(mac, 3), macLE=G.to_three([le_mac, 0, 0])[0],
@@ -1366,23 +1432,26 @@ def main():
         noseGear=G.to_three([G.S_NOSE, 0, G.GROUND_Z]),
         mainGearL=G.to_three([G.S_MAIN, G.Y_MAIN, G.GROUND_Z]),
         mainGearR=G.to_three([G.S_MAIN, -G.Y_MAIN, G.GROUND_Z]),
-        tailStrike=G.to_three([56.5, 0, float(G.fus_profile(56.5)[1])]),
+        tailStrike=G.to_three([float(G.SMAP(56.5)), 0, float(G.fus_profile(G.SMAP(56.5))[1])]),
         wingTipL=G.to_three(list(G.wing_point(np.array(G.Y_TIP), np.array(0.5), np.array(False), 1))),
         wingTipR=G.to_three(list(G.wing_point(np.array(G.Y_TIP), np.array(0.5), np.array(False), -1))),
-        engineL=G.to_three([G.ENG_S_HL + 3.0, G.ENG_Y, G.ENG_Z - 1.76]),
-        engineR=G.to_three([G.ENG_S_HL + 3.0, -G.ENG_Y, G.ENG_Z - 1.76]),
-        engineAxisL=G.to_three([G.ENG_S_HL + 5.0, G.ENG_Y, G.ENG_Z]),
-        engineAxisR=G.to_three([G.ENG_S_HL + 5.0, -G.ENG_Y, G.ENG_Z]),
-        noseTip=G.to_three([0, 0, -0.55]),
+        engineL=G.to_three([G.ENG_S_HL + 3.0 * G.ENG_KA, G.ENG_Y, G.ENG_Z - 1.76 * G.ENG_KR]),
+        engineR=G.to_three([G.ENG_S_HL + 3.0 * G.ENG_KA, -G.ENG_Y, G.ENG_Z - 1.76 * G.ENG_KR]),
+        engineAxisL=G.to_three([G.ENG_S_HL + 5.0 * G.ENG_KA, G.ENG_Y, G.ENG_Z]),
+        engineAxisR=G.to_three([G.ENG_S_HL + 5.0 * G.ENG_KA, -G.ENG_Y, G.ENG_Z]),
+        engineExit=G.to_three([G.ENG_S_HL + 7.7 * G.ENG_KA, G.ENG_Y, G.ENG_Z]),
+        noseTip=G.to_three([0, 0, float(G.fus_profile(0.0)[3])]),
         # condensation sources: outboard flap tip (trailing edge) and upper-surface points
         flapTipL=G.to_three(list(G.wing_point(np.array(G.FLAP_OUT["y1"]), np.array(1.0), np.array(True), 1))),
         flapTipR=G.to_three(list(G.wing_point(np.array(G.FLAP_OUT["y1"]), np.array(1.0), np.array(True), -1))),
         wingVapor=[G.to_three(list(G.wing_point(np.array(y), np.array(x), np.array(True), 1)))
-                   for y in np.linspace(4.5, 21.0, 12) for x in (0.12, 0.25, 0.4, 0.55)],
+                   for y in G.WY(np.linspace(4.5, 21.0, 12)) for x in (0.12, 0.25, 0.4, 0.55)],
         parts=PARTS,
         **COCKPIT_META,
     )
-    C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9.glb"), draco=True)
+    import textures_b787
+    meta["liveryLayout"] = textures_b787.livery_layout()
+    C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + ".glb"), draco=True)
     tris = sum(len(o.data.polygons) for o in bpy.data.objects if o.type == "MESH")
     print("objects:", len(bpy.data.objects), "polygons:", tris)
 
@@ -1396,11 +1465,12 @@ def main():
     cabin_objs = [cabin_root] + list(cabin_root.children_recursive)
     for ob in cabin_objs:
         ob.select_set(True)
-    C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9-cabin.glb"), selected_only=True, draco=True)
+    C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + "-cabin.glb"), selected_only=True, draco=True)
     print("cabin polygons:", sum(len(o.data.polygons) for o in cabin_objs if o.type == "MESH"))
-    with open(os.path.join(C.WEB_ASSETS, "b787-9.json"), "w") as fh:
+    meta.pop("seats")
+    with open(os.path.join(C.WEB_ASSETS, G.ASSET + ".json"), "w") as fh:
         json.dump(meta, fh, indent=1)
-    C.save_blend(os.path.join(C.OUT_DIR, "b787-9.blend"))
+    C.save_blend(os.path.join(C.OUT_DIR, G.ASSET + ".blend"))
 
 
 if __name__ == "__main__":

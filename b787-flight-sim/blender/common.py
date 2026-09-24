@@ -283,8 +283,11 @@ class MeshBuilder:
         UV = np.concatenate(self.uvs)
         if self.transform is not None:
             V = self.transform(V)
-            # to_blender style reflections: transform normals by finite difference
-            N = self.transform(V * 0 + N) - self.transform(V * 0)
+            if hasattr(self.transform, "normal"):
+                N = self.transform.normal(N)      # non-uniform scaling: inverse-transpose
+            else:
+                # to_blender style reflections: transform normals by finite difference
+                N = self.transform(V * 0 + N) - self.transform(V * 0)
         if matrix is not None:
             M = np.asarray(matrix, dtype=np.float64)
             Mi = np.linalg.inv(M)

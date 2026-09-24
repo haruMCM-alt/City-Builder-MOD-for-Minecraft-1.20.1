@@ -90,6 +90,74 @@
   .keys b { display: inline-block; min-width: 88px; color: var(--text); font-family: var(--mono); font-weight: 600; }
   details summary { cursor: pointer; color: var(--accent); margin-top: 14px; }
 
+
+  /* ---------- menu: three-step slide wizard, black & sand ---------- */
+  #menu { background: radial-gradient(1100px 700px at 75% 15%, rgba(60,48,30,.55) 0%, rgba(8,7,6,.86) 60%, rgba(5,5,4,.92) 100%); }
+  #menu .card.wiz {
+    --bs-panel: rgba(17, 15, 12, 0.94); --bs-line: rgba(217, 194, 154, 0.18); --bs-sand: #d9c29a; --bs-sand-2: #b8955f;
+    --bs-text: #f1e9da; --bs-muted: #a39883;
+    width: min(1020px, 100%); background: var(--bs-panel); border-color: var(--bs-line); color: var(--bs-text);
+    display: flex; flex-direction: column; overflow: hidden; padding: 20px 22px 16px;
+  }
+  .wiz h1 span { color: var(--bs-sand); }
+  .wiz .sub, .wiz label, .wiz .keys { color: var(--bs-muted); }
+  .wiz legend { color: var(--bs-sand); }
+  .wiz fieldset { border-color: var(--bs-line); }
+  .wiz input[type=range] { accent-color: var(--bs-sand-2); }
+  .wiz select { background: #1b1813; border-color: var(--bs-line); color: var(--bs-text); }
+  .wiz button { background: #1d1a15; border-color: rgba(217,194,154,.28); color: var(--bs-text); }
+  .wiz button:hover { background: #2a251d; border-color: var(--bs-sand); }
+  .wiz button.sel { background: #3a3122; border-color: var(--bs-sand); box-shadow: inset 0 0 0 1px var(--bs-sand); }
+  .wiz button.primary { background: var(--bs-sand); color: #17130c; border: none; }
+  .wiz button.primary:hover { background: #ecd8b3; }
+  .wiz details summary { color: var(--bs-sand); }
+  .wiz .logos button.sel { outline-color: var(--bs-sand); }
+  .wiz-head { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; justify-content: space-between; }
+  .steps { list-style: none; display: flex; gap: 6px; margin: 0; padding: 0; }
+  .steps li { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 99px; cursor: pointer;
+    border: 1px solid var(--bs-line); color: var(--bs-muted); font-size: 13px; transition: all .25s; }
+  .steps li i { font-style: normal; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+    background: #2a251d; color: var(--bs-sand); font-weight: 700; font-size: 12px; }
+  .steps li small { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; }
+  .steps li.on { color: #17130c; background: var(--bs-sand); border-color: var(--bs-sand); }
+  .steps li.on i { background: #17130c; color: var(--bs-sand); }
+  .steps li.done i { background: var(--bs-sand-2); color: #17130c; }
+  .slides { overflow: hidden; margin-top: 14px; flex: 1 1 auto; min-height: 0; }
+  .track { display: flex; transition: transform .5s cubic-bezier(.22, .8, .2, 1); height: 100%; }
+  .slide { flex: 0 0 100%; min-width: 100%; padding: 2px 4px 4px; max-height: calc(100vh - 210px); overflow-y: auto; }
+  .slide h2 { font-size: 20px; margin: 0 0 12px; font-weight: 700; }
+  .slide h2 span { font-size: 13px; color: var(--bs-muted); font-weight: 400; margin-left: 8px; }
+  .wiz .scen { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+  .wiz .scen button { min-height: 62px; }
+  .opts { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin-top: 14px; }
+  .opts label { margin: 0; }
+  .opts .inl { display: flex; align-items: center; gap: 8px; }
+  .opts .inl select { width: auto; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 12px; }
+  .types { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+  .types button { text-align: left; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .types button img { width: 100%; aspect-ratio: 16 / 7; object-fit: cover; display: block; background: #26221b; }
+  .types button .tb { padding: 10px 12px 12px; }
+  .types button .tn { font-size: 17px; font-weight: 700; }
+  .types button .tn em { font-style: normal; color: var(--bs-sand); font-size: 12px; margin-left: 6px; font-weight: 500; }
+  .types button .ts { font-family: var(--mono); font-size: 11.5px; color: var(--bs-muted); line-height: 1.55; margin-top: 4px; }
+  .types button.loading { opacity: .6; }
+  .wx { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 6px; }
+  .wx button { padding: 8px 6px; font-size: 12.5px; text-align: center; }
+  .wx button b { display: block; font-size: 20px; }
+  .summary { margin-top: 14px; font-size: 13px; color: var(--bs-muted); border: 1px dashed var(--bs-line); border-radius: 10px; padding: 10px 12px; }
+  .summary b { color: var(--bs-text); }
+  .wiz-nav { margin-top: 12px; border-top: 1px solid var(--bs-line); padding-top: 12px; }
+  .dots { display: inline-flex; gap: 6px; }
+  .dots i { width: 8px; height: 8px; border-radius: 50%; background: #3a3326; transition: all .25s; }
+  .dots i.on { background: var(--bs-sand); width: 22px; border-radius: 99px; }
+  #wizBack[disabled] { opacity: .35; cursor: default; }
+  @media (max-width: 640px) {
+    #menu .card.wiz { padding: 14px 12px 12px; }
+    .steps li { padding: 4px 8px 4px 4px; }
+    .steps li b, #menuNote { display: none; }
+    .slide { max-height: calc(100vh - 190px); }
+  }
   /* ---------- in-flight UI ---------- */
   #mcp {
     position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5;
@@ -192,69 +260,88 @@
 </div>
 
 <div id="menu" class="hidden">
-  <div class="card">
-    <h1>B787-9 <span>Flight Simulator</span></h1>
-    <p class="sub">シティビルダー国際空港 (RJCB) 滑走路 09/27 · 3,500 m。全長 62.81 m · 全幅 60.12 m · 全高 17.02 m の 787-9 を操縦します。</p>
-    <div class="grid">
-      <fieldset>
-        <legend>シナリオ / Scenario</legend>
-        <div class="scen" id="scenarios"></div>
-      </fieldset>
-      <fieldset>
-        <legend>環境 / Environment</legend>
-        <label>時刻 Time of day <span class="val" id="todVal"></span></label>
-        <input type="range" id="tod" min="0" max="24" step="0.25" value="15.5">
-        <label>天候 Weather</label>
-        <select id="weather">
-          <option value="clear">快晴 Clear</option>
-          <option value="scattered" selected>晴れ時々曇り Scattered cumulus</option>
-          <option value="broken">曇り Broken</option>
-          <option value="overcast">曇天 Overcast, low visibility</option>
-          <option value="rain">雨 Rain (wet runway)</option>
-        </select>
-        <label>風 Wind <span class="val" id="windVal"></span></label>
-        <input type="range" id="windSpd" min="0" max="35" step="1" value="8">
-        <label>風向 Wind direction <span class="val" id="windDirVal"></span></label>
-        <input type="range" id="windDir" min="0" max="350" step="10" value="260">
-        <label>乱気流 Turbulence <span class="val" id="turbVal"></span></label>
-        <input type="range" id="turb" min="0" max="1" step="0.1" value="0.2">
-      </fieldset>
-      <fieldset>
-        <legend>重量 / Loading</legend>
-        <label>燃料 Fuel <span class="val" id="fuelVal"></span></label>
-        <input type="range" id="fuel" min="8000" max="101000" step="1000" value="45000">
-        <label>ペイロード Payload <span class="val" id="payVal"></span></label>
-        <input type="range" id="payload" min="0" max="52000" step="1000" value="26000">
-        <label>総重量 Gross weight <span class="val" id="gwVal"></span></label>
-        <label>画質 Graphics</label>
-        <select id="quality">
-          <option value="high" selected>高 High (shadows)</option>
-          <option value="medium">中 Medium</option>
-          <option value="low">低 Low (fast)</option>
-        </select>
-        <label><input type="checkbox" id="sound" checked> サウンド Sound</label>
-        <label><input type="checkbox" id="traffic" checked> AI交通・地上車両 Traffic &amp; GSE</label>
-        <label><input type="checkbox" id="atcVoice" checked> ATC 無線音声 Radio voice</label>
-      </fieldset>
+  <div class="card wiz">
+    <div class="wiz-head">
+      <h1 id="menuTitle">B787-9 <span>Flight Simulator</span></h1>
+      <ol class="steps" id="wizSteps">
+        <li data-i="0" class="on"><i>1</i><b>フライト設定</b><small>Flight</small></li>
+        <li data-i="1"><i>2</i><b>機体設定</b><small>Aircraft</small></li>
+        <li data-i="2"><i>3</i><b>環境設定</b><small>Environment</small></li>
+      </ol>
     </div>
-    <fieldset id="liveryBox">
-      <legend>機体塗装 / Livery</legend>
-      <div class="livrow">
-        <div>
-          <label for="airlineName">エアライン名 Airline name</label>
-          <input type="text" id="airlineName" maxlength="28" value="Claude Air" autocomplete="off" spellcheck="false">
-          <canvas id="liveryPreview" width="520" height="110"></canvas>
-          <button type="button" id="liveryReset" class="small">既定に戻す Reset</button>
-        </div>
-        <div>
-          <label>ロゴ Logo（色も一緒に変わります）</label>
-          <div class="logos" id="logoPick"></div>
-        </div>
-      </div>
-    </fieldset>
-    <details open>
-      <summary>操作方法 / Controls</summary>
-      <div class="keys" style="margin-top:10px">
+    <div class="slides">
+      <div class="track" id="wizTrack">
+        <section class="slide" data-i="0">
+          <h2>フライト設定 <span>どこから飛ぶ？ 離陸・進入・遊覧を選択</span></h2>
+          <div class="scen" id="scenarios"></div>
+          <div class="opts">
+            <label class="chk"><input type="checkbox" id="traffic" checked> AI交通・地上車両 Traffic &amp; GSE</label>
+            <label class="chk"><input type="checkbox" id="atcVoice" checked> ATC 無線音声 Radio voice</label>
+            <label class="chk"><input type="checkbox" id="sound" checked> サウンド Sound</label>
+            <label class="inl">画質 Graphics
+              <select id="quality">
+                <option value="high" selected>高 High (shadows)</option>
+                <option value="medium">中 Medium</option>
+                <option value="low">低 Low (fast)</option>
+              </select>
+            </label>
+          </div>
+        </section>
+        <section class="slide" data-i="1">
+          <h2>機体設定 <span>機種・重量・塗装</span></h2>
+          <div class="types" id="typePick"></div>
+          <p class="sub" id="typeNote"></p>
+          <div class="grid2">
+            <fieldset>
+              <legend>重量 / Loading</legend>
+              <label>燃料 Fuel <span class="val" id="fuelVal"></span></label>
+              <input type="range" id="fuel" min="8000" max="101000" step="1000" value="45000">
+              <label>ペイロード Payload <span class="val" id="payVal"></span></label>
+              <input type="range" id="payload" min="0" max="52000" step="1000" value="26000">
+              <label>総重量 Gross weight <span class="val" id="gwVal"></span></label>
+            </fieldset>
+            <fieldset id="liveryBox">
+              <legend>機体塗装 / Livery</legend>
+              <label for="airlineName">エアライン名 Airline name</label>
+              <input type="text" id="airlineName" maxlength="28" value="Claude Air" autocomplete="off" spellcheck="false">
+              <canvas id="liveryPreview" width="520" height="110"></canvas>
+              <label>ロゴ Logo（色も一緒に変わります）</label>
+              <div class="logos" id="logoPick"></div>
+              <button type="button" id="liveryReset" class="small">既定に戻す Reset</button>
+            </fieldset>
+          </div>
+        </section>
+        <section class="slide" data-i="2">
+          <h2>環境設定 <span>時刻・天候・風</span></h2>
+          <div class="grid2">
+            <fieldset>
+              <legend>時刻と天候 / Time &amp; weather</legend>
+              <label>時刻 Time of day <span class="val" id="todVal"></span></label>
+              <input type="range" id="tod" min="0" max="24" step="0.25" value="15.5">
+              <label>天候 Weather</label>
+              <div class="wx" id="wxPick"></div>
+              <select id="weather" class="hidden">
+                <option value="clear">快晴 Clear</option>
+                <option value="scattered" selected>晴れ時々曇り Scattered cumulus</option>
+                <option value="broken">曇り Broken</option>
+                <option value="overcast">曇天 Overcast, low visibility</option>
+                <option value="rain">雨 Rain (wet runway)</option>
+              </select>
+            </fieldset>
+            <fieldset>
+              <legend>風 / Wind</legend>
+              <label>風速 Wind speed <span class="val" id="windVal"></span></label>
+              <input type="range" id="windSpd" min="0" max="35" step="1" value="8">
+              <label>風向 Wind direction <span class="val" id="windDirVal"></span></label>
+              <input type="range" id="windDir" min="0" max="350" step="10" value="260">
+              <label>乱気流 Turbulence <span class="val" id="turbVal"></span></label>
+              <input type="range" id="turb" min="0" max="1" step="0.1" value="0.2">
+            </fieldset>
+          </div>
+          <div class="summary" id="wizSummary"></div>
+          <details>
+            <summary>操作方法 / Controls</summary>
+            <div class="keys" style="margin-top:10px">
         <div><b>↑ ↓ / W S</b> ピッチ Pitch</div>
         <div><b>← → / A D</b> ロール・地上で前輪操舵 Roll / Steer</div>
         <div><b>Q E</b> ラダー・前輪操舵 Rudder / Steer</div>
@@ -284,11 +371,18 @@
         <div><b>Esc</b> 一時停止 Pause</div>
       </div>
       <p class="sub" style="margin-top:10px">ゲームパッド対応: 左スティック=操縦、右スティック=ラダー、RT/LT=スラスト、A=ギア、X/Y=フラップ、B=ブレーキ。</p>
-    </details>
-    <div class="row">
-      <span class="sub" style="margin:0" id="menuNote">開始後、画面をクリックするとキーボード操作できます。 Click the view once, then fly with the keyboard.</span>
+            <p class="sub" style="margin-top:10px">ゲームパッド対応: 左スティック=操縦、右スティック=ラダー、RT/LT=スラスト、A=ギア、X/Y=フラップ、B=ブレーキ。</p>
+          </details>
+        </section>
+      </div>
+    </div>
+    <div class="row wiz-nav">
+      <button id="wizBack">← 戻る</button>
+      <span class="dots" id="wizDots"><i class="on"></i><i></i><i></i></span>
+      <span class="sub" style="margin:0" id="menuNote">開始後、画面をクリックするとキーボード操作できます。</span>
       <span class="spacer"></span>
-      <button class="primary" id="startBtn">▶ 飛行開始 Start flight</button>
+      <button class="primary" id="wizNext">次へ →</button>
+      <button class="primary hidden" id="startBtn">▶ 飛行開始 Start flight</button>
     </div>
   </div>
 </div>

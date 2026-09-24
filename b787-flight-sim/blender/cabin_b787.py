@@ -24,24 +24,37 @@ import common as C
 
 TB = G.to_blender
 HERE = os.path.dirname(os.path.abspath(__file__))
-TEX = os.path.join(HERE, "textures")
+TEX = os.path.join(HERE, "textures") if G.TYPE == "b789" else os.path.join(HERE, "textures", G.ASSET)
+os.makedirs(TEX, exist_ok=True)
 
+# per-type cabin: extent (aft of the flight-deck bulkhead .. aft wall), sidewall window band,
+# drop-ceiling height, side-bin bottom / aisle face, centre bins (twin aisle), aisle view y
+CABIN = {
+    "b789": dict(S0=6.92, S1=55.4, BAND=(-0.55, 0.95), CEIL=1.45, BIN_BOT=0.97, BIN_FRONT=1.36, centre=True,
+                 aisle_y=0.955),
+    "b738": dict(S0=4.32, S1=34.6, BAND=(-0.36, 0.82), CEIL=1.56, BIN_BOT=1.08, BIN_FRONT=0.60, centre=False,
+                 aisle_y=0.0),
+    "b763": dict(S0=5.94, S1=49.0, BAND=(-0.55, 0.95), CEIL=1.45, BIN_BOT=0.97, BIN_FRONT=1.33, centre=True,
+                 aisle_y=0.985),
+}[G.TYPE]
 FL = G.FLOOR_Z                  # cabin floor (design z)
-S0, S1 = 6.92, 55.4             # cabin extent (aft of the flight-deck bulkhead .. aft wall)
+S0, S1 = CABIN["S0"], CABIN["S1"]
 LINE = 0.13                     # lining inset from the skin
-BAND = (-0.55, 0.95)            # sidewall window band (skin z)
-CEIL = 1.45                     # drop-ceiling height (design z) ~2.45 m above the floor
-BIN_BOT, BIN_FRONT = 0.97, 1.36  # side bin bottom z / aisle face y
-DOORS = [6.95, 17.55, 40.45, 53.85]
-DOOR_W, DOOR_Z0, DOOR_Z1 = 1.07, -0.93, 1.00
-WIN_Z, WIN_W, WIN_H, WIN_PITCH = 0.30, 0.27, 0.47, 0.965
-HOLE_W, HOLE_H, HOLE_R = 0.34, 0.55, 0.13     # lining window opening (reveal)
+BAND = CABIN["BAND"]            # sidewall window band (skin z)
+CEIL = CABIN["CEIL"]            # drop-ceiling height (design z) ~2.45 m above the floor (787)
+BIN_BOT, BIN_FRONT = CABIN["BIN_BOT"], CABIN["BIN_FRONT"]  # side bin bottom z / aisle face y
+DOORS = G.DOORS
+DOOR_W, DOOR_Z0, DOOR_Z1 = G.DOOR_W, G.DOOR_Z0, G.DOOR_Z1
+WIN_Z, WIN_W, WIN_H, WIN_PITCH = G.WIN_Z, G.WIN_W, G.WIN_H, G.WIN_PITCH
+HOLE_W, HOLE_H = WIN_W + 0.07, WIN_H + 0.08     # lining window opening (reveal)
+HOLE_R = min(0.13, HOLE_W / 2 - 0.01)
+DOOR_VZ = DOOR_Z0 + 1.33 / 1.93 * (DOOR_Z1 - DOOR_Z0)   # door viewport height
 
 
 def windows():
-    out, s = [], 8.35
-    while s < 55.2:
-        if all(abs(s - d) > 0.95 for d in DOORS):
+    out, s = [], G.WIN_S[0]
+    while s < G.WIN_S[1]:
+        if all(abs(s - d) > G.DOOR_GAP for d in DOORS):
             out.append(round(s, 4))
         s += WIN_PITCH
     return out
@@ -190,7 +203,7 @@ def sidewall_texture(W=8192, H=512):
         groove = np.clip(0.5 - (np.abs(d) - 0.006) / px, 0, 1)
         col *= (1 - 0.45 * groove)[..., None]
         # door viewport
-        dv = rr(S - dc, Z - 0.40, 0.10, 0.16, 0.08)
+        dv = rr(S - dc, Z - DOOR_VZ, 0.10, 0.16, 0.08)
         alpha = np.minimum(alpha, np.clip(0.5 + dv / px, 0, 1))
     rgba = np.concatenate([np.clip(col, 0, 1), alpha[..., None]], -1)
     Image.fromarray((rgba * 255 + 0.5).astype(np.uint8), "RGBA").save(os.path.join(TEX, "cabin_sidewall.png"),
@@ -290,7 +303,7 @@ def materials(tex):
 # --------------------------------------------------------------------------- lining
 def build_lining(M, parent, col):
     mb = C.MeshBuilder(TB)
-    ss = np.unique(np.r_[np.linspace(S0, S1, 160), np.linspace(46, S1, 60)])
+    ss = np.unique(np.r_[np.linspace(S0, S1, 160), np.linspace(S1 - 9.4, S1, 60)])
     for side in (1, -1):
         # window band (textured, alpha cut-outs)
         zs = np.linspace(BAND[0], BAND[1], 16)
@@ -348,10 +361,10 @@ def build_lining(M, parent, col):
 
 def bin_profile(side):
     def f(s):
-        yl = lining_y(s, 0.80)
+        yl = lining_y(s, BIN_BOT - 0.17)
         yt = lining_y(s, CEIL + 0.05)
-        prof = [(yl, 0.80), (BIN_FRONT + 0.20, BIN_BOT - 0.02), (BIN_FRONT + 0.02, BIN_BOT),
-                (BIN_FRONT - 0.03, 1.12), (BIN_FRONT - 0.04, 1.26), (BIN_FRONT - 0.01, 1.38),
+        prof = [(yl, BIN_BOT - 0.17), (BIN_FRONT + 0.20, BIN_BOT - 0.02), (BIN_FRONT + 0.02, BIN_BOT),
+                (BIN_FRONT - 0.03, BIN_BOT + 0.15), (BIN_FRONT - 0.04, BIN_BOT + 0.29), (BIN_FRONT - 0.01, BIN_BOT + 0.41),
                 (BIN_FRONT + 0.03, CEIL + 0.03), (yt, CEIL + 0.05)]
         return [(side * y, z) for y, z in prof]
     return f
@@ -375,7 +388,7 @@ def build_ceiling_and_bins(M, parent, col, zones):
         s = S0
         while s < S1 - 0.01:
             L = min(1.62, S1 - s)
-            near_door = any(abs(s + L / 2 - d) < 1.25 for d in DOORS) or s + L / 2 < 7.9 or s > 50.9
+            near_door = any(abs(s + L / 2 - d) < 1.25 for d in DOORS) or s + L / 2 < S0 + 0.98 or s > S1 - 4.5
             if near_door:
                 # flat soffit closing the gap between the ceiling and the lining
                 def soffit(_s, side=side):
@@ -386,7 +399,7 @@ def build_ceiling_and_bins(M, parent, col, zones):
             else:
                 extrude_profile(mb, f, s, s + L - 0.012, 1)
                 # latch line / handle recess
-                mb.add_box((s + L / 2, side * (BIN_FRONT - 0.045), 1.33), (0.30, 0.012, 0.03), mat=2)
+                mb.add_box((s + L / 2, side * (BIN_FRONT - 0.045), BIN_BOT + 0.36), (0.30, 0.012, 0.03), mat=2)
                 # mood-lighting cove strip along the ceiling edge
                 mb.add_box((s + L / 2, side * (BIN_FRONT + 0.04), CEIL + 0.07), (L - 0.02, 0.05, 0.012), mat=3)
                 # passenger service units under the bin: reading lights + vents per row
@@ -397,7 +410,7 @@ def build_ceiling_and_bins(M, parent, col, zones):
                         cyl(mb, c, (c[0], c[1], c[2] - 0.012), 0.025, 4, n=8)
             s += L
     # centre bins over the middle seat block in the seating zones
-    for (za, zb) in zones:
+    for (za, zb) in (zones if CABIN["centre"] else []):
         s = za
         while s + 1.5 <= zb + 0.01:
             L = min(1.62, zb - s)
@@ -507,6 +520,23 @@ def galley(mb, sa, sb, y0, y1, facing):
         mb.add_box((f2 + fd * 0.02, y, FL + 1.78), (0.02, w - 0.05, 0.22), mat=mat_a)
 
 
+def wall(mb, s, z0, z1, mat, door=None, n=10):
+    """Transverse wall following the lining outline (in strips), optional centred doorway."""
+    zs = np.linspace(z0, z1, n + 1)
+    if door:
+        zs = np.unique(np.r_[zs, door[1]])
+    for za, zb in zip(zs[:-1], zs[1:]):
+        w = min(lining_y(s, za), lining_y(s, zb)) - 0.02
+        if w <= 0.05:
+            continue
+        if door and za < door[1] - 1e-6:
+            for (a, b) in ((-w, -door[0]), (door[0], w)):
+                if b > a:
+                    panel(mb, s, a, b, za, zb, 0.06, mat)
+        else:
+            panel(mb, s, -w, w, za, zb, 0.06, mat)
+
+
 def divider(mb, s, zones_y, mat):
     """Class divider: partitions over the seat blocks (aisles left open)."""
     for (ya, yb) in zones_y:
@@ -518,12 +548,36 @@ def build_monuments(M, parent, col):
     mats = [M["monument"], M["accent"], M["steel"], M["mirror"], M["porcelain"], M["light"], M["dark"],
             M["exit"], M["screen"]]
     # forward: flight-deck bulkhead (cabin side) with the cockpit door
-    w0 = lining_y(S0, 0.0)
-    for (a, b) in ((-w0, -0.5), (0.5, w0)):
-        panel(mb, S0, a, b, FL, CEIL + 0.3, 0.06, 1)
-    panel(mb, S0, -0.5, 0.5, FL + 2.0, CEIL + 0.3, 0.06, 1)
+    wall(mb, S0, FL, CEIL + 0.3, 1, door=(0.5, FL + 2.0))
     mb.add_box((S0 + 0.02, 0, FL + 1.0), (0.05, 0.96, 2.0), mat=6)          # cockpit door
     mb.add_box((S0 + 0.05, 0.3, FL + 1.55), (0.02, 0.08, 0.08), mat=6)      # camera / keypad
+    if G.TYPE == "b738":
+        # forward lav (left) + galley (right) between door 1 and row 1; aft lavs + galley
+        lavatory(mb, 5.05, 6.15, 1)
+        galley(mb, 5.05, 6.15, -0.35, -1.55, +1)
+        divider(mb, 9.62, [(0.3, 1.7), (-1.7, -0.3)], 1)
+        lavatory(mb, 32.35, 33.35, 1)
+        lavatory(mb, 32.35, 33.35, -1)
+        galley(mb, 34.2, 34.55, -1.2, 1.2, -1)
+    elif G.TYPE == "b763":
+        lavatory(mb, 6.95, 8.05, 1)
+        galley(mb, 6.95, 8.05, -0.4, -2.0, +1)
+        divider(mb, 8.35, [(1.25, 2.3), (-0.72, 0.72), (-2.3, -1.25)], 1)
+        lavatory(mb, 15.2, 16.4, 1)
+        lavatory(mb, 15.2, 16.4, -1)
+        galley(mb, 15.2, 16.4, -0.55, 0.55, +1)
+        divider(mb, 16.5, [(1.25, 2.3), (-0.72, 0.72), (-2.3, -1.25)], 1)
+        lavatory(mb, 45.05, 46.15, 1)
+        lavatory(mb, 45.05, 46.15, -1)
+        galley(mb, 47.8, 48.9, -1.2, 1.2, -1)
+    else:
+        monuments_787(mb)
+    finish_monuments(mb)
+    ob = mb.build("Cabin_Monuments", mats, col=col)
+    C.set_parent(ob, parent)
+
+
+def monuments_787(mb):
     # L1 lavatory + G1 galley (forward, aft of door 1)
     lavatory(mb, 7.55, 8.75, 1)
     galley(mb, 7.55, 8.75, -0.45, -2.2, +1)
@@ -544,9 +598,11 @@ def build_monuments(M, parent, col):
     lavatory(mb, 51.45, 52.75, 1)
     lavatory(mb, 51.45, 52.75, -1)
     galley(mb, 54.55, 55.35, -1.1, 1.1, -1)
+
+
+def finish_monuments(mb):
     # aft wall
-    w1 = lining_y(S1, 0.2)
-    panel(mb, S1, -w1, w1, FL, CEIL + 0.3, 0.06, 0)
+    wall(mb, S1, FL, CEIL + 0.3, 0)
     # exit signs above every door, both sides
     for dc in DOORS:
         for side in (1, -1):
@@ -558,18 +614,32 @@ def build_monuments(M, parent, col):
             y = lining_y(dc, 0.0) - 0.03
             mb.add_box((dc + 0.25, side * y, 0.05), (0.2, 0.05, 0.05), mat=2)
             mb.add_box((dc - 0.35, side * y, -0.35), (0.06, 0.04, 0.35), mat=1)
-    ob = mb.build("Cabin_Monuments", mats, col=col)
-    C.set_parent(ob, parent)
 
 
 # --------------------------------------------------------------------------- seat map
-ZONES = [
+ZONES = {
     # (class, s_first, pitch, rows, blocks [(y_centre, seats, seat_w)], letters)
-    ("J", 9.95, 1.5, 5, [(1.91, 2, 0.66), (0.0, 2, 0.66), (-1.91, 2, 0.66)], "AC" "DG" "HK"),
-    ("W", 20.05, 0.97, 4, [(1.81, 2, 0.50), (0.0, 3, 0.50), (-1.81, 2, 0.50)], "AC" "DEG" "HK"),
-    ("Y", 24.05, 0.81, 17, [(1.91, 3, 0.46), (0.0, 3, 0.46), (-1.91, 3, 0.46)], "ABC" "DEG" "HJK"),
-    ("Y", 41.35, 0.81, 12, [(1.91, 3, 0.46), (0.0, 3, 0.46), (-1.91, 3, 0.46)], "ABC" "DEG" "HJK"),
-]
+    "b789": [
+        ("J", 9.95, 1.5, 5, [(1.91, 2, 0.66), (0.0, 2, 0.66), (-1.91, 2, 0.66)], "AC" "DG" "HK"),
+        ("W", 20.05, 0.97, 4, [(1.81, 2, 0.50), (0.0, 3, 0.50), (-1.81, 2, 0.50)], "AC" "DEG" "HK"),
+        ("Y", 24.05, 0.81, 17, [(1.91, 3, 0.46), (0.0, 3, 0.46), (-1.91, 3, 0.46)], "ABC" "DEG" "HJK"),
+        ("Y", 41.35, 0.81, 12, [(1.91, 3, 0.46), (0.0, 3, 0.46), (-1.91, 3, 0.46)], "ABC" "DEG" "HJK"),
+    ],
+    # 737-800: 2-2 front cabin, 3-3 economy (break for the two over-wing exit rows)
+    "b738": [
+        ("J", 6.75, 0.97, 3, [(0.88, 2, 0.56), (-0.88, 2, 0.56)], "AC" "DF"),
+        ("Y", 10.1, 0.79, 7, [(1.0, 3, 0.44), (-1.0, 3, 0.44)], "ABC" "DEF"),
+        ("Y", 16.35, 0.86, 2, [(1.0, 3, 0.44), (-1.0, 3, 0.44)], "ABC" "DEF"),
+        ("Y", 18.2, 0.79, 18, [(1.0, 3, 0.44), (-1.0, 3, 0.44)], "ABC" "DEF"),
+    ],
+    # 767-300ER: business 2-2-2, economy 2-3-2
+    "b763": [
+        ("J", 8.95, 1.5, 4, [(1.72, 2, 0.58), (0.0, 2, 0.58), (-1.72, 2, 0.58)], "AC" "DG" "HK"),
+        ("Y", 17.95, 0.81, 7, [(1.73, 2, 0.46), (0.0, 3, 0.46), (-1.73, 2, 0.46)], "AC" "DEG" "HK"),
+        ("Y", 24.6, 0.81, 25, [(1.73, 2, 0.46), (0.0, 3, 0.46), (-1.73, 2, 0.46)], "AC" "DEG" "HK"),
+    ],
+}[G.TYPE]
+MY_SEAT_S = {"b789": 36.2, "b738": 20.57, "b763": 30.27}[G.TYPE]
 
 
 def seat_map():
@@ -691,7 +761,7 @@ def proto_pax(M, col, parent):
 def build_cabin(col, tex):
     generate_textures()
     M = materials(tex)
-    root = C.empty("B787-9_Cabin", col=col)
+    root = C.empty("B787-9_Cabin", col=col)   # (name kept for every type: the simulator looks it up)
     build_lining(M, root, col)
     build_ceiling_and_bins(M, root, col, zones_for_bins())
     build_floor(M, root, col)
@@ -701,16 +771,21 @@ def build_cabin(col, tex):
     proto_seat_j(M, col, protos)
     proto_pax(M, col, protos)
     seats = seat_map()
+    my = next((i for i, st in enumerate(seats) if st["l"] == "A" and abs(st["s"] - MY_SEAT_S) < 0.2), None)
+    y_win = seats[my]["y"] - 0.07 if my is not None else 1.0
+    if G.TYPE != "b789":
+        # small windows: put the eye close to the window reveal so the wing is in view
+        y_win = max(y_win, lining_y(MY_SEAT_S, FL + 1.18) - 0.16)
     counts = {}
     for st in seats:
         counts[st["c"]] = counts.get(st["c"], 0) + 1
     info = dict(
         seats=[dict(c=st["c"], r=st["row"], l=st["l"], p=st["p"], w=st["w"]) for st in seats],
         counts=counts, total=len(seats),
-        mySeat=next((i for i, st in enumerate(seats) if st["l"] == "A" and abs(st["s"] - 36.2) < 0.2), None),
+        mySeat=my,
         views=dict(
-            aisle=G.to_three([37.75, 0.955, FL + 1.62]),
-            window=G.to_three([36.28, 2.3, FL + 1.18]),
+            aisle=G.to_three([MY_SEAT_S + 1.55, CABIN["aisle_y"], FL + 1.62]),
+            window=G.to_three([MY_SEAT_S + 0.08, y_win, FL + 1.18]),
         ),
         paxMass=100,
         protoOrigin=G.to_three([0.0, 0.0, 0.0]),

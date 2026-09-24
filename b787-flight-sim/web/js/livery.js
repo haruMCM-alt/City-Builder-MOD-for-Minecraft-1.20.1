@@ -185,18 +185,20 @@ function tailCanvas(logo, T, W, H) {
   const g = c.createLinearGradient(T.s0, T.z0, T.s1, T.z1);
   g.addColorStop(0, logo.colors.tailBottom); g.addColorStop(1, logo.colors.tailTop);
   c.fillStyle = g; c.fillRect(T.s0 - 1, T.z0 - 1, T.s1 - T.s0 + 2, T.z1 - T.z0 + 2);
+  // fin artwork is laid out for the 787-9 fin (k = 1, sRef = 48 m) and scaled to the other fins
+  const k = T.k ?? 1, sR = T.sRef ?? 48.0;
   if (logo.ribbons) {
     for (const [off, w, col] of [[0.0, 0.34, logo.colors.accent1], [0.55, 0.07, logo.colors.accent2]]) {
-      const zc = (S) => T.z0 + 1.2 + off + (S - 48.0) * 0.36 + 0.035 * (S - 48.0) ** 2;
+      const zc = (S) => T.z0 + (1.2 + off) * k + (S - sR) * 0.36 + 0.035 * (S - sR) ** 2 / k;
       c.beginPath();
-      for (let S = 47.0; S <= T.s1 + 0.01; S += 0.1) c.lineTo(S, zc(S) + w / 2);
-      for (let S = T.s1; S >= 47.0; S -= 0.1) c.lineTo(S, zc(S) - w / 2);
+      for (let S = sR - k; S <= T.s1 + 0.01; S += 0.1) c.lineTo(S, zc(S) + w * k / 2);
+      for (let S = T.s1; S >= sR - k; S -= 0.1) c.lineTo(S, zc(S) - w * k / 2);
       c.closePath(); c.fillStyle = col; c.fill();
     }
   } else {
     // a single accent sweep along the fin root
     c.beginPath(); c.moveTo(T.s0, T.z0); c.lineTo(T.s1, T.z0);
-    c.lineTo(T.s1, T.z0 + 1.1); c.quadraticCurveTo(52, T.z0 + 0.4, T.s0, T.z0 + 0.35); c.closePath();
+    c.lineTo(T.s1, T.z0 + 1.1 * k); c.quadraticCurveTo(sR + 4 * k, T.z0 + 0.4 * k, T.s0, T.z0 + 0.35 * k); c.closePath();
     c.fillStyle = logo.colors.accent1; c.fill();
   }
   const [cs, cz, r] = T.logo;
@@ -254,7 +256,8 @@ function canvasTex(cv, premul) {
 }
 
 export function liveryAssets(liv, layout, big = true) {
-  const key = liv.logo + '|' + liv.name + '|' + (big ? 1 : 0);
+  // the fin / title layout differs per aircraft type
+  const key = liv.logo + '|' + liv.name + '|' + (big ? 1 : 0) + '|' + layout.tail.s0 + '|' + layout.tail.z1 + '|' + layout.title.s0;
   if (cache.has(key)) return cache.get(key);
   const logo = logoById(liv.logo);
   const tail = canvasTex(tailCanvas(logo, layout.tail, big ? 2048 : 768, big ? 1536 : 576));

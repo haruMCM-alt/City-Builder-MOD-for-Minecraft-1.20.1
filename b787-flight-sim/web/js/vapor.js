@@ -30,6 +30,7 @@ export class Vapor {
     });
     this.tmp = new THREE.Vector3();
     this.strength = { trail: 0, vapor: 0 };
+    this.active = true;
     this._acc = 0;
   }
 
@@ -62,6 +63,12 @@ export class Vapor {
   }
 
   // humidity 0..1 (weather), light 0..1 (day)
+  // only the flown aircraft type leaves trails (one Vapor per type)
+  setActive(on) {
+    this.active = on;
+    for (const tr of this.trails) { tr.mesh.visible = on; if (!on) tr.hist.length = 0; }
+  }
+
   update(dt, fm, { camera, humidity, light, emit }) {
     const o = fm.out;
     const alt = fm.pos.y;
@@ -85,8 +92,8 @@ export class Vapor {
       tr.acc += dt;
       // emission point follows the wing flex (same law as the vertex shader)
       const s = tr.src;
-      const span = Math.max(Math.abs(s[2]) - 3.0, 0);
-      const p = this.tmp.set(s[0], s[1] + flex * span * span / 729, s[2]).applyMatrix4(mw);
+      const span = Math.max(Math.abs(s[2]) - this.visual.flexR, 0);
+      const p = this.tmp.set(s[0], s[1] + flex * span * span / this.visual.flexD, s[2]).applyMatrix4(mw);
       const str = tr.isTip ? trail : trail * (0.6 + 0.8 * clamp(flaps * 2, 0, 1));
       while (tr.acc >= DT_EMIT) {
         tr.acc -= DT_EMIT;
@@ -123,8 +130,8 @@ export class Vapor {
         this._acc -= 1;
         const q = pts[Math.floor(Math.random() * pts.length)];
         const side = Math.random() < 0.5 ? 1 : -1;
-        const span = Math.max(Math.abs(q[2]) - 3.0, 0);
-        const lp = this.tmp.set(q[0] - Math.random() * 1.5, q[1] + 0.25 + Math.random() * 0.35 + flex * span * span / 729, q[2] * side).applyMatrix4(mw);
+        const span = Math.max(Math.abs(q[2]) - this.visual.flexR, 0);
+        const lp = this.tmp.set(q[0] - Math.random() * 1.5, q[1] + 0.25 + Math.random() * 0.35 + flex * span * span / this.visual.flexD, q[2] * side).applyMatrix4(mw);
         emit({ x: lp.x, y: lp.y, z: lp.z }, { x: fm.vel.x * 0.93, y: fm.vel.y * 0.93, z: fm.vel.z * 0.93 },
           0.18 + Math.random() * 0.2, 1.2 + Math.random() * 0.8, 1.5, 0.3 * vapor);
       }

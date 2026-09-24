@@ -22,8 +22,13 @@ const PHRASES = {
   bankAngle: 'Bank angle, bank angle', glideslope: 'Glide slope', ap_on: '', ap_off: '',
 };
 
-const SHAFT_HZ = 2560 / 60;     // GEnx-1B N1 100 % = ~2560 rpm
-const FAN_BLADES = 18;
+// engine type (set when the aircraft type changes): N1 100 % shaft rate and fan blade count
+// GEnx-1B ~2560 rpm / 18 blades, CFM56-7B 5380 rpm / 24, CF6-80C2 3280 rpm / 38
+export const ENGINE_SOUND = { shaftHz: 2560 / 60, blades: 18 };
+export function setEngineSound(type) {
+  const T = { b789: [2560, 18], b738: [5380, 24], b763: [3280, 38] }[type] || [2560, 18];
+  ENGINE_SOUND.shaftHz = T[0] / 60; ENGINE_SOUND.blades = T[1];
+}
 const TONE_SCALE = 0.62;
 const C_SOUND = 340;
 
@@ -311,8 +316,8 @@ export class Audio {
       const n1 = clamp(e.n1 / 100, 0, 1.05), n2 = clamp(e.n2 / 100, 0, 1.05);
       // tonal parts are voiced a little below the physical values: at a real airport the
       // fan tones are masked by broadband roar and the ear hears a deep, rounded sound
-      const shaft = SHAFT_HZ * n1 * dop * TONE_SCALE;
-      const bpf = shaft * FAN_BLADES;
+      const shaft = ENGINE_SOUND.shaftHz * n1 * dop * TONE_SCALE * (ENGINE_SOUND.blades === 18 ? 1 : 0.8);
+      const bpf = shaft * ENGINE_SOUND.blades;
       const thrust = clamp(Math.abs(e.thrust) / 330000, 0, 1.1);
       const rev = e.reverse;
       // stereo placement from the engine position relative to the camera

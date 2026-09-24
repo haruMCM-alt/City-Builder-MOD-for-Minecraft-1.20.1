@@ -1,4 +1,4 @@
-# Boeing 787-9 — 寸法・性能データと出典 / Specifications & sources
+# Boeing 787-9 / 767-300ER / 737-800 — 寸法・性能データと出典 / Specifications & sources
 
 モデル (`blender/b787_geometry.py`) と飛行モデル (`web/js/flightmodel.js`) は以下の数値を基にしています。
 公開資料に直接の値が無い項目は、公開値から導いた推定値で「推定」と明記しています。
@@ -50,6 +50,43 @@
 * FL350 で M0.84・N1 75 %・燃料流量 ≈ 2.8 t/h/基（TSFC ≈ 0.57 lb/lbf/h）
 * 最大揚抗比 ≈ 20（CD0 = 0.0162、e ≈ 0.85）
 * ILS 27 オートランド：接地 −217 fpm、中心線から 1.0 m、進入端から 609 m
+
+## Boeing 737-800 / 767-300ER（追加機種 / additional types）
+
+`blender/b787_geometry.py` の `TYPES` に定義（`AC_TYPE=b738` / `b763` でビルド）。
+
+| | 737-800 | 767-300ER |
+|---|---|---|
+| 全長 Length | 39.47 m | 54.94 m |
+| 全幅 Span | 35.79 m（ブレンデッド・ウイングレット込み。無しは 34.32 m） | 47.57 m |
+| 全高 Height | 12.55 m | 15.85 m |
+| 胴体 幅 × 高さ | 3.76 × 4.01 m | 5.03 × 5.41 m |
+| 翼面積（モデル） | 126.2 m²（公表 124.6 m²） | 284.9 m²（公表 283.3 m²） |
+| 前縁後退角（モデル） | 28° | 34° |
+| ホイールベース / トレッド | 15.60 m / 5.72 m | 22.76 m / 9.30 m |
+| 主脚 | 2 輪（ボギー無し、脚扉無し） | 4 輪ボギー |
+| エンジン | CFM56-7B26（ファン径 1.55 m、24 枚、推力 ≈ 117 kN） | GE CF6-80C2B6（38 枚、推力 ≈ 267 kN） |
+| MTOW / MLW / MZFW | 79,016 / 66,361 / 62,732 kg | 186,880 / 145,150 / 133,810 kg |
+| 運航空虚重量 OEW（代表値） | 41,413 kg | 90,010 kg |
+| 燃料容量 | ≈ 20.9 t（26,020 L） | ≈ 73.1 t（91,380 L） |
+| Mmo | 0.82 | 0.86 |
+| 座席（モデルの客室） | 164（2-2 ×12・3-3 ×152） | 240（2-2-2 ×24・2-3-2 ×216） |
+
+### 形状の作り方と近似 / Modelling notes
+* 胴体の機首・尾部の曲線は 787-9 の曲線を各機種の胴体幅・高さと「機首長・テールコーン長」に合わせて写像（737 の機首は専用の断面表で尖った形に）。
+* 主翼平面形（翼根弦・キンク位置・前後縁後退角）は機種ごとの値。重心位置は主脚の 1.6 m 前（25 % MAC）になるよう主翼の前後位置を決定。フラップ・スポイラー・スラットの分割位置は 787 の配置を翼幅比で写像。
+* エンジンは 787 の GEnx ナセル形状を軸方向・半径方向に縮尺（737 はナセル下面を平らに潰した「ハムスターポーチ」形状、シェブロン無し）。
+* コックピットの内装は 787 のレイアウトを各機種の機首に合わせて縮尺したもの（実機の 737NG / 767 の計器配置ではありません）。操縦窓の輪郭も同じ近似です。
+* 飛行特性：翼面積・スパン・MAC・重量・推力・Mmo を機種ごとに切替え、脚のばね定数と慣性モーメントは重量・寸法で比例縮尺。空力係数は 787 と共通の推定値です。
+
+### 出典（737-800 / 767-300ER）
+* [Boeing — 737 Airplane Characteristics for Airport Planning](https://www.boeing.com/content/dam/boeing/boeingdotcom/commercial/airports/acaps/737.pdf)
+* [Boeing — 737-700/800/900 (With Winglets) Airplane Characteristics](http://wpage.unina.it/fabrnico/DIDATTICA/PGV/Specifiche_Esercitazioni/B737-700/Manuale%20737_789w.pdf)
+* [flugzeuginfo.net — Boeing 737-800](https://www.flugzeuginfo.net/acdata_php/acdata_7378_en.php)
+* [KN Aviation — Boeing 767 specs](https://knaviation.net/boeing-767-specs/)
+* [skytamer — Boeing 767-300ER](https://www.skytamer.com/Boeing_767-300ER.html)
+* [flugzeuginfo.net — Boeing 767-300](https://www.flugzeuginfo.net/acdata_php/acdata_7673_en.php)
+* 燃料容量・OEW・ファン径・推力は一般に公表されている代表値（上記資料・メーカー資料での確認を推奨）。
 
 ## 出典 / Sources
 

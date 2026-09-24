@@ -13,6 +13,7 @@ from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C  # noqa: E402
+import b787_geometry as G  # noqa: E402  (AC_TYPE selects the aircraft type)
 
 PREV_DIR = os.path.join(C.ROOT, "docs", "images")
 os.makedirs(PREV_DIR, exist_ok=True)
@@ -118,15 +119,28 @@ def main():
     fast = "--fast" in sys.argv
     views = [a for a in sys.argv[2:] if not a.startswith("--")]
     if what == "aircraft":
-        bpy.ops.wm.open_mainfile(filepath=os.path.join(C.OUT_DIR, "b787-9.blend"))
+        bpy.ops.wm.open_mainfile(filepath=os.path.join(C.OUT_DIR, G.ASSET + ".blend"))
         setup_world(0.22, 32, -35)
-        ground()
+        ground(z=G.GROUND_Z)
+        k = G.LENGTH / 62.81
+        prefix = "b787" if G.TYPE == "b789" else G.ASSET
+        for o in bpy.data.objects:
+            if o.name.startswith("Proto_") or o.name.startswith("Cabin_"):
+                o.hide_render = True
         m = bpy.data.materials.get("B787_Fuselage")
         if m:
             m.node_tree.nodes["Principled BSDF"].inputs["Emission Strength"].default_value = 0.0
         for name, (loc, tgt, lens) in AIRCRAFT_VIEWS.items():
             if views and name not in views:
                 continue
+            if name == "cockpit":
+                e = G.to_blender(G.EYE)
+                loc, tgt = tuple(e), (e[0] + 12.3, e[1] - 0.13, e[2] - 1.68)
+            elif G.TYPE != "b789":
+                loc = tuple(v * k for v in loc)
+                tgt = tuple(v * k for v in tgt)
+                if name in ("engine", "gear", "front_low"):
+                    loc = (loc[0], loc[1], max(loc[2], G.GROUND_Z + 0.9))
             camera(loc, tgt, lens)
             fus = bpy.data.objects.get("Fuselage")
             if fus:
@@ -134,7 +148,7 @@ def main():
             if name == "cockpit":
                 bpy.context.scene.camera.data.lens = 14
             res = (960, 540) if fast else (1600, 900)
-            render(os.path.join(PREV_DIR, "b787_%s.jpg" % name), res, 16 if fast else 96)
+            render(os.path.join(PREV_DIR, "%s_%s.jpg" % (prefix, name)), res, 16 if fast else 96)
     else:
         bpy.ops.wm.open_mainfile(filepath=os.path.join(C.OUT_DIR, "world.blend"))
         setup_world(0.22, 28, 60)

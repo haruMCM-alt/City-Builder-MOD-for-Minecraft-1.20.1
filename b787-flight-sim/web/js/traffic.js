@@ -92,15 +92,16 @@ function buildArticulated(src) {
 }
 
 class ArticulatedModel {
-  constructor(obj, meta) {
+  constructor(obj, tm) {
     this.obj = obj;
+    this.tm = tm;
     this.parts = {};
     obj.traverse((o) => { if (MOVABLE.has(o.name)) this.parts[o.name] = { obj: o, rest: o.quaternion.clone(), pos: o.position.clone() }; });
     this.q = new THREE.Quaternion();
     this.ax = new THREE.Vector3(1, 0, 0);
     this.wheelA = [0, 0];
     this.fanA = [0, 0];
-    this.meta = meta;
+    this.meta = tm.meta;
   }
 
   set(name, ang) {
@@ -125,17 +126,18 @@ class ArticulatedModel {
     this.set('NoseDoor_L', doorT * 88 * DEG); this.set('NoseDoor_R', doorT * 88 * DEG);
     this.set('MainDoor_L', doorT * 85 * DEG); this.set('MainDoor_R', doorT * 85 * DEG);
     const stow = smoothstep(0.55, 1.0, legT);
+    const kW = this.tm.kW;
     for (const n of ['NoseGear', 'MainGear_L', 'MainGear_R']) {
       const p = this.parts[n];
       if (!p) continue;
       p.obj.visible = gp < 0.97;
       p.obj.position.copy(p.pos);
-      if (n !== 'NoseGear') { p.obj.position.y += 0.55 * stow; p.obj.position.z -= Math.sign(p.pos.z) * stow; }
+      if (n !== 'NoseGear') { p.obj.position.y += 0.55 * kW * stow; p.obj.position.z -= Math.sign(p.pos.z) * kW * stow; }
     }
     // wheels roll on the ground, spin down in the air
     const onG = ac.alt < 0.3 && gp < 0.05;
     for (let i = 0; i < 2; i++) {
-      const R = i === 0 ? 0.51 : 0.685;
+      const R = this.tm.wheelR[i];
       this.wheelA[i] = (this.wheelA[i] + (onG ? ac.v * ac.dirSign / R : 0) * dt) % (Math.PI * 2);
     }
     this.set('NoseWheels', this.wheelA[0]);
@@ -219,11 +221,35 @@ class LightPoints {
 const AC_CIRCLES = [[26, 0, 3.5], [16, 0, 3.4], [6, 0, 3.4], [-4, 0, 3.4], [-14, 0, 3.4], [-24, 0, 4], [-27, 8, 3], [-27, -8, 3],
   [0, 7, 4], [0, -7, 4], [-5, 13, 3.6], [-5, -13, 3.6], [-10, 19, 3.2], [-10, -19, 3.2], [-15, 25, 3], [-15, -25, 3], [-18, 29.5, 2.2], [-18, -29.5, 2.2]];
 
-function acCircles(x, z, a, out) {
+function acCircles(x, z, a, out, circles = AC_CIRCLES) {
   const c = Math.cos(a), s = Math.sin(a);
   out.length = 0;
-  for (const [f, l, r] of AC_CIRCLES) out.push([x + f * c - l * s, z + f * s + l * c, r]);
+  for (const [f, l, r] of circles) out.push([x + f * c - l * s, z + f * s + l * c, r]);
   return out;
+}
+
+// per aircraft type: footprint circles, gear / door / cargo positions for the ground
+// services, light positions - derived from the Blender metadata (787-9 values as reference)
+const NOSE_787 = 24.13;
+export function typeModel(meta) {
+  const kL = (meta.length || 62.81) / 62.81, kS = (meta.span || 60.12) / 60.12, kW = (meta.fusW || 5.77) / 5.77;
+  const wr = (g) => (meta.parts.find((p) => p.kind === 'wheel' && p.gear === g) || { radius: 0.6 }).radius;
+  const doors = meta.doors || [24.9, 14.3, -8.6, -22.0];
+  const cargo = meta.cargo || [[-16, -2.05, -0.95]];
+  const cz = cargo[cargo.length - 1];
+  const gy = -meta.groundY;
+  return {
+    meta, type: meta.type || 'b789', kL, kS, kW,
+    heavy: (meta.spec?.MTOW || 254011) > 136000,
+    circles: AC_CIRCLES.map(([f, l, r]) => (l === 0 ? [f * kL, 0, r * kW] : [f * kL, l * kS, r * Math.max(kW, kS)])),
+    noseAhead: meta.noseGear[0], mainAft: -meta.mainGearL[0], groundY: gy,
+    wheelR: [wr(0), wr(1)],
+    cateringAhead: doors.length > 2 ? doors[1] : doors[0], cateringX: (meta.fusW || 5.77) / 2 + 4.6,
+    beltAft: -cz[0], beltX: (meta.fusW || 5.77) / 2 + 3.5, sill: Math.max(1.2, gy + 0.5 * (cz[1] + cz[2]) - 0.3),
+    fuelX: 15 * Math.min(1, kS * 1.1),
+    standShift: NOSE_787 - meta.noseGear[0],       // stands are marked for the 787: stop at the same nose position
+    tailX: -(meta.length - (meta.sCG ?? 31.85)) + 0.9,
+  };
 }
 
 // --------------------------------------------------------------------------- vehicles
@@ -397,11 +423,13 @@ class Vehicle {
 let CALLSEQ = 0;
 
 class AIAircraft {
-  constructor(traffic, stand, liv, rnd) {
+  constructor(traffic, stand, liv, rnd, tm) {
     this.t = traffic; this.stand = stand; this.liv = liv;
+    this.tm = tm || traffic._pickType(rnd);
     this.id = ++CALLSEQ;
-    this.callsign = (TELEPHONY[liv.logo] || 'Claude') + ' ' + (100 + Math.floor(rnd() * 800));
-    this.x = stand.cg[0]; this.z = stand.cg[2]; this.a = -Math.PI / 2;   // facing north
+    this.callsign = (TELEPHONY[liv.logo] || 'Claude') + ' ' + (100 + Math.floor(rnd() * 800)) + (this.tm.heavy ? ' heavy' : '');
+    this.sz = stand.cg[2] - this.tm.standShift;           // CG stop on the stand for this type
+    this.x = stand.cg[0]; this.z = this.sz; this.a = -Math.PI / 2;   // facing north
     this.alt = 0; this.pitch = 0; this.bank = 0; this.v = 0; this.vs = 0;
     this.gear = 0; this.flap = 0; this.slat = 0; this.spoiler = 0; this.n1 = 0;
     this.dirSign = 1;
@@ -409,7 +437,7 @@ class AIAircraft {
     this.timer = 0;
     this.lightsOn = { nav: false, beacon: false, strobe: false, landing: false, taxi: false, logo: false };
     this.circles = [];
-    this.static = traffic._staticModel(liv);
+    this.static = traffic._staticModel(liv, this.tm);
     this.art = null;
     this.mover = null;
     this.air = null;
@@ -422,7 +450,7 @@ class AIAircraft {
 
   activate() {
     if (this.art) return;
-    this.art = this.t._articulated(this.liv);
+    this.art = this.t._articulated(this.liv, this.tm);
     this.static.visible = false;
   }
 
@@ -436,11 +464,11 @@ class AIAircraft {
   place(dt) {
     const m = this.art ? this.art.obj : this.static;
     const th = this.pitch * DEG;
-    const y = this.alt + 1.7 * Math.sin(th) + 5.25 * Math.cos(th) - 0.05;
+    const y = this.alt + this.tm.mainAft * Math.sin(th) + this.tm.groundY * Math.cos(th) - 0.05;
     m.position.set(this.x, y, this.z);
     m.rotation.set(this.bank * DEG, -this.a, th, 'YZX');
     if (this.art) this.art.pose(this, dt);
-    acCircles(this.x, this.z, this.a, this.circles);
+    acCircles(this.x, this.z, this.a, this.circles, this.tm.circles);
   }
 
   // lights in world space
@@ -451,28 +479,29 @@ class AIAircraft {
     m.updateMatrixWorld();
     const mw = m.matrixWorld;
     const v = this.t._v;
-    const meta = this.t.meta;
+    const tm = this.tm, meta = tm.meta, kL = tm.kL, kW = tm.kW;
     const P = (p) => v.set(p[0], p[1], p[2]).applyMatrix4(mw);
     if (lo.nav) {
       L.add(P(meta.wingTipL), 1.0, 0.08, 0.05, 0.5);
       L.add(P(meta.wingTipR), 0.1, 1.0, 0.25, 0.5);
-      L.add(P([-30.9, 1.0, 0]), 1, 1, 1, 0.35);
+      L.add(P([tm.tailX, 1.0 * kW, 0]), 1, 1, 1, 0.35);
     }
     const ph = (time + this.id * 0.37) % 1.2;
-    if (lo.beacon && ph < 0.12) { L.add(P([-2, 3.1, 0]), 1.0, 0.1, 0.05, 0.6); L.add(P([4, -3.1, 0]), 1.0, 0.1, 0.05, 0.6); }
+    if (lo.beacon && ph < 0.12) { L.add(P([-2 * kL, 3.1 * kW, 0]), 1.0, 0.1, 0.05, 0.6); L.add(P([4 * kL, -3.1 * kW, 0]), 1.0, 0.1, 0.05, 0.6); }
     if (lo.strobe && (ph > 0.5 && ph < 0.56 || ph > 0.66 && ph < 0.72)) {
       L.add(P([meta.wingTipL[0] - 0.4, meta.wingTipL[1], meta.wingTipL[2]]), 1, 1, 1, 1.1);
       L.add(P([meta.wingTipR[0] - 0.4, meta.wingTipR[1], meta.wingTipR[2]]), 1, 1, 1, 1.1);
     }
-    if (lo.landing) { L.add(P([9, -1.9, -5.2]), 1, 0.97, 0.9, 1.3); L.add(P([9, -1.9, 5.2]), 1, 0.97, 0.9, 1.3); }
-    if (lo.taxi) L.add(P([24.2, -2.4, 0]), 1, 0.97, 0.9, 0.8);
-    if (lo.logo) { L.add(P([-24, 4, -3]), 0.9, 0.9, 0.9, 0.4); L.add(P([-24, 4, 3]), 0.9, 0.9, 0.9, 0.4); }
+    if (lo.landing) { L.add(P([9 * kL, -1.9 * kW, -5.2 * kW]), 1, 0.97, 0.9, 1.3); L.add(P([9 * kL, -1.9 * kW, 5.2 * kW]), 1, 0.97, 0.9, 1.3); }
+    if (lo.taxi) L.add(P([tm.noseAhead + 0.1, meta.noseGear[1] + 2.9 * kW, 0]), 1, 0.97, 0.9, 0.8);
+    if (lo.logo) { L.add(P([-24 * kL, 4 * kW, -3 * kW]), 0.9, 0.9, 0.9, 0.4); L.add(P([-24 * kL, 4 * kW, 3 * kW]), 0.9, 0.9, 0.9, 0.4); }
   }
 }
 
 // --------------------------------------------------------------------------- traffic manager
 export class Traffic {
-  constructor(scene, worldData, meta, { gse, gseInfo, lodTemplate, livery, radio, quality }) {
+  // types: [{ meta, lod (glTF scene), weight }] - the AI fleet mix (787-9 / 767-300ER / 737-800)
+  constructor(scene, worldData, meta, { gse, gseInfo, lodTemplate, livery, radio, quality, types }) {
     this.scene = scene; this.W = worldData; this.meta = meta; this.radio = radio;
     this.gse = gse; this.gseInfo = gseInfo; this.lodTemplate = lodTemplate; this.liveryLayout = livery;
     this.quality = quality;
@@ -485,33 +514,51 @@ export class Traffic {
     this.aircraft = []; this.vehicles = []; this.movingAircraft = [];
     this.time = 0;
     this.enabled = true;
-    this._artPool = [];
-    this._staticTpl = lodTemplate ? World.mergeByMaterial(lodTemplate.clone(true)) : null;
-    this._artTpl = lodTemplate ? buildArticulated(lodTemplate.clone(true)) : null;
-    this.player = { x: 0, z: 0, alt: 0, a: 0, v: 0, onGround: true, circles: [], active: false };
+    const list = (types && types.length ? types : [{ meta, lod: lodTemplate, weight: 1 }]).filter((t) => t.lod);
+    this.types = list.map((t) => {
+      const tm = typeModel(t.meta);
+      tm.weight = t.weight ?? 1;
+      tm.layout = t.meta.liveryLayout || (tm.type === 'b789' ? livery : null) || livery;
+      tm.staticTpl = World.mergeByMaterial(t.lod.clone(true));
+      tm.artTpl = buildArticulated(t.lod.clone(true));
+      tm.pool = [];
+      return tm;
+    });
+    this._staticTpl = this.types.length ? this.types[0].staticTpl : null;
+    this.player = { x: 0, z: 0, alt: 0, a: 0, v: 0, onGround: true, circles: [], active: false, tm: typeModel(meta) };
     this.pc = new PlayerATC(this);
   }
 
-  _staticModel(liv) {
-    const o = this._staticTpl.clone(true);
-    if (this.liveryLayout) dressParked(o, liv, this.liveryLayout);
+  _pickType(rnd) {
+    const tot = this.types.reduce((a, t) => a + t.weight, 0);
+    let r = rnd() * tot;
+    for (const t of this.types) { r -= t.weight; if (r <= 0) return t; }
+    return this.types[0];
+  }
+
+  // the player's aircraft type (footprint for separation)
+  setPlayerMeta(meta) { this.player.tm = typeModel(meta); }
+
+  _staticModel(liv, tm) {
+    const o = tm.staticTpl.clone(true);
+    if (tm.layout) dressParked(o, liv, tm.layout);
     o.traverse((m) => { if (m.isMesh) { m.castShadow = this.quality === 'high'; m.receiveShadow = true; } });
     return o;
   }
 
-  _articulated(liv) {
-    let obj = this._artPool.pop();
+  _articulated(liv, tm) {
+    let obj = tm.pool.pop();
     if (!obj) {
-      obj = new ArticulatedModel(this._artTpl.clone(true), this.meta);
+      obj = new ArticulatedModel(tm.artTpl.clone(true), tm);
       obj.obj.traverse((m) => { if (m.isMesh) { m.castShadow = this.quality === 'high'; m.receiveShadow = true; } });
       this.scene.add(obj.obj);
     }
-    if (this.liveryLayout) dressParked(obj.obj, liv, this.liveryLayout);
+    if (tm.layout) dressParked(obj.obj, liv, tm.layout);
     obj.obj.visible = true;
     return obj;
   }
 
-  _release(art) { art.obj.visible = false; this._artPool.push(art); }
+  _release(art) { art.obj.visible = false; art.tm.pool.push(art); }
 
   // ------------------------------------------------------------------ setup per scenario
   reset({ stands, skipStand, randomLivery, runway, windDir, windKt, playerStand, playerCallsign }) {
@@ -631,22 +678,24 @@ export class Traffic {
   }
 
   // service pose and approach / departure routes around an aircraft on its stand
-  _servicePlan(kind, st, laneIn, laneOut) {
-    const xs = st.cg[0], zc = st.cg[2];
+  _servicePlan(kind, st, laneIn, laneOut, ac) {
+    const tm = ac?.tm || this.types[0];
+    const xs = st.cg[0], zc = ac ? ac.sz : st.cg[2] - tm.standShift;
+    const cA = tm.cateringAhead, cX = tm.cateringX, bA = tm.beltAft, bX = tm.beltX, fX = tm.fuelX;
     const E = xs + this.G.standLaneDX, Wl = xs - this.G.standLaneDX;
     const P = (x, z, v) => ({ x, z, v });
     switch (kind) {
       case 'Catering': return {
-        in: [P(E - 3, laneIn), P(E - 3, zc - 14.3), P(xs + 14, zc - 14.3, 2.5), P(xs + 7.5, zc - 14.3, 1.2)],
-        pose: [xs + 7.5, zc - 14.3, Math.PI],
-        rev: [P(xs + 7.5, zc - 14.3), P(xs + 17, zc - 14.3), P(xs + 17, zc - 26)],
-        out: [P(xs + 17, zc - 26), P(xs + 17, zc - 20), P(E + 3, zc - 20), P(E + 3, laneOut)],
+        in: [P(E - 3, laneIn), P(E - 3, zc - cA), P(xs + cX + 6.5, zc - cA, 2.5), P(xs + cX, zc - cA, 1.2)],
+        pose: [xs + cX, zc - cA, Math.PI],
+        rev: [P(xs + cX, zc - cA), P(xs + 17, zc - cA), P(xs + 17, zc - cA - 11.7)],
+        out: [P(xs + 17, zc - cA - 11.7), P(xs + 17, zc - cA - 5.7), P(E + 3, zc - cA - 5.7), P(E + 3, laneOut)],
       };
       case 'BeltLoader': return {
-        in: [P(E - 3, laneIn), P(E - 3, zc + 16), P(xs + 12, zc + 16, 2.5), P(xs + 6.4, zc + 16, 1.0)],
-        pose: [xs + 6.4, zc + 16, Math.PI],
-        rev: [P(xs + 6.4, zc + 16), P(xs + 20, zc + 16)],
-        out: [P(xs + 20, zc + 16), P(xs + 13, zc + 16), P(xs + 13, zc + 30), P(E + 3, zc + 30), P(E + 3, laneOut)],
+        in: [P(E - 3, laneIn), P(E - 3, zc + bA), P(xs + bX + 5.6, zc + bA, 2.5), P(xs + bX, zc + bA, 1.0)],
+        pose: [xs + bX, zc + bA, Math.PI],
+        rev: [P(xs + bX, zc + bA), P(xs + 20, zc + bA)],
+        out: [P(xs + 20, zc + bA), P(xs + 13, zc + bA), P(xs + 13, zc + bA + 14), P(E + 3, zc + bA + 14), P(E + 3, laneOut)],
       };
       case 'BagTrain': return {
         in: [P(xs + 24, laneIn), P(xs + 24, zc + 14, 3), P(xs + 24, zc + 8, 1.2)],
@@ -659,12 +708,12 @@ export class Traffic {
         out: [P(xs + 15, zc - 6), P(xs + 15, zc - 30), P(E + 3, zc - 30), P(E + 3, laneOut)],
       };
       case 'Fuel': return {
-        in: [P(Wl - 3, laneIn), P(Wl - 3, zc + 14), P(xs - 15, zc + 14, 3), P(xs - 15, zc + 1, 1.2)],
-        pose: [xs - 15, zc + 1, -Math.PI / 2],
-        out: [P(xs - 15, zc + 1), P(xs - 15, zc - 16), P(Wl + 3, zc - 16), P(Wl + 3, laneOut)],
+        in: [P(Wl - 3, laneIn), P(Wl - 3, zc + 14), P(xs - fX, zc + 14, 3), P(xs - fX, zc + 1, 1.2)],
+        pose: [xs - fX, zc + 1, -Math.PI / 2],
+        out: [P(xs - fX, zc + 1), P(xs - fX, zc - 16), P(Wl + 3, zc - 16), P(Wl + 3, laneOut)],
       };
       case 'Tug': {
-        const zg = zc - 24.13;
+        const zg = zc - tm.noseAhead;
         return {
           in: [P(E - 3, laneIn), P(E - 3, -497), P(xs, -497, 3), P(xs, zg - 0.6, 1.0)],
           pose: [xs, zg - 0.6, Math.PI / 2],
@@ -679,10 +728,10 @@ export class Traffic {
     const dep = st.cg[0] < 0 ? this.depots[0] : this.depots[1];
     let v = this._free(dep, kind) || this._free(dep === this.depots[0] ? this.depots[1] : this.depots[0], kind);
     if (!v) return null;
-    const plan = this._servicePlan(kind, st);
+    const plan = this._servicePlan(kind, st, 0, 0, ac);
     if (!plan) return null;
     const out = this._roadOut(v);
-    const pl = this._servicePlan(kind, st, out.laneZ, 0);
+    const pl = this._servicePlan(kind, st, out.laneZ, 0, ac);
     const pts = out.pts.concat(pl.in);
     v.state = 'DISPATCH';
     v.task = { ac, kind, dur, plan: pl, after };
@@ -695,14 +744,14 @@ export class Traffic {
     const [x, z, a] = T.plan.pose;
     v.setPose(x, z, a);
     if (v.kind === 'Catering' || v.kind === 'BeltLoader' || v.kind === 'Fuel') v.liftT = 1;
-    if (v.kind === 'BeltLoader') v.beltAngle = Math.atan2(3.2 - 1.05 - 0.15, 7.3);
+    if (v.kind === 'BeltLoader') v.beltAngle = Math.atan2(T.ac.tm.sill - 1.05 - 0.15, 7.3);
     for (const tr of v.trailers) if (tr.parts.ULD) tr.parts.ULD.obj.visible = T.unload ? false : tr.parts.ULD.obj.visible;
   }
 
   _sendHome(v) {
     const T = v.task;
     const home = this._roadHome(v);
-    const pl = this._servicePlan(v.kind, T.ac.stand, 0, home.laneZ);
+    const pl = this._servicePlan(v.kind, T.ac.stand, 0, home.laneZ, T.ac);
     v.liftT = 0;
     const legs = [];
     if (pl.rev) legs.push({ path: new Path(pl.rev, 5), dir: -1 });
@@ -724,7 +773,7 @@ export class Traffic {
         if (!dep) continue;
         const v = this._free(dep, kind);
         if (!v) continue;
-        const pl = this._servicePlan(kind, ac.stand, 0, 0);
+        const pl = this._servicePlan(kind, ac.stand, 0, 0, ac);
         v.task = { ac, kind, dur, plan: pl, t: this.rnd() * dur * 0.8 };
         v.state = 'SERVICE';
         this._onServiceArrive(v);
@@ -901,7 +950,7 @@ export class Traffic {
   // ground routes -------------------------------------------------------------------
   _pushbackPts(ac) {
     const R = this._rw();
-    const xs = ac.stand.cg[0], zc = ac.stand.cg[2], tl = this.G.pushZ ?? -340;
+    const xs = ac.stand.cg[0], zc = ac.sz, tl = this.G.pushZ ?? -340;
     // the aircraft must end up facing the departure end (taxi towards +d on the taxilane for 27:
     // east), so the tail swings the other way
     const face = R.d < 0 ? 1 : -1;
@@ -928,7 +977,7 @@ export class Traffic {
     const conns = G.connectors.slice().sort((a, b) => (a - b) * R.d);
     const conn = conns.find((c) => (c - ac.x) * R.d > 950) ?? conns[conns.length - 1];
     const link = R.d < 0 ? G.apronLinks[1] : G.apronLinks[2];
-    const xs = ac.stand.cg[0], zc = ac.stand.cg[2];
+    const xs = ac.stand.cg[0], zc = ac.sz;
     ac.exitName = 'A' + (G.connectors.indexOf(conn) + 1);
     const pts = [{ x: ac.x, z: ac.z }, { x: conn, z: 0, v: 7 }, { x: conn, z: G.twyZ, v: 12 },
       { x: link, z: G.twyZ, v: 12 }, { x: link, z: G.taxilaneZ, v: 10 }, { x: xs, z: G.taxilaneZ, v: 9 }, { x: xs, z: zc + 30, v: 3 }, { x: xs, z: zc, v: 1.2 }];
@@ -946,7 +995,7 @@ export class Traffic {
     const P = this.player;
     Object.assign(P, env.player || {});
     P.active = !!env.player;
-    if (P.active) acCircles(P.x, P.z, P.a, P.circles);
+    if (P.active) acCircles(P.x, P.z, P.a, P.circles, P.tm.circles);
     this.movingAircraft = this.aircraft.filter((a) => !['PARKED', 'AIR', 'TUG', 'REQ_PUSH', 'PUSH_WAIT'].includes(a.state));
     if (P.active && P.onGround) this.movingAircraft.push(P);
     // timers
@@ -1127,7 +1176,7 @@ export class Traffic {
     const dep = ac.stand.cg[0] < 0 ? this.depots[0] : this.depots[1];
     const v = this._free(dep, 'Tug');
     if (!v) return;
-    v.task = { ac, kind: 'Tug', dur: 1e9, plan: this._servicePlan('Tug', ac.stand, 0, 0), t: 0 };
+    v.task = { ac, kind: 'Tug', dur: 1e9, plan: this._servicePlan('Tug', ac.stand, 0, 0, ac), t: 0 };
     v.state = 'SERVICE';
     this._onServiceArrive(v);
     ac.tug = v;
@@ -1234,8 +1283,9 @@ export class Traffic {
         const tug = ac.tug;
         if (tug) {
           // tug holds the nose gear: cradle under the gear, facing the aircraft
-          const steer = clamp(Math.atan(25.8 * (p.k || 0)), -1.2, 1.2);
-          const gx = ac.x + Math.cos(ac.a) * 24.13, gz = ac.z + Math.sin(ac.a) * 24.13;
+          const na = ac.tm.noseAhead;
+          const steer = clamp(Math.atan((na + ac.tm.mainAft) * (p.k || 0)), -1.2, 1.2);
+          const gx = ac.x + Math.cos(ac.a) * na, gz = ac.z + Math.sin(ac.a) * na;
           const ta = ac.a + Math.PI + steer;
           tug.x = gx - Math.cos(ta) * 0.6; tug.z = gz - Math.sin(ta) * 0.6; tug.a = ta;
           tug.v = -ac.v; tug.dir = 1; tug.steerA = 0; tug.slaved = true;
@@ -1342,7 +1392,7 @@ export class Traffic {
       default: break;
     }
     if (ac.art || ac.state !== 'PARKED') ac.place(dt);
-    else acCircles(ac.x, ac.z, ac.a, ac.circles);
+    else acCircles(ac.x, ac.z, ac.a, ac.circles, ac.tm.circles);
   }
 
   _startTaxiOut(ac) {
