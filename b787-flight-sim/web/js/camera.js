@@ -1,11 +1,12 @@
 // Camera views: cockpit, chase, orbit, wing (cabin window), tower, fly-by.
 import * as THREE from 'three';
+import { ifeGeometry } from './ife.js';
 import { DEG, clamp, lerp } from './util.js';
 import { terrainHeight } from './terrain.js';
 
-export const VIEWS = ['cockpit', 'chase', 'orbit', 'wing', 'cabin', 'tower', 'flyby', 'traffic'];
+export const VIEWS = ['cockpit', 'chase', 'orbit', 'wing', 'ife', 'cabin', 'tower', 'flyby', 'traffic'];
 export const VIEW_NAMES = {
-  cockpit: 'コックピット Cockpit', chase: '追尾 Chase', orbit: '外部 Orbit', wing: '客室窓 Cabin window', cabin: '機内 Cabin',
+  cockpit: 'コックピット Cockpit', chase: '追尾 Chase', orbit: '外部 Orbit', wing: '客室窓 Cabin window', ife: '座席モニター My seat (IFE)', cabin: '機内 Cabin',
   tower: '管制塔 Tower', flyby: 'フライバイ Fly-by', traffic: 'AI交通 Traffic (B: 切替)',
 };
 
@@ -33,7 +34,7 @@ export class CameraRig {
       if (!this._drag) return;
       const dx = e.clientX - this._drag.x, dy = e.clientY - this._drag.y;
       this._drag = { x: e.clientX, y: e.clientY };
-      if (this.view === 'cockpit' || this.view === 'wing' || this.view === 'cabin') {
+      if (this.view === 'cockpit' || this.view === 'wing' || this.view === 'ife' || this.view === 'cabin') {
         this.yaw = clamp(this.yaw - dx * 0.004, -2.6, 2.6);
         this.pitch = clamp(this.pitch - dy * 0.004, -1.2, 1.45);
       } else {
@@ -46,7 +47,7 @@ export class CameraRig {
     dom.addEventListener('wheel', (e) => {
       e.preventDefault();
       const k = Math.exp(e.deltaY * 0.001);
-      if (this.view === 'cockpit' || this.view === 'wing' || this.view === 'cabin' || this.view === 'tower' || this.view === 'flyby') {
+      if (this.view === 'cockpit' || this.view === 'wing' || this.view === 'ife' || this.view === 'cabin' || this.view === 'tower' || this.view === 'flyby') {
         this.fov = clamp(this.fov * k, 12, 90);
       } else {
         this.dist = clamp(this.dist * k, 28, 1500);
@@ -57,7 +58,7 @@ export class CameraRig {
   setView(v) {
     this.view = v;
     this.yaw = 0; this.pitch = v === 'cockpit' ? -0.10 : 0;
-    this.fov = v === 'cockpit' ? 62 : v === 'wing' ? 60 : v === 'cabin' ? 70 : v === 'tower' ? 30 : 55;
+    this.fov = v === 'cockpit' ? 62 : v === 'wing' ? 60 : v === 'ife' ? 44 : v === 'cabin' ? 70 : v === 'tower' ? 30 : 55;
     if (v === 'traffic') { this.dist = 110; this.orbitPitch = 0.25; }
     this.flybyPos = null;
     this._init = false;
@@ -95,6 +96,18 @@ export class CameraRig {
         const qp = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.pitch - (this.meta.cabin ? 0.02 : 0.18));
         cam.quaternion.copy(q).multiply(qy).multiply(qp);
         cam.near = 0.05;
+        break;
+      }
+      case 'ife': {
+        // your seat: looking at the seat-back monitor ahead
+        const g = this.meta.cabin && ifeGeometry(this.meta.cabin);
+        if (!g) { this.setView('cabin'); break; }
+        cam.position.copy(toWorld(g.eye));
+        const pitch0 = Math.atan2(g.screen[1] - g.eye[1], g.screen[0] - g.eye[0]);
+        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw - Math.PI / 2);
+        const qp = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.pitch + pitch0);
+        cam.quaternion.copy(q).multiply(qy).multiply(qp);
+        cam.near = 0.03;
         break;
       }
       case 'cabin': {
@@ -164,7 +177,7 @@ export class CameraRig {
     }
     this._shake(dt, fm);
     // keep external cameras above the terrain
-    if (this.view !== 'cockpit' && this.view !== 'wing' && this.view !== 'cabin') {
+    if (this.view !== 'cockpit' && this.view !== 'wing' && this.view !== 'ife' && this.view !== 'cabin') {
       const g = Math.max(terrainHeight(cam.position.x, cam.position.z), -0.3);
       if (cam.position.y < g + 1.5) cam.position.y = g + 1.5;
     }
@@ -182,7 +195,7 @@ export class CameraRig {
 
   // camera vibration: runway roughness on the ground roll, buffet and light turbulence in the air
   _shake(dt, fm) {
-    const inside = this.view === 'cockpit' || this.view === 'cabin' || this.view === 'wing';
+    const inside = this.view === 'cockpit' || this.view === 'cabin' || this.view === 'wing' || this.view === 'ife';
     const chase = this.view === 'chase';
     if (!inside && !chase) return;
     this._t = (this._t || 0) + dt;

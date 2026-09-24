@@ -158,6 +158,18 @@
     .steps li b, #menuNote { display: none; }
     .slide { max-height: calc(100vh - 190px); }
   }
+
+  /* ---------- in-flight entertainment controls (your seat view) ---------- */
+  #ife { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 6; width: min(900px, calc(100vw - 16px));
+    background: rgba(12, 14, 20, .82); border: 1px solid rgba(217,194,154,.28); border-radius: 12px; padding: 8px 10px; }
+  #ife .ifeTop { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: #d9c29a; }
+  #ife .ifeTop b { color: #f1e9da; }
+  #ifeBtns { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+  #ifeBtns button, #ife .ifeTop button, #ifeGame button { flex: 0 0 auto; padding: 7px 10px; font-size: 13px; background: #1d1a15;
+    border-color: rgba(217,194,154,.3); }
+  #ifeBtns button.sel { background: #d9c29a; color: #17130c; border-color: #d9c29a; }
+  #ifeGame { display: flex; gap: 10px; justify-content: center; margin-top: 6px; }
+  #ifeGame button { min-width: 90px; font-size: 18px; touch-action: none; }
   /* ---------- in-flight UI ---------- */
   #mcp {
     position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5;
@@ -259,6 +271,12 @@
   </div>
 </div>
 
+<div id="ife" class="hidden">
+  <div class="ifeTop"><b>🎧 機内エンタメ</b><span>チャンネルを選んでください（ドラッグで視線を動かせます）</span><span class="spacer"></span>
+    <span id="ifeStatus"></span><button id="ifeMeal">🍱 機内食サービス (O)</button></div>
+  <div id="ifeBtns"></div>
+  <div id="ifeGame" class="hidden"><button id="ifeL">◀</button><button id="ifeR">▶</button></div>
+</div>
 <div id="menu" class="hidden">
   <div class="card wiz">
     <div class="wiz-head">
@@ -358,13 +376,14 @@
         <div><b>1</b> AP  <b style="min-width:0">2</b> A/T</div>
         <div><b>3 4 5 7</b> HDG ALT VS FLCH</div>
         <div><b>6</b> APP (ILS)</div>
-        <div><b>C</b> 視点 Camera（機内・客室窓も）</div>
+        <div><b>C</b> 視点 Camera（客室窓・座席モニター・機内）</div>
         <div><b>マウス</b> 視点回転 · ホイール ズーム</div>
         <div><b>I</b> 計器パネル Panel</div>
         <div><b>U</b> HUD</div>
         <div><b>L</b> 着陸灯 Lights</div>
         <div><b>T</b> 時刻 Time +1h</div>
         <div><b>Y</b> 管制と交信 Talk to ATC</div>
+        <div><b>O</b> 機内食サービス Meal service</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>
@@ -414,13 +433,14 @@
         <div><b>1</b> AP  <b style="min-width:0">2</b> A/T</div>
         <div><b>3 4 5 7</b> HDG ALT VS FLCH</div>
         <div><b>6</b> APP (ILS)</div>
-        <div><b>C</b> 視点 Camera（機内・客室窓も）</div>
+        <div><b>C</b> 視点 Camera（客室窓・座席モニター・機内）</div>
         <div><b>マウス</b> 視点回転 · ホイール ズーム</div>
         <div><b>I</b> 計器パネル Panel</div>
         <div><b>U</b> HUD</div>
         <div><b>L</b> 着陸灯 Lights</div>
         <div><b>T</b> 時刻 Time +1h</div>
         <div><b>Y</b> 管制と交信 Talk to ATC</div>
+        <div><b>O</b> 機内食サービス Meal service</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>

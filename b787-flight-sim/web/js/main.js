@@ -320,6 +320,7 @@ class App {
     bind('payload', 'payVal', (v) => `${(v / 1000).toFixed(1)} t` +
       (this.meta.cabin ? `（乗客 ${Math.min(this.meta.cabin.total, Math.floor(v / (this.meta.cabin.paxMass || 100)))} 名）` : ''));
     this.buildLiveryMenu();
+    this.buildIFE();
     this.buildTypePick();
     this.buildWeatherPick();
     this.buildWizard();
@@ -504,7 +505,35 @@ class App {
 
   applyLivery() {
     this.visual.setLivery(this.livery);
+    this.cabin.setAirline(this.livery?.name || 'Claude Air');
     if (this.meta.livery) this.cabin.setLivery(liveryAssets(this.livery, this.meta.livery, true));
+  }
+
+  // in-flight entertainment controls (your seat view)
+  buildIFE() {
+    const box = $('ifeBtns');
+    if (!box) return;
+    const chans = [['menu', '🏠 ホーム'], ['map', '🗺 マップ'], ['info', '✈ 情報'], ['movieA', '🎬 空の旅'], ['movieB', '🎬 海の物語'],
+      ['movieC', '🎬 夜の街'], ['movieD', '🎬 宇宙ねこ'], ['music', '🎵 音楽'], ['news', '📰 ニュース'], ['camera', '📷 機外カメラ'], ['game', '🎮 ゲーム']];
+    for (const [id, label] of chans) {
+      const b = document.createElement('button');
+      b.dataset.id = id; b.textContent = label;
+      b.onclick = () => { this.cabin.ife.select(id); this.refreshIFE(); $('view').focus(); };
+      box.appendChild(b);
+    }
+    const hold = (el, d) => {
+      const on = (e) => { e.preventDefault(); this.cabin.ife.steer(d); };
+      const off = () => this.cabin.ife.steer(0);
+      el.addEventListener('pointerdown', on); el.addEventListener('pointerup', off); el.addEventListener('pointerleave', off);
+    };
+    hold($('ifeL'), -1); hold($('ifeR'), 1);
+    $('ifeMeal').onclick = () => this.command('service');
+  }
+
+  refreshIFE() {
+    const ch = this.cabin.ife.channel;
+    document.querySelectorAll('#ifeBtns button').forEach((b) => b.classList.toggle('sel', b.dataset.id === ch));
+    $('ifeGame').classList.toggle('hidden', ch !== 'game');
   }
 
   buildLiveryMenu() {
@@ -703,6 +732,7 @@ class App {
       this.trafficFocus = null;
     }
     this.crashShown = false;
+    this._serviceDone = false;
     this.acc = 0;
     this.tdReport = null;
     if (run) {
@@ -710,7 +740,7 @@ class App {
       ['mcp', 'status', 'corner'].forEach((i) => $(i).classList.remove('hidden'));
       if (this.isTouch) $('touch').classList.remove('hidden');
       $('view').focus();
-      $('panel').classList.toggle('hidden', !this.panelOn || this.rig.view === 'cockpit');
+      $('panel').classList.toggle('hidden', !this.panelOn || this.rig.view === 'cockpit' || this.rig.view === 'ife');
       this.toast(SCENARIOS.find((s) => s.id === id).name + ' — ' + SCENARIOS.find((s) => s.id === id).note, 5000);
       this.updateMCP(true);
     }
@@ -773,12 +803,12 @@ class App {
         break;
       case 'view': {
         const v = this.rig.next();
-        if ((v === 'cabin' || v === 'wing') && !this.cabin.group && this.cabin.available) this.toast('機内を読み込み中… Loading cabin');
-        $('panel').classList.toggle('hidden', !this.panelOn || v === 'cockpit');
+        if ((v === 'cabin' || v === 'wing' || v === 'ife') && !this.cabin.group && this.cabin.available) this.toast('機内を読み込み中… Loading cabin');
+        $('panel').classList.toggle('hidden', !this.panelOn || v === 'cockpit' || v === 'ife');
         this.toast('視点 ' + VIEW_NAMES[v]);
         break;
       }
-      case 'panel': this.panelOn = !this.panelOn; $('panel').classList.toggle('hidden', !this.panelOn || this.rig.view === 'cockpit'); break;
+      case 'panel': this.panelOn = !this.panelOn; $('panel').classList.toggle('hidden', !this.panelOn || this.rig.view === 'cockpit' || this.rig.view === 'ife'); break;
       case 'hud': this.instruments.hudOn = !this.instruments.hudOn; break;
       case 'lights': {
         const L = this.visual.lightsOn;
@@ -812,6 +842,13 @@ class App {
         this.toast('ATC 音声 voice ' + (this.radio.voice ? 'ON' : 'OFF'));
         break;
       case 'reset': this.startScenario(this.scenario, true); break;
+      case 'service': {
+        if (!this.cabin.available) break;
+        if (!this.cabin.group) { this.cabin.ensure().then(() => this.cabin.startService()); this.toast('機内食サービスを開始します Meal service'); break; }
+        if (this.cabin.startService()) this.toast('客室乗務員が機内食サービスを始めます 🍱 Meal service started');
+        else this.toast(this.cabin.service.status() || 'サービス中です');
+        break;
+      }
     }
     this.updateMCP(true);
   }
@@ -902,7 +939,28 @@ class App {
     const cockpit = this.rig.view === 'cockpit';
     fm.wet = this.world.wet || 0;
     this.visual.update(dt, fm, sys, { night: this.world.night, camera: this.camera, cockpitView: cockpit, events, wet: fm.wet });
-    this.cabin.update(this.rig.view === 'cabin' || this.rig.view === 'wing', this.world.night);
+    {
+      // cabin: passengers, crew and the IFE (live flight data for the maps / info channels)
+      const v = this.rig.view, o = fm.out;
+      const inside = v === 'cabin' || v === 'wing' || v === 'ife';
+      const tod = this.world.tod || 0;
+      const dist = Math.hypot(fm.pos.x, fm.pos.z) / 1000;
+      this.cabin.update(inside, this.world.night, this.paused ? 0 : dt, {
+        altFt: o.altFt || 0, gs: o.gs || 0, hdg: o.hdg || 0, oat: 15 - 1.98 * (o.altFt || 0) / 1000, x: fm.pos.x, z: fm.pos.z, dist,
+        clock: `${String(Math.floor(tod)).padStart(2, '0')}:${String(Math.floor((tod % 1) * 60)).padStart(2, '0')}`,
+        callsign: this.playerCallsign || '', type: 'Boeing ' + (this.cur?.short || ''),
+      }, v === 'ife');
+      // automatic meal service once established in the climb / cruise
+      if (!this.paused && !this._serviceDone && (o.altFt || 0) > 10000 && this.cabin.group && this.cabin.startService()) this._serviceDone = true;
+      const ifeOn = v === 'ife' && !this.paused;
+      $('ife').classList.toggle('hidden', !ifeOn);
+      if (ifeOn) {
+        this.refreshIFE();
+        const st = this.cabin.service ? this.cabin.service.status() : '';
+        if ($('ifeStatus').textContent !== st) $('ifeStatus').textContent = st;
+      }
+      this.tailCamFrame(ifeOn && this.cabin.ife.channel === 'camera');
+    }
     this.rig.update(dt, fm, this.visual.root);
     this.world.update(dt, this.camera, new THREE.Vector3(fm.pos.x, fm.pos.y, fm.pos.z));
     this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit });
@@ -935,7 +993,7 @@ class App {
     this.vapor.update(dt, fm, { camera: this.camera, humidity: this.world.weather.hum ?? 0.5, light: 1 - this.world.night,
       emit: (p, v, life, size, grow, alpha) => this.visual.emit(p, v, life, size, grow, alpha) });
     this.rain.update(dt, { camera: this.camera, amount: this.world.rain || 0, wind: fm.wind, camVel: this.camVel,
-      inside: cockpit || this.rig.view === 'cabin' || this.rig.view === 'wing', night: this.world.night });
+      inside: cockpit || this.rig.view === 'cabin' || this.rig.view === 'wing' || this.rig.view === 'ife', night: this.world.night });
     const hdr = !!this.post && this.quality !== 'low';
     HDR.uLin.value = hdr ? 1 : 0;
     // clouds / smoke: lit like white surfaces; point lights: bright enough to bloom at night
@@ -948,6 +1006,33 @@ class App {
       this.post.render();
     } else { this.world.volumetricState(false); this.renderer.render(this.scene, this.camera); }
     if (!this.paused) this.updateUI();
+  }
+
+  // IFE tail camera: the scene from the top of the fin, rendered into your seat monitor
+  tailCamFrame(on) {
+    if (!on) { this.cabin.setScreenTexture(null); return; }
+    if (!this._tailRT) {
+      this._tailRT = new THREE.WebGLRenderTarget(512, 320, { samples: 2, type: THREE.HalfFloatType });
+      this._tailRT.texture.colorSpace = THREE.LinearSRGBColorSpace;
+      this._tailCam = new THREE.PerspectiveCamera(58, 512 / 320, 0.5, 60000);
+    }
+    this._tailN = (this._tailN || 0) + 1;
+    if (this._tailN % 3 !== 1) return;
+    const m = this.meta;
+    const cam = this._tailCam, root = this.visual.root;
+    const x = -(m.length - (m.sCG ?? 31.85)) + 2.5, y = m.height + m.groundY - 0.3;
+    cam.position.set(x, y, 0).applyMatrix4(root.matrixWorld);
+    cam.quaternion.copy(root.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2))
+      .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.16));
+    cam.updateMatrixWorld();
+    const r = this.renderer, prev = r.getRenderTarget();
+    const cg = this.cabin.group, vis = cg ? cg.visible : false;
+    if (cg) cg.visible = false;
+    r.setRenderTarget(this._tailRT);
+    r.render(this.scene, cam);
+    r.setRenderTarget(prev);
+    if (cg) cg.visible = vis;
+    this.cabin.setScreenTexture(this._tailRT.texture);
   }
 
   // AI traffic: tyre smoke on touchdown

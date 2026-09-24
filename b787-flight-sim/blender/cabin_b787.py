@@ -297,6 +297,19 @@ def materials(tex):
         "pants": P("Pax_Pants", color=h("#ffffff"), roughness=0.9),
         "hair": P("Pax_Hair", color=h("#ffffff"), roughness=0.7),
         "shoes": P("Pax_Shoes", color=h("#1d1d20"), roughness=0.5),
+        # cabin crew (uniform tinted with the airline colour in the simulator), trolley, meal tray
+        "uniform": P("Crew_Uniform", color=h("#ffffff"), roughness=0.8),
+        "crewpants": P("Crew_Pants", color=h("#1f2633"), roughness=0.8),
+        "crewaccent": P("Crew_Accent", color=h("#f2b233"), roughness=0.5),
+        "crewskin": P("Crew_Skin", color=h("#e6bf9c"), roughness=0.6),
+        "crewhair": P("Crew_Hair", color=h("#1c1714"), roughness=0.6),
+        "cartalu": P("Cart_Aluminium", color=h("#c7ccd1"), roughness=0.3, metallic=0.85),
+        "cartred": P("Cart_Bottle", color=h("#b83a2e"), roughness=0.3),
+        "cup": P("Tray_Cup", color=h("#f4f1ea"), roughness=0.4),
+        "trayplastic": P("Tray_Plastic", color=h("#3b4048"), roughness=0.5),
+        "dish": P("Tray_Dish", color=h("#fbfbf9"), roughness=0.2),
+        "food": P("Tray_Food", color=h("#b86b2e"), roughness=0.7),
+        "salad": P("Tray_Salad", color=h("#5f9a3a"), roughness=0.7),
     }
 
 
@@ -639,6 +652,7 @@ ZONES = {
         ("Y", 24.6, 0.81, 25, [(1.73, 2, 0.46), (0.0, 3, 0.46), (-1.73, 2, 0.46)], "AC" "DEG" "HK"),
     ],
 }[G.TYPE]
+AISLES = {"b789": [0.955, -0.955], "b738": [0.0], "b763": [0.985, -0.985]}[G.TYPE]   # aisle centres (design y)
 MY_SEAT_S = {"b789": 36.2, "b738": 20.57, "b763": 30.27}[G.TYPE]
 
 
@@ -729,31 +743,134 @@ def proto_seat_j(M, col, parent):
     C.set_parent(ob, parent)
 
 
+# pivots of the articulated passenger (design frame, seat origin): the simulator poses the head
+# and both arms (shoulder + elbow) per instance for random motions (look around, phone, sleep, eat ...)
+PAX_PIVOTS = dict(neck=(0.20, 0.0, 1.12), shoulderL=(0.19, 0.21, 1.00), shoulderR=(0.19, -0.21, 1.00),
+                  elbowL=(0.13, 0.205, 0.70), elbowR=(0.13, -0.205, 0.70))
+PAX_MATS = ["skin", "shirt", "pants", "hair", "shoes"]
+
+
 def proto_pax(M, col, parent):
-    """Seated passenger (origin = seat origin, facing -s)."""
-    mb = C.MeshBuilder(TB)
+    """Seated passenger (origin = seat origin, facing -s), split into posable parts."""
     SK, SH, PA, HA, SO = 0, 1, 2, 3, 4
     lean = math.radians(12)
     n = (6, 12)
-    # legs
-    for sy in (-1, 1):
-        sbox(mb, (0.0, sy * 0.10, 0.55), (0.14, 0.085, 0.1), PA, e=0.5, n=n)
-        sbox(mb, (-0.2, sy * 0.10, 0.56), (0.22, 0.07, 0.07), PA, e=0.6, n=n)
-        sbox(mb, (-0.43, sy * 0.10, 0.3), (0.055, 0.055, 0.23), PA, e=0.6, n=n, tilt=math.radians(-8))
-        sbox(mb, (-0.5, sy * 0.10, 0.045), (0.12, 0.05, 0.045), SO, e=0.5, n=n)
-    # torso, shoulders, neck, head, hair
-    sbox(mb, (0.14, 0, 0.88), (0.11, 0.18, 0.27), SH, e=0.55, n=n, tilt=lean)
-    sbox(mb, (0.19, 0, 1.1), (0.09, 0.2, 0.06), SH, e=0.5, n=n, tilt=lean)
-    cyl(mb, (0.2, 0, 1.12), (0.22, 0, 1.22), 0.05, SK, n=10)
-    sbox(mb, (0.21, 0, 1.31), (0.1, 0.08, 0.11), SK, e=0.9, n=(8, 12))
-    sbox(mb, (0.235, 0, 1.335), (0.102, 0.09, 0.1), HA, e=0.8, n=(8, 12))
-    sbox(mb, (0.12, 0, 1.30), (0.015, 0.02, 0.02), SK, e=0.9, n=(4, 6))       # nose
-    # arms resting on the armrests / lap
-    for sy in (-1, 1):
-        sbox(mb, (0.16, sy * 0.21, 0.86), (0.05, 0.05, 0.15), SH, e=0.6, n=n, tilt=lean)
-        sbox(mb, (-0.02, sy * 0.2, 0.68), (0.15, 0.045, 0.045), SH, e=0.6, n=n)
-        sbox(mb, (-0.2, sy * 0.17, 0.66), (0.05, 0.035, 0.03), SK, e=0.7, n=n)
-    ob = mb.build("Proto_Pax", [M["skin"], M["shirt"], M["pants"], M["hair"], M["shoes"]], col=col)
+    mats = [M[k] for k in PAX_MATS]
+
+    def part(name, fn):
+        mb = C.MeshBuilder(TB)
+        fn(mb)
+        ob = mb.build(name, mats, col=col)
+        C.set_parent(ob, parent)
+
+    def body(mb):
+        for sy in (-1, 1):
+            sbox(mb, (0.0, sy * 0.10, 0.55), (0.14, 0.085, 0.1), PA, e=0.5, n=n)
+            sbox(mb, (-0.2, sy * 0.10, 0.56), (0.22, 0.07, 0.07), PA, e=0.6, n=n)
+            sbox(mb, (-0.43, sy * 0.10, 0.3), (0.055, 0.055, 0.23), PA, e=0.6, n=n, tilt=math.radians(-8))
+            sbox(mb, (-0.5, sy * 0.10, 0.045), (0.12, 0.05, 0.045), SO, e=0.5, n=n)
+        sbox(mb, (0.14, 0, 0.88), (0.11, 0.18, 0.27), SH, e=0.55, n=n, tilt=lean)
+        sbox(mb, (0.19, 0, 1.1), (0.09, 0.2, 0.06), SH, e=0.5, n=n, tilt=lean)
+
+    def head(mb):
+        cyl(mb, (0.2, 0, 1.12), (0.22, 0, 1.22), 0.05, SK, n=10)
+        sbox(mb, (0.21, 0, 1.31), (0.1, 0.08, 0.11), SK, e=0.9, n=(8, 12))
+        sbox(mb, (0.235, 0, 1.335), (0.102, 0.09, 0.1), HA, e=0.8, n=(8, 12))
+        sbox(mb, (0.12, 0, 1.30), (0.015, 0.02, 0.02), SK, e=0.9, n=(4, 6))       # nose
+        for sy in (-1, 1):
+            sbox(mb, (0.125, sy * 0.035, 1.335), (0.006, 0.012, 0.008), HA, e=0.8, n=(4, 6))   # eyes
+
+    part("Proto_Pax", body)
+    part("Proto_PaxHead", head)
+    for sy, L in ((1, "L"), (-1, "R")):
+        part("Proto_PaxUArm" + L, lambda mb, sy=sy: sbox(mb, (0.16, sy * 0.21, 0.86), (0.05, 0.05, 0.15), SH, e=0.6,
+                                                           n=n, tilt=lean))
+
+        def farm(mb, sy=sy):
+            sbox(mb, (-0.02, sy * 0.2, 0.68), (0.15, 0.045, 0.045), SH, e=0.6, n=n)
+            sbox(mb, (-0.2, sy * 0.17, 0.66), (0.05, 0.035, 0.03), SK, e=0.7, n=n)
+        part("Proto_PaxFArm" + L, farm)
+
+
+# --------------------------------------------------------------------------- cabin crew, cart, meal tray
+CREW_PIVOTS = dict(shoulderL=(0.0, 0.20, 1.42), shoulderR=(0.0, -0.20, 1.42), hipL=(0.0, 0.09, 0.90),
+                   hipR=(0.0, -0.09, 0.90))
+
+
+def proto_crew(M, col, parent):
+    """Standing flight attendant (origin between the feet, facing -s): body + head, arms, legs."""
+    U, A, SK, HA, SO, PA = 0, 1, 2, 3, 4, 5
+    mats = [M["uniform"], M["crewaccent"], M["crewskin"], M["crewhair"], M["shoes"], M["crewpants"]]
+    n = (6, 12)
+
+    def part(name, fn):
+        mb = C.MeshBuilder(TB)
+        fn(mb)
+        ob = mb.build(name, mats, col=col)
+        C.set_parent(ob, parent)
+
+    def body(mb):
+        sbox(mb, (0.0, 0, 1.22), (0.11, 0.18, 0.28), U, e=0.5, n=n)            # jacket
+        sbox(mb, (0.0, 0, 0.95), (0.12, 0.17, 0.08), PA, e=0.5, n=n)           # hips
+        sbox(mb, (0.0, 0, 1.46), (0.1, 0.21, 0.05), U, e=0.5, n=n)             # shoulders
+        sbox(mb, (-0.1, 0, 1.40), (0.02, 0.06, 0.05), A, e=0.5, n=(4, 8))      # scarf
+        mb.add_box((-0.105, 0.07, 1.30), (0.01, 0.05, 0.015), mat=A)          # name badge
+        cyl(mb, (0.0, 0, 1.48), (0.0, 0, 1.56), 0.045, SK, n=10)
+        sbox(mb, (0.0, 0, 1.64), (0.1, 0.08, 0.11), SK, e=0.9, n=(8, 12))
+        sbox(mb, (0.03, 0, 1.67), (0.1, 0.09, 0.1), HA, e=0.8, n=(8, 12))
+        sbox(mb, (0.11, 0, 1.64), (0.05, 0.05, 0.05), HA, e=0.8, n=(6, 8))     # bun
+        sbox(mb, (-0.1, 0, 1.63), (0.015, 0.02, 0.02), SK, e=0.9, n=(4, 6))    # nose
+
+    def arm(mb, sy):
+        sbox(mb, (0.0, sy * 0.225, 1.26), (0.045, 0.045, 0.17), U, e=0.6, n=n)
+        sbox(mb, (-0.01, sy * 0.225, 0.98), (0.04, 0.04, 0.13), U, e=0.6, n=n)
+        sbox(mb, (-0.01, sy * 0.225, 0.81), (0.03, 0.025, 0.05), SK, e=0.7, n=n)
+
+    def leg(mb, sy):
+        sbox(mb, (0.0, sy * 0.09, 0.62), (0.06, 0.06, 0.28), PA, e=0.6, n=n)
+        sbox(mb, (-0.03, sy * 0.09, 0.04), (0.11, 0.045, 0.04), SO, e=0.5, n=n)
+        cyl(mb, (0.0, sy * 0.09, 0.34), (0.0, sy * 0.09, 0.07), 0.045, SK, n=8)   # stockings / ankles
+
+    part("Proto_Crew", body)
+    for sy, L in ((1, "L"), (-1, "R")):
+        part("Proto_CrewArm" + L, lambda mb, sy=sy: arm(mb, sy))
+        part("Proto_CrewLeg" + L, lambda mb, sy=sy: leg(mb, sy))
+
+
+def proto_cart(M, col, parent):
+    """Half-size galley trolley (0.30 wide x 0.81 x 1.03 m) with meal trays on top, origin on the floor."""
+    AL, DK, TR, CUP = 0, 1, 2, 3
+    mb = C.MeshBuilder(TB)
+    mb.add_box((0, 0, 0.56), (0.81, 0.30, 0.95), mat=AL)
+    for s_ in (-0.4, 0.4):
+        mb.add_box((s_, 0, 0.56), (0.012, 0.28, 0.93), mat=DK)                  # door seams / latches
+        mb.add_box((s_ * 1.01, 0.0, 0.95), (0.01, 0.12, 0.03), mat=TR)
+    mb.add_box((0, 0, 1.045), (0.83, 0.32, 0.02), mat=DK)                       # top
+    for (s_, y_) in ((-0.33, 0.1), (-0.33, -0.1), (0.33, 0.1), (0.33, -0.1)):
+        cyl(mb, (s_, y_, 0.07), (s_, y_, 0.0), 0.045, DK, n=10)                 # castors
+    cyl(mb, (0.42, -0.14, 0.95), (0.42, 0.14, 0.95), 0.012, AL, n=8)            # handle
+    # drinks and cups on top
+    for k in range(4):
+        cyl(mb, (-0.25 + k * 0.1, 0.07, 1.055), (-0.25 + k * 0.1, 0.07, 1.26), 0.035, CUP if k % 2 else TR, n=10)
+    for k in range(5):
+        cyl(mb, (0.05 + k * 0.06, -0.08, 1.055), (0.05 + k * 0.06, -0.08, 1.14), 0.03, CUP, n=8)
+    ob = mb.build("Proto_Cart", [M["cartalu"], M["dark"], M["cartred"], M["cup"]], col=col)
+    C.set_parent(ob, parent)
+
+
+def proto_tray(M, col, parent):
+    """Meal on a deployed tray table (origin = passenger seat origin, table 0.45 m ahead)."""
+    TB_, TRAY, DISH, FOOD, CUP, SAL = 0, 1, 2, 3, 4, 5
+    mb = C.MeshBuilder(TB)
+    s0, z0 = -0.45, 0.70
+    mb.add_box((s0, 0, z0), (0.26, 0.40, 0.018), mat=TB_)                     # tray table
+    mb.add_box((s0, 0, z0 + 0.018), (0.25, 0.36, 0.012), mat=TRAY)
+    cyl(mb, (s0 - 0.03, 0.06, z0 + 0.024), (s0 - 0.03, 0.06, z0 + 0.05), 0.075, DISH, n=16)   # main dish
+    sbox(mb, (s0 - 0.03, 0.06, z0 + 0.052), (0.05, 0.06, 0.012), FOOD, e=0.6, n=(4, 10))
+    mb.add_box((s0 + 0.06, -0.09, z0 + 0.035), (0.08, 0.1, 0.025), mat=SAL)   # salad bowl
+    cyl(mb, (s0 - 0.07, -0.12, z0 + 0.024), (s0 - 0.07, -0.12, z0 + 0.09), 0.03, CUP, n=10)   # cup
+    sbox(mb, (s0 + 0.07, 0.1, z0 + 0.04), (0.035, 0.03, 0.02), FOOD, e=0.7, n=(4, 8))       # bread roll
+    ob = mb.build("Proto_Tray", [M["dark"], M["trayplastic"], M["dish"], M["food"], M["cup"], M["salad"]], col=col)
     C.set_parent(ob, parent)
 
 
@@ -770,6 +887,9 @@ def build_cabin(col, tex):
     proto_seat_y(M, col, protos)
     proto_seat_j(M, col, protos)
     proto_pax(M, col, protos)
+    proto_crew(M, col, protos)
+    proto_cart(M, col, protos)
+    proto_tray(M, col, protos)
     seats = seat_map()
     my = next((i for i, st in enumerate(seats) if st["l"] == "A" and abs(st["s"] - MY_SEAT_S) < 0.2), None)
     y_win = seats[my]["y"] - 0.07 if my is not None else 1.0
@@ -789,6 +909,11 @@ def build_cabin(col, tex):
         ),
         paxMass=100,
         protoOrigin=G.to_three([0.0, 0.0, 0.0]),
+        paxPivots={k: G.to_three(list(v)) for k, v in PAX_PIVOTS.items()},
+        crewPivots={k: G.to_three(list(v)) for k, v in CREW_PIVOTS.items()},
+        aisles=[-y for y in AISLES],
+        floorY=FL,
+        galley=G.to_three([S0 + 1.0, 0.0, FL])[0],
         jOffset=[-0.12, 0.03, 0.0],
     )
     print("cabin seats:", counts, "total", len(seats))
