@@ -35,7 +35,7 @@ export class CameraRig {
       this._drag = { x: e.clientX, y: e.clientY };
       if (this.view === 'cockpit' || this.view === 'wing' || this.view === 'cabin') {
         this.yaw = clamp(this.yaw - dx * 0.004, -2.6, 2.6);
-        this.pitch = clamp(this.pitch - dy * 0.004, -1.2, 1.1);
+        this.pitch = clamp(this.pitch - dy * 0.004, -1.2, 1.45);
       } else {
         this.orbitYaw -= dx * 0.005;
         this.orbitPitch = clamp(this.orbitPitch + dy * 0.004, -0.4, 1.45);

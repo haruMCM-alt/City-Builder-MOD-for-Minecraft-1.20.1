@@ -15,11 +15,15 @@ export const HDR = { uLin: { value: 0 }, uGain: { value: 1 }, uGainL: { value: 1
 const HDR_GLSL = 'uniform float uLin, uGain, uGainL;';
 
 export const WEATHER = {
-  clear: { cover: 0.08, base: 1800, top: 2300, vis: 60000, overcast: 0, wind: 1 },
-  scattered: { cover: 0.35, base: 1300, top: 2400, vis: 40000, overcast: 0, wind: 1 },
-  broken: { cover: 0.7, base: 900, top: 2200, vis: 22000, overcast: 0.4, wind: 1.2 },
-  overcast: { cover: 1.0, base: 450, top: 1700, vis: 7000, overcast: 1, wind: 1.4 },
+  clear: { cover: 0.08, base: 1800, top: 2300, vis: 60000, overcast: 0, wind: 1, hum: 0.3 },
+  scattered: { cover: 0.35, base: 1300, top: 2400, vis: 40000, overcast: 0, wind: 1, hum: 0.5 },
+  broken: { cover: 0.7, base: 900, top: 2200, vis: 22000, overcast: 0.4, wind: 1.2, hum: 0.72 },
+  overcast: { cover: 1.0, base: 450, top: 1700, vis: 7000, overcast: 1, wind: 1.4, hum: 0.9 },
+  rain: { cover: 1.0, base: 320, top: 2600, vis: 3800, overcast: 1, wind: 1.6, rain: 1, hum: 1 },
 };
+
+// runway / ground wetness (0 dry .. 1 soaked), shared by the pavement shaders
+export const WET = { uWet: { value: 0 } };
 
 // ------------------------------------------------------------------ textures
 function noiseCanvas(size, seed, channels = 3, scales = [8, 32, 4]) {
@@ -123,6 +127,7 @@ function puffCanvas(size = 128) {
 function patchPavement(m) {
   const asphalt = m.name === 'W_Asphalt' || m.name === 'W_TaxiAsphalt';
   m.onBeforeCompile = (sh) => {
+    sh.uniforms.uWet = WET.uWet;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vRwP;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRwP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
@@ -132,7 +137,9 @@ varying vec3 vRwP;
 float rwHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float rwNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(rwHash(i), rwHash(i + vec2(1, 0)), f.x), mix(rwHash(i + vec2(0, 1)), rwHash(i + vec2(1, 1)), f.x), f.y); }
-float rwRubber = 0.0;`)
+float rwRubber = 0.0;
+float rwWet = 0.0;
+uniform float uWet;`)
       .replace('#include <map_fragment>', `#include <map_fragment>
 {
   vec3 wp = vRwP;
@@ -157,11 +164,18 @@ float rwRubber = 0.0;`)
     float jt = 1.0 - smoothstep(0.0, 0.03, abs(fract(wp.x / 15.0 + 0.5) - 0.5) * 15.0);
     diffuseColor.rgb *= 1.0 - (0.22 * jl + 0.12 * jt) * aa;
   }` : ''}
+  if (uWet > 0.0) {
+    // water fills the low spots first: puddles, then a continuous film
+    float pud = smoothstep(0.42, 0.7, rwNoise(wp.xz * 0.07) * 0.7 + rwNoise(wp.xz * 0.31) * 0.3);
+    rwWet = uWet * mix(0.55, 1.0, pud);
+    diffuseColor.rgb *= 1.0 - 0.42 * rwWet;
+  }
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-roughnessFactor *= 1.0 - 0.3 * rwRubber;`);
+roughnessFactor *= 1.0 - 0.3 * rwRubber;
+roughnessFactor = mix(roughnessFactor, 0.12, rwWet * 0.85);`);
   };
-  m.customProgramCacheKey = () => 'rwy-' + (asphalt ? 'a' : 'm');
+  m.customProgramCacheKey = () => 'rwy2-' + (asphalt ? 'a' : 'm');
 }
 
 export function glowTexture() {
@@ -218,6 +232,10 @@ export class World {
     envGround.position.y = -8;
     this.envGroundMat = envGround.material;
     this.envScene.add(envGround);
+    // overcast: a grey dome in the reflection environment (wet runway reflects grey, not blue)
+    this.envDome = new THREE.Mesh(new THREE.SphereGeometry(60, 24, 12),   // inside the PMREM far plane (100)
+      new THREE.MeshBasicMaterial({ color: 0x8c9096, side: THREE.BackSide, transparent: true, opacity: 0, depthWrite: false }));
+    this.envScene.add(this.envDome);
     this.pmrem = new THREE.PMREMGenerator(renderer);
     this.envRT = null;
 
@@ -563,6 +581,29 @@ varying vec3 vTW; varying float vSlope;`)
     this.lightPoints.frustumCulled = false;
     this.lightPoints.renderOrder = 5;
     this.scene.add(this.lightPoints);
+    // reflections in the wet pavement: the same lights mirrored in the ground plane, drawn as
+    // vertical streaks; depth taken from the real light so the aircraft still hides them
+    const rm = mat.clone();
+    rm.uniforms = this.lightUniforms;
+    rm.defines = { MIRROR: 1 };
+    rm.vertexShader = mat.vertexShader
+      .replace('vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+        'vec4 mvO = modelViewMatrix * vec4(position, 1.0);\n          vec4 mv = modelViewMatrix * vec4(position.x, -position.y - 0.25, position.z, 1.0);')
+      .replace('#include <logdepthbuf_vertex>', `#include <logdepthbuf_vertex>
+          #ifdef USE_LOGARITHMIC_DEPTH_BUFFER
+          vFragDepth = 1.0 + max(-mvO.z, 0.1) * 0.8;
+          #endif
+          vAlpha *= uWet * smoothstep(3.0, 0.3, position.y) * 0.4;
+          gl_PointSize *= 1.6;`)
+      .replace('uniform float uTime, uNight, uScreen, uPR, uFogDensity;', 'uniform float uTime, uNight, uScreen, uPR, uFogDensity, uWet;');
+    rm.fragmentShader = mat.fragmentShader.replace('float a = exp(-r2 * 5.0) + 0.9 * exp(-r2 * 40.0);',
+      'float a = exp(-(c.x * c.x * 60.0 + c.y * c.y * 3.5)) * (0.75 + 0.25 * fract(sin(dot(floor(gl_FragCoord.xy / vec2(3.0, 9.0)) + floor(uTime * 12.0), vec2(12.9898, 78.233))) * 43758.5453));')
+      .replace('uniform sampler2D uMap;', 'uniform sampler2D uMap; uniform float uTime;');
+    this.lightUniforms.uWet = WET.uWet;
+    this.lightReflect = new THREE.Points(geo, rm);
+    this.lightReflect.frustumCulled = false;
+    this.lightReflect.renderOrder = 4;
+    this.scene.add(this.lightReflect);
   }
 
   // ---------------------------------------------------------------------- clouds
@@ -669,9 +710,45 @@ varying vec3 vTW; varying float vSlope;`)
     }
   }
 
+  // state for the volumetric cloud pass (null = sprite clouds)
+  volumetricState(on) {
+    const W = this.weather;
+    if (this.clouds) this.clouds.visible = !on;
+    if (this.deck) this.deck.visible = !on;
+    if (!on) return null;
+    const h = this.hemi;
+    this._vs = this._vs || { ambTop: new THREE.Color(), ambBot: new THREE.Color(), sunCol: new THREE.Color(), haze: new THREE.Color(), sunDir: new THREE.Vector3() };
+    const v = this._vs;
+    v.enabled = true;
+    v.base = W.base; v.top = W.top + (W.overcast > 0.5 ? 0 : 900);
+    v.cover = Math.min(1, W.cover * 0.95 + 0.05);
+    v.sunDir.copy(this.sunDir || new THREE.Vector3(0, 1, 0));
+    v.sunCol.copy(this.sun.color); v.sunI = this.sun.intensity * 1.6;
+    v.ambTop.copy(h.color).multiplyScalar(h.intensity * 3.0 + this.moon.intensity * 0.5);
+    v.ambBot.copy(h.groundColor).lerp(h.color, 0.6).multiplyScalar(h.intensity * 2.4);
+    // light pollution from the city lights up the cloud base at night
+    v.ambBot.r += 0.05 * this.night; v.ambBot.g += 0.038 * this.night; v.ambBot.b += 0.028 * this.night;
+    v.ambTop.r += 0.012 * this.night; v.ambTop.g += 0.012 * this.night; v.ambTop.b += 0.016 * this.night;
+    v.haze.copy(this.scene.fog.color);
+    v.vis = W.vis * 0.9;
+    v.density = 0.02 + 0.03 * W.overcast;
+    v.steps = 56;
+    return v;
+  }
+
+  // rain / wetness: soaks quickly in rain, dries slowly afterwards
+  updateWet(dt) {
+    const r = this.weather.rain || 0;
+    this.rain = r;
+    this.wet = r > 0 ? Math.min(1, (this.wet || 0) + dt / 40) : Math.max(0, (this.wet || 0) - dt / 900);
+    WET.uWet.value = this.wet;
+  }
+
   setWeather(name) {
     this.weatherName = name;
     this.weather = WEATHER[name] || WEATHER.scattered;
+    this.wet = this.weather.rain ? 1 : 0;
+    WET.uWet.value = this.wet;
     this.buildClouds();
     this._envKey = '';
   }
@@ -737,8 +814,10 @@ varying vec3 vTW; varying float vSlope;`)
 
   update(dt, camera, focus) {
     this.time += dt;
+    this.updateWet(dt);
     const W = this.weather;
     const sd = this.sunDirection(this.tod);
+    this.sunDir = sd.v;
     const elDeg = sd.el / DEG;
     const day = smoothstep(-6, 8, elDeg);
     this.night = 1 - smoothstep(-4, 6, elDeg);
@@ -774,6 +853,8 @@ varying vec3 vTW; varying float vSlope;`)
     this.scene.fog.color.copy(horizon);
     this.scene.fog.density = density * 1.3;
     this.envGroundMat.color.setRGB(0.1 * day + 0.01, 0.12 * day + 0.01, 0.08 * day + 0.01);
+    this.envDome.material.opacity = 0.92 * W.overcast;
+    this.envDome.material.color.setRGB(0.55 * day + 0.02, 0.57 * day + 0.02, 0.6 * day + 0.025);
     // env map (re-render when the sun moved)
     const key = Math.round(elDeg * 2) + ':' + Math.round(sd.az / DEG / 4) + ':' + this.weatherName;
     if (key !== this._envKey) {

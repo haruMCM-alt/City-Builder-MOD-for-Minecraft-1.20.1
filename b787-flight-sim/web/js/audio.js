@@ -129,6 +129,11 @@ export class Audio {
     this.clackG = ctx.createGain(); this.clackG.gain.value = 0;
     const cl = ctx.createOscillator(); cl.type = 'square'; cl.frequency.value = 9;
     chain(cl, hp(1200), this.clackG, this.master); cl.start();
+    // rain: hiss outside, drumming on the skin / windshield inside
+    this.rainG = ctx.createGain(); this.rainG.gain.value = 0;
+    chain(this.noise(this.white, 2.7), hp(1100), lp(8000), this.rainG, this.master);
+    this.rainDrumG = ctx.createGain(); this.rainDrumG.gain.value = 0;
+    chain(this.noise(this.crackle, 3.3), bp(420, 0.7), this.rainDrumG, this.master);
     this._travel = 0;
     this._gearPrev = null;
   }
@@ -337,6 +342,11 @@ export class Audio {
       // rumble
       set(E.rumG.gain, on * near * (0.16 + 0.65 * n1) * (inside ? 1.6 : 1), 0.1);
     }
+
+    // ---- rain ------------------------------------------------------------------------------------
+    const rain = L.rain || 0;
+    set(this.rainG.gain, on * rain * (inside ? 0.05 : cabin ? 0.06 : 0.14) * (1 + Math.min(fm.out.ias || 0, 200) / 400), 0.4);
+    set(this.rainDrumG.gain, on * rain * (inside ? 0.35 : cabin ? 0.25 : 0.05), 0.4);
 
     // ---- airframe ------------------------------------------------------------------------------
     const ias = fm.out.ias || 0;

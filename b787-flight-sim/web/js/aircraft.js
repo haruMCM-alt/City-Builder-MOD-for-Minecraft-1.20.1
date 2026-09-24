@@ -4,7 +4,7 @@ import { DEG, clamp, lerp, smoothstep } from './util.js';
 import { glowTexture, HDR } from './world.js';
 import { liveryUniforms, patchLiveryShader, liveryAssets, setLiveryUniforms } from './livery.js';
 
-const COCKPIT_PARTS = ['CockpitShell', 'CockpitInterior', 'HUD_Combiner', 'Throttle_L', 'Throttle_R', 'Yoke_L', 'Yoke_R',
+const COCKPIT_PARTS = ['CockpitShell', 'CockpitInterior', 'CockpitDetail', 'HUD_Combiner', 'Throttle_L', 'Throttle_R', 'Yoke_L', 'Yoke_R',
   'Display_PFD_L', 'Display_ND_L', 'Display_EICAS', 'Display_ND_R', 'Display_PFD_R'];
 
 const LIGHTS = {
@@ -78,11 +78,12 @@ export class AircraftVisual {
         if (m.map) m.map.anisotropy = 8;
         m.envMapIntensity = 1.0;
         if (m.name === 'Cockpit_Shell') {
-          m.alphaTest = 0.5; m.transparent = false; m.side = THREE.FrontSide;
+          m.alphaTest = 0.5; m.transparent = false; m.depthWrite = true; m.side = THREE.FrontSide;
           m.color.setScalar(0.45); m.envMapIntensity = 0.15;
           continue;
         }
         if (m.name.startsWith('Cockpit_')) { m.envMapIntensity = 0.25; }
+        if (m.name === 'Cockpit_Label') { m.emissive = new THREE.Color(1.0, 0.93, 0.8); this.panelLabelMat = m; }
         if (m.name === 'HUD_Glass') { m.opacity = 0.02; m.depthWrite = false; m.envMapIntensity = 0.05; }
         if (m.name === 'Cockpit_Panel') { m.color.set(0x16181b); m.envMapIntensity = 0.08; m.roughness = 0.95; }   // anti-glare
         if (m.name.startsWith('Display_')) { this.displayMats[m.name.slice(8)] = m; continue; }
@@ -190,7 +191,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
   // ---------------------------------------------------------------------------
   _initParticles() {
     const tex = glowTexture();
-    const N = 600;
+    const N = 2600;
     const geo = new THREE.BufferGeometry();
     this.pPos = new Float32Array(N * 3);
     this.pSize = new Float32Array(N);
@@ -393,6 +394,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
       s.visible = on && night > 0.05;
     }
     for (const fm_ of this.fuselageMats) fm_.emissiveIntensity = night * 1.3;
+    if (this.panelLabelMat) this.panelLabelMat.emissiveIntensity = 0.05 + night * 0.9;   // integral panel lighting
     // ---- cockpit interior only when close ------------------------------------------
     const dCam = camPos.distanceTo(this.root.position);
     const wantCockpit = env.cockpitView || dCam < 45;
@@ -414,13 +416,46 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp;`)
         }
       }
     }
+    // ---- spray from the tyres (and engine blast) on a wet runway ---------------------
+    const wet = env.wet || 0;
+    const gsMs = Math.hypot(fm.vel.x, fm.vel.z);
+    const onGround = fm.gear.some((g) => g.onGround);
+    if (wet > 0.15 && onGround) {
+      this._spray = (this._spray || 0) + dt * Math.max(0, gsMs - 6) * wet * 1.6;
+      const rain = this._rv || (this._rv = new THREE.Vector3());
+      while (this._spray >= 1) {
+        this._spray -= 1;
+        const gi = Math.random() < 0.8 ? 1 + (Math.random() < 0.5 ? 1 : 0) : 0;
+        const g = fm.gear[gi];
+        if (!g.onGround) continue;
+        rain.set(g.p.x, g.p.y, g.p.z).applyQuaternion(q).add(fm.pos);
+        const side = (Math.random() - 0.5) * 2;
+        this.emit({ x: rain.x + (Math.random() - 0.5) * 2.5, y: rain.y + 0.3, z: rain.z + (Math.random() - 0.5) * 2.5 },
+          { x: fm.vel.x * 0.55 + side * 3.5, y: 1 + Math.random() * 3.5, z: fm.vel.z * 0.55 + side * 3.5 },
+          1.2 + Math.random(), 2.4, 8, 0.32 * wet);
+      }
+      for (let i = 0; i < 2; i++) {
+        const n1 = fm.engines[i].n1;
+        if (n1 < 45) continue;
+        this._blast = (this._blast || 0) + dt * (n1 - 45) * 1.1 * wet;
+        const ax = i === 0 ? this.meta.engineAxisL : this.meta.engineAxisR;
+        while (this._blast >= 1) {
+          this._blast -= 1;
+          const wp = new THREE.Vector3(ax[0] - 12 - Math.random() * 10, ax[1] - 2.2, ax[2]).applyMatrix4(this.root.matrixWorld);
+          wp.y = Math.max(wp.y, 0.4);
+          this.emit(wp, { x: fm.vel.x * 0.3 + (Math.random() - 0.5) * 4, y: 0.5 + Math.random() * 2, z: fm.vel.z * 0.3 + (Math.random() - 0.5) * 4 },
+            1.5 + Math.random(), 3.5, 9, 0.2 * wet);
+        }
+      }
+    }
     if (fm.pos.y > 8000 && fm.out.atm && fm.out.atm.T < 233) {
       this._contrail = (this._contrail || 0) + dt;
-      if (this._contrail > 0.03) {
-        this._contrail = 0;
+      while (this._contrail > 0.012) {
+        this._contrail -= 0.012;
         for (const ax of [this.meta.engineAxisL, this.meta.engineAxisR]) {
-          const wp = new THREE.Vector3(ax[0] - 30, ax[1], ax[2]).applyMatrix4(this.root.matrixWorld);
-          this.emit(wp, { x: 0, y: 0, z: 0 }, 25, 5, 8, 0.35);
+          // contrails condense ~60 m behind the nozzle as thin lines that spread slowly
+          const wp = new THREE.Vector3(ax[0] - 60 - Math.random() * 20, ax[1], ax[2]).applyMatrix4(this.root.matrixWorld);
+          this.emit(wp, { x: (Math.random() - 0.5) * 0.4, y: -0.3, z: (Math.random() - 0.5) * 0.4 }, 10, 2.4, 6, 0.13);
         }
       }
     }

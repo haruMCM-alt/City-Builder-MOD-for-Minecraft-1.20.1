@@ -14,6 +14,8 @@ import { Audio } from './audio.js';
 import { LOGOS, logoById, drawLogoIcon, randomLivery, dressParked, loadSavedLivery, saveLivery, DEFAULT_LIVERY, liveryAssets } from './livery.js';
 import { Cabin } from './cabin.js';
 import { PostFX } from './postfx.js';
+import { Rain } from './weatherfx.js';
+import { Vapor } from './vapor.js';
 import { V3, DEG, KT, FT, FPM, clamp, headingVec, wrap360, mulberry32 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -143,6 +145,9 @@ class App {
     this.visual = new AircraftVisual(acGltf, meta, this.scene, this.quality);
     this.cabin = new Cabin(this.visual, meta, () => loadGLB(loader, ASSET + 'b787-9-cabin' + MODEL_EXT, () => {}));
     this.post = new PostFX(renderer, this.scene, this.camera);
+    this.rain = new Rain(this.scene);
+    this.vapor = new Vapor(this.scene, meta, this.visual);
+    this._camPrev = new THREE.Vector3(); this.camVel = new THREE.Vector3();
     this.resize();
     // baked ambient occlusion (Blender / Cycles) for the fuselage and wings
     {
@@ -653,7 +658,8 @@ class App {
     }
     for (const e of events) this.onEvent(e);
     const cockpit = this.rig.view === 'cockpit';
-    this.visual.update(dt, fm, sys, { night: this.world.night, camera: this.camera, cockpitView: cockpit, events });
+    fm.wet = this.world.wet || 0;
+    this.visual.update(dt, fm, sys, { night: this.world.night, camera: this.camera, cockpitView: cockpit, events, wet: fm.wet });
     this.cabin.update(this.rig.view === 'cabin' || this.rig.view === 'wing', this.world.night);
     this.rig.update(dt, fm, this.visual.root);
     this.world.update(dt, this.camera, new THREE.Vector3(fm.pos.x, fm.pos.y, fm.pos.z));
@@ -669,20 +675,34 @@ class App {
     if (!this._L) this._L = { camRight: new THREE.Vector3(), fwd: new THREE.Vector3(), engines: [new THREE.Vector3(), new THREE.Vector3()] };
     const L = this._L;
     L.view = this.rig.view; L.acPos = root.position; L.camPos = this.camera.position;
+    L.rain = this.world.rain || 0;
     L.camRight.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
     L.fwd.set(1, 0, 0).applyQuaternion(root.quaternion);
     L.engines[0].fromArray(this.meta.engineAxisL).applyMatrix4(mw);
     L.engines[1].fromArray(this.meta.engineAxisR).applyMatrix4(mw);
     this.audio.update(dt, fm, sys, L);
+    // camera velocity (for rain streaks) from the frame-to-frame motion
+    if (dt > 0) {
+      const cv = this._camTmp || (this._camTmp = new THREE.Vector3());
+      cv.copy(this.camera.position).sub(this._camPrev).divideScalar(dt);
+      if (cv.length() < 400) this.camVel.lerp(cv, Math.min(1, dt * 10));
+      this._camPrev.copy(this.camera.position);
+    }
+    this.vapor.update(dt, fm, { camera: this.camera, humidity: this.world.weather.hum ?? 0.5, light: 1 - this.world.night,
+      emit: (p, v, life, size, grow, alpha) => this.visual.emit(p, v, life, size, grow, alpha) });
+    this.rain.update(dt, { camera: this.camera, amount: this.world.rain || 0, wind: fm.wind, camVel: this.camVel,
+      inside: cockpit || this.rig.view === 'cabin' || this.rig.view === 'wing', night: this.world.night });
     const hdr = !!this.post && this.quality !== 'low';
     HDR.uLin.value = hdr ? 1 : 0;
     // clouds / smoke: lit like white surfaces; point lights: bright enough to bloom at night
     HDR.uGain.value = this.world.sun.intensity * 0.85 + 0.45;
     HDR.uGainL.value = 1.1 / Math.max(this.renderer.toneMappingExposure, 0.3);
     if (hdr) {
-      this.post.update(dt, { night: this.world.night, plumes: this.plumes() });
+      const rainAmt = this.world.rain || 0;
+      this.post.update(dt, { night: this.world.night, plumes: this.plumes(), clouds: this.world.volumetricState(this.quality === 'high'),
+        windshield: cockpit ? rainAmt : 0, wsSpeed: Math.min(1, (fm.out.ias || 0) / 120) });
       this.post.render();
-    } else this.renderer.render(this.scene, this.camera);
+    } else { this.world.volumetricState(false); this.renderer.render(this.scene, this.camera); }
     if (!this.paused) this.updateUI();
   }
 

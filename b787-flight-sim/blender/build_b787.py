@@ -1199,24 +1199,11 @@ def build_cockpit(M, root, col):
         fb.add_box((3.835, -0.6 + j * 0.092, 1.0 + DZ), (0.03, 0.035, 0.035), mat=7)
     # centre pedestal
     fb.add_box((4.25, 0, 0.42 + DZ), (1.15, 0.52, 0.40), mat=1)
-    fb.add_box((3.75, 0, 0.30 + DZ), (0.55, 0.52, 0.56), mat=1)
-    # seats
-    SS = -0.45
+    # rudder pedals
     for sy in (0.53, -0.53):
-        fb.add_box((5.05 + SS, sy, 0.30 + DZ), (0.55, 0.55, 0.14), mat=3)
-        fb.add_box((5.38 + SS, sy, 0.80 + DZ), (0.14, 0.52, 0.95), mat=3)
-        fb.add_box((5.34 + SS, sy, 1.37 + DZ), (0.12, 0.28, 0.24), mat=3)
-        fb.add_box((5.0 + SS, sy, 0.14 + DZ), (0.3, 0.3, 0.24), mat=6)
-        for dy in (-0.3, 0.3):
-            fb.add_box((5.05 + SS, sy + dy, 0.50 + DZ), (0.45, 0.06, 0.06), mat=3)
         for dy in (-0.14, 0.14):
             fb.add_box((3.95, sy + dy, 0.18 + DZ), (0.06, 0.10, 0.22), mat=6)
-        fb.add_box((4.7, sy * 2.0, 0.55 + DZ), (1.4, 0.26, 0.12), mat=1)
-    # overhead panel (follows the crown)
-    fb.add_box((5.75, 0, 1.86), (0.8, 0.8, 0.08), mat=1)
-    for j in range(5):
-        for k in range(5):
-            fb.add_box((5.45 + j * 0.13, -0.3 + k * 0.15, 1.81), (0.05, 0.05, 0.02), mat=7)
+    # seats, overhead panel, pedestal faces, side consoles: cockpit_b787.py
     ob = fb.build("CockpitInterior", [Mi["shell"], Mi["panel"], Mi["grey"], Mi["seat"], Mi["black"],
                                       Mi["floor"], Mi["metal"], Mi["knob"]], col=col)
     C.set_parent(ob, root)
@@ -1249,6 +1236,8 @@ def build_cockpit(M, root, col):
                 outward=("dir", (1, 0, 0)))
     ob = hb.build("HUD_Combiner", [hud], col=col)
     C.set_parent(ob, root)
+    import cockpit_b787
+    cockpit_b787.build_cockpit_detail(root, col, tex)
     # throttle levers (pivot about lateral axis, positive = forward)
     for side in (1, -1):
         L = "L" if side > 0 else "R"
@@ -1368,6 +1357,11 @@ def main():
         engineAxisL=G.to_three([G.ENG_S_HL + 5.0, G.ENG_Y, G.ENG_Z]),
         engineAxisR=G.to_three([G.ENG_S_HL + 5.0, -G.ENG_Y, G.ENG_Z]),
         noseTip=G.to_three([0, 0, -0.55]),
+        # condensation sources: outboard flap tip (trailing edge) and upper-surface points
+        flapTipL=G.to_three(list(G.wing_point(np.array(G.FLAP_OUT["y1"]), np.array(1.0), np.array(True), 1))),
+        flapTipR=G.to_three(list(G.wing_point(np.array(G.FLAP_OUT["y1"]), np.array(1.0), np.array(True), -1))),
+        wingVapor=[G.to_three(list(G.wing_point(np.array(y), np.array(x), np.array(True), 1)))
+                   for y in np.linspace(4.5, 21.0, 12) for x in (0.12, 0.25, 0.4, 0.55)],
         parts=PARTS,
     )
     C.export_glb(os.path.join(C.WEB_ASSETS, "b787-9.glb"), draco=True)

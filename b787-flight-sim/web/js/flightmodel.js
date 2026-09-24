@@ -123,6 +123,7 @@ export class FlightModel {
     this.fuel = 45000;
     this.payload = 26000;
     this.wind = new V3();         // air mass velocity (world)
+    this.wet = 0;                 // runway wetness 0..1
     this.gust = new V3();
     this.turbulence = 0;
     this.time = 0;
@@ -333,14 +334,15 @@ export class FlightModel {
       let brake = 0;
       if (g.brake) brake = Math.max(ctl.parkingBrake ? 1 : 0, g.name === 'left' ? ctl.brakeL : ctl.brakeR);
       const muRoll = 0.011 + (g.brake ? 0.0 : 0.004);
-      const muLong = muRoll + brake * 0.52;
+      // wet runway: braking friction roughly halves, cornering grip drops
+      const muLong = muRoll + brake * 0.52 * (1 - 0.45 * this.wet);
       const vs = 0.25;
       let fLong = -muLong * N * clamp(vLong / vs, -1, 1);
       if (ctl.pushback && g.steer) {
         // tug holds the nose gear at the commanded speed
         fLong = clamp((ctl.pushback - vLong) * 2.5e5, -1.5e5, 1.5e5);
       }
-      const fLat = -g.mu * N * clamp(vLat / 0.35, -1, 1);
+      const fLat = -g.mu * (1 - 0.3 * this.wet) * N * clamp(vLat / 0.35, -1, 1);
       const Fg = new V3(0, N, 0).addScaled(wf, fLong).addScaled(wr, fLat);
       Fw.add(Fg);
       Mb.add(q.invRotate(V3.cross(rw, Fg)));

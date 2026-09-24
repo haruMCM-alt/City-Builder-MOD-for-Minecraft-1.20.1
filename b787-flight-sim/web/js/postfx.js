@@ -8,6 +8,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { CloudPass } from './clouds.js';
 
 const HazeShader = {
   uniforms: {
@@ -65,24 +66,50 @@ const LensShader = {
   uniforms: {
     tDiffuse: { value: null }, uTime: { value: 0 }, uVignette: { value: 0.28 }, uCA: { value: 0.0016 },
     uGrain: { value: 0.025 }, uRes: { value: new THREE.Vector2(1, 1) },
+    uRainWS: { value: 0 }, uWSpeed: { value: 0 }, uAspect: { value: 1 },
   },
   vertexShader: HazeShader.vertexShader,
   fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse; uniform float uTime, uVignette, uCA, uGrain; uniform vec2 uRes;
+    uniform sampler2D tDiffuse; uniform float uTime, uVignette, uCA, uGrain, uRainWS, uWSpeed, uAspect; uniform vec2 uRes;
     varying vec2 vUv;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    // water on the windshield: beads at low speed, streaks blown up and outwards at speed
+    vec2 drops(vec2 uv, float scale, float seed) {
+      vec2 g = vec2((uv.x - 0.5) * uAspect, uv.y) * scale;
+      g.y -= uTime * uWSpeed * 2.5 * scale / 28.0;
+      g.x += (uv.x - 0.5) * uWSpeed * uTime * 0.6;
+      vec2 id = floor(g), f = fract(g) - 0.5;
+      float h = hash(id + seed);
+      if (h < 0.68) return vec2(0.0);
+      vec2 o = (vec2(hash(id + seed + 1.3), hash(id + seed + 7.1)) - 0.5) * 0.5;
+      vec2 d = f - o;
+      d.y *= mix(1.0, 0.22, uWSpeed);                   // stretched into streaks
+      float r = 0.1 + 0.16 * hash(id + seed + 3.7);
+      float m = smoothstep(r, r * 0.55, length(d));
+      return d * m;
+    }
     void main() {
-      vec2 c = vUv - 0.5;
+      vec2 uvIn = vUv;
+      float wsLight = 0.0;
+      if (uRainWS > 0.001) {
+        vec2 w = drops(vUv, 26.0, 0.0) + drops(vUv, 47.0, 11.0) * 0.6;
+        float msk = smoothstep(0.34, 0.46, vUv.y);
+        // a drop is a small lens: it shows an inverted, shrunken image of the scene
+        uvIn -= w * 0.16 * uRainWS * msk;
+        wsLight = (w.y * 2.0) * uRainWS * msk;
+      }
+      vec2 c = uvIn - 0.5;
       float r2 = dot(c, c);
       // lateral chromatic aberration grows towards the corners
       vec2 dir = c * uCA * r2 * 4.0;
       vec3 col;
-      col.r = texture2D(tDiffuse, vUv + dir).r;
-      col.g = texture2D(tDiffuse, vUv).g;
-      col.b = texture2D(tDiffuse, vUv - dir).b;
+      col.r = texture2D(tDiffuse, uvIn + dir).r;
+      col.g = texture2D(tDiffuse, uvIn).g;
+      col.b = texture2D(tDiffuse, uvIn - dir).b;
       // natural vignette (cos^4 falloff approximation)
       float v = 1.0 - uVignette * smoothstep(0.05, 0.75, r2 * 2.0);
       col *= v;
+      col *= 1.0 + wsLight * 0.35;                          // lit top / darker bottom of each drop
       // luminance-dependent film grain
       float n = hash(vUv * uRes + fract(uTime * 7.13) * 91.7) - 0.5;
       float l = dot(col, vec3(0.299, 0.587, 0.114));
@@ -96,8 +123,12 @@ export class PostFX {
     this.renderer = renderer; this.scene = scene; this.camera = camera;
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+    rt.depthTexture = new THREE.DepthTexture(size.x, size.y);
+    rt.depthTexture.type = THREE.FloatType;
     this.composer = new EffectComposer(renderer, rt);
     this.composer.addPass(new RenderPass(scene, camera));
+    this.clouds = new CloudPass(camera);
+    this.composer.addPass(this.clouds);
     this.clamp = new ShaderPass(ClampShader);
     this.composer.addPass(this.clamp);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.25, 0.45, 0.9);
@@ -118,11 +149,14 @@ export class PostFX {
     const s = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     this.lens.uniforms.uRes.value.copy(s);
     this.haze.uniforms.uAspect.value = w / h;
+    this.lens.uniforms.uAspect.value = w / h;
+    this.clouds.setSize(s.x, s.y);
   }
 
   // plumes: [{ start: Vector3, end: Vector3, r0, r1, strength }] in world space
-  update(dt, { night = 0, plumes = [] } = {}) {
+  update(dt, { night = 0, plumes = [], clouds = null, windshield = 0, wsSpeed = 0 } = {}) {
     this.time += dt;
+    if (clouds) this.clouds.update(dt, clouds); else this.clouds.enabled = false;
     // bloom works on the HDR image (before exposure): only what ends up brighter than
     // ~1.4 after exposure blooms - sun glints, lights, the sun disc
     const ex = this.renderer.toneMappingExposure || 1;
@@ -131,6 +165,8 @@ export class PostFX {
     this.bloom.threshold = (3.4 - 1.2 * night) / ex;
     this.clamp.uniforms.uMax.value = 7 / ex;
     this.lens.uniforms.uTime.value = this.time;
+    this.lens.uniforms.uRainWS.value = windshield;
+    this.lens.uniforms.uWSpeed.value = wsSpeed;
     this.haze.uniforms.uTime.value = this.time;
     const cam = this.camera;
     const slots = [[this.haze.uniforms.uA0, this.haze.uniforms.uA1], [this.haze.uniforms.uB0, this.haze.uniforms.uB1]];
