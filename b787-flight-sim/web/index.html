@@ -67,6 +67,9 @@
   .scen button { text-align: left; }
   #liveryBox { margin-top: 16px; }
   .livrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .apNames { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+  .apNames label { flex: 1 1 200px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--bs-muted); }
+  .apNames input { padding: 7px 10px; font-size: 15px; border-radius: 8px; border: 1px solid rgba(214, 196, 160, .35); background: rgba(0, 0, 0, .35); color: inherit; }
   #airlineName { width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 16px; border-radius: 8px;
     border: 1px solid var(--line); background: rgba(255,255,255,0.06); color: inherit; }
   #liveryPreview { display: block; width: 100%; max-width: 520px; height: auto; margin-top: 10px; border-radius: 8px; }
@@ -310,6 +313,10 @@
                 <option value="low">低 Low (fast)</option>
               </select>
             </label>
+          </div>
+          <div class="apNames">
+            <label>空港名 Airport name<input type="text" id="apName" maxlength="24" value="City Builder" autocomplete="off" spellcheck="false"></label>
+            <label>第2空港（東へ約200 km）Second airport<input type="text" id="apName2" maxlength="24" value="Minato" autocomplete="off" spellcheck="false"></label>
           </div>
         </section>
         <section class="slide" data-i="1">

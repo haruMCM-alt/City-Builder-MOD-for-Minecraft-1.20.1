@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { isWater } from './terrain.js';
 import { clamp } from './util.js';
+import { AIRPORT } from './atc.js';
 
 export const CHANNELS = [
   { id: 'map', label: '🗺 マップ', name: 'Moving map' },
@@ -66,7 +67,7 @@ const DRAW = {
       S.trail.forEach(([x, z], i) => (i ? c.lineTo(X(x), Yp(z)) : c.moveTo(X(x), Yp(z)))); c.stroke(); c.lineWidth = 1;
     }
     c.fillStyle = '#fff'; c.beginPath(); c.arc(X(0), Yp(0), 3, 0, 7); c.fill();
-    c.font = 'bold 9px sans-serif'; c.fillText('RJCB シティビルダー', X(0) + 5, Yp(0) - 4);
+    c.font = 'bold 9px sans-serif'; c.fillText('RJCB ' + AIRPORT.name, X(0) + 5, Yp(0) - 4);
     // aircraft symbol
     c.save(); c.translate(X(d.x), Yp(d.z)); c.rotate(d.hdg * Math.PI / 180);
     c.fillStyle = '#fff'; c.strokeStyle = '#000';

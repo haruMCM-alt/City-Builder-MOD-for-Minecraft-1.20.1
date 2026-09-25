@@ -6,6 +6,8 @@
 
 export const TERRAIN = {
   flat: { x0: -5200, x1: 11200, z0: -9800, z1: 1400 },
+  // second airport, ~200 km east (see airport2.js)
+  flat2: { x0: 186000, x1: 214000, z0: -12500, z1: -5500 },
   coastZ: 1400,
   river: { x: 3000, w: 220, z0: -9800, z1: 1400 },
   seaDepth: -38,
@@ -56,7 +58,9 @@ export function terrainHeight(x, z) {
   const dx = Math.max(F.x0 - x, 0, x - F.x1);
   const dz = Math.max(F.z0 - z, 0, z - F.z1);
   const d = Math.hypot(dx, dz);
-  const flatBlend = smooth(0, 3500, d);
+  const F2 = TERRAIN.flat2;
+  const d2 = Math.hypot(Math.max(F2.x0 - x, 0, x - F2.x1), Math.max(F2.z0 - z, 0, z - F2.z1));
+  const flatBlend = Math.min(smooth(0, 3500, d), smooth(0, 3000, d2));
   // hills + northern mountains
   const n = fbm(x / 7000, z / 7000, 6);
   let hills = 20 + 520 * n * n;
@@ -85,8 +89,10 @@ export function isWater(x, z) {
 }
 
 // GLSL implementation (WebGL2 / GLSL ES 3.0).  Uniforms injected by the material.
+const F2 = TERRAIN.flat2;
 export const TERRAIN_GLSL = /* glsl */`
 uniform vec4 uFlat;      // x0, x1, z0, z1
+const vec4 cFlat2 = vec4(${F2.x0.toFixed(1)}, ${F2.x1.toFixed(1)}, ${F2.z0.toFixed(1)}, ${F2.z1.toFixed(1)});
 uniform float uCoastZ;
 uniform vec4 uRiver;     // x, w, z0, z1
 uniform float uSeaDepth;
@@ -119,7 +125,8 @@ float terrainHeight(vec2 xz) {
   float dx = max(max(uFlat.x - x, 0.0), x - uFlat.y);
   float dz = max(max(uFlat.z - z, 0.0), z - uFlat.w);
   float d = length(vec2(dx, dz));
-  float flatBlend = smoothstep(0.0, 3500.0, d);
+  float d2 = length(vec2(max(max(cFlat2.x - x, 0.0), x - cFlat2.y), max(max(cFlat2.z - z, 0.0), z - cFlat2.w)));
+  float flatBlend = min(smoothstep(0.0, 3500.0, d), smoothstep(0.0, 3000.0, d2));
   float n = t_fbm(vec2(x, z) / 7000.0, 6);
   float hills = 20.0 + 520.0 * n * n;
   float north = 1.0 - smoothstep(-34000.0, -14000.0, z);

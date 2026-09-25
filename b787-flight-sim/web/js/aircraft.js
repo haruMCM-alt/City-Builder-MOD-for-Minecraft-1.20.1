@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { DEG, clamp, lerp, smoothstep } from './util.js';
 import { glowTexture, HDR } from './world.js';
-import { liveryUniforms, patchLiveryShader, liveryAssets, setLiveryUniforms } from './livery.js';
+import { liveryUniforms, patchLiveryShader, liveryAssets, setLiveryUniforms, finUniforms, setFinUniforms, patchFinShader } from './livery.js';
 import { patchWeathering, weatherKind } from './shading.js';
 
 const COCKPIT_PARTS = ['CockpitShell', 'CockpitInterior', 'CockpitDetail', 'HUD_Combiner', 'Throttle_L', 'Throttle_R', 'Yoke_L', 'Yoke_R',
@@ -43,6 +43,7 @@ export class AircraftVisual {
     };
     this.flex = 0; this.flexVel = 0;
     this.livU = meta.livery ? liveryUniforms(meta.livery) : null;
+    this.finU = meta.livery ? finUniforms(meta.livery) : null;
     this.parts = {};
     for (const p of meta.parts) {
       const o = this.root.getObjectByName(p.name);
@@ -140,10 +141,11 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
   if (vDmgP.x > uFlexK.z && (vDmgP.z < -uCut.x || vDmgP.z > uCut.y)) discard;
   if (vDmgP.y > uCut.z && vDmgP.x < uCut.w) discard;`);
           if (m.name === 'B787_Fuselage' && self.livU) patchLiveryShader(sh, self.livU, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
+          if (m.name === 'B787_Tail' && self.finU) patchFinShader(sh, self.finU, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
           if (wx) patchWeathering(sh, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz', wx);
         };
         const wx = weatherKind(m.name);
-        m.customProgramCacheKey = () => (m.name === 'B787_Fuselage' ? 'flex-livery' : 'flex') + (wx || '');
+        m.customProgramCacheKey = () => (m.name === 'B787_Fuselage' ? 'flex-livery' : m.name === 'B787_Tail' ? 'flex-fin' : 'flex') + (wx || '');
         if (m.name === 'B787_Tail') this.tailMat = m;
         if (m.name === 'B787_Navy' || m.name === 'B787_Nacelle') (this.paintMats ||= []).push(m);
       }
@@ -226,6 +228,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     const a = liveryAssets(liv, this.meta.livery, true);
     setLiveryUniforms(this.livU, a);
     if (this.tailMat) { this.tailMat.map = a.tail; this.tailMat.color.set(0xffffff); this.tailMat.needsUpdate = true; }
+    if (this.finU) setFinUniforms(this.finU, a);
     for (const m of this.paintMats || []) m.color.setRGB(a.nacelle.x, a.nacelle.y, a.nacelle.z, THREE.LinearSRGBColorSpace);
   }
 

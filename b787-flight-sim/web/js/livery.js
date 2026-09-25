@@ -51,7 +51,7 @@ export const LOGOS = [
     // Japan Airlines, 2011 "Tsurumaru" livery: all-white aircraft, red crane on the fin
     id: 'jal', label: 'JAL 日本航空', name: 'Japan Airlines', real: true,
     colors: { primary: '#f5f7f9', primary2: '#f5f7f9', accent1: '#f5f7f9', accent2: '#f5f7f9', tailTop: '#f7f8fa', tailBottom: '#f3f4f6', nacelle: '#eceef1', brand: '#e50012' },
-    plain: true, noSweep: true, tailScale: 1.75, tailShift: [0.35, 0],
+    plain: true, noSweep: true, tailScale: 1.3, tailShift: [0.35, -0.2],
     title: { img: 'jalWord', aspect: JAL_WORD_ASPECT, h: 0.62 },
     draw(ctx) { drawImg(ctx, 'jalIcon', -1, -1, 2, 2); },
   },
@@ -60,7 +60,7 @@ export const LOGOS = [
     // Triton-blue fin with the white ANA mark
     id: 'ana', label: 'ANA 全日空', name: 'ANA', real: true,
     colors: { primary: '#1d3a91', primary2: '#223f9a', accent1: '#00b3f0', accent2: '#f5f7f9', tailTop: '#1a3688', tailBottom: '#223f9a', nacelle: '#eef0f3', brand: '#223f9a' },
-    tailScale: 1.5, tailShift: [1.6, -1.4],
+    tailScale: 1.15, tailShift: [1.3, -1.2],
     title: { img: 'ana', aspect: ANA_ASPECT, h: 1.9 },
     draw(ctx, onDark = true) { const w = 2, h = w / ANA_ASPECT; drawImg(ctx, onDark ? 'anaWhite' : 'ana', -w / 2, -h / 2, w, h); },
   },
@@ -251,9 +251,22 @@ function tailCanvas(logo, T, W, H) {
   }
   const [cs, cz, r] = T.logo;
   const ts = r * 1.12 * (logo.tailScale || 1);
-  const sh = logo.tailShift || [0, 0];
-  c.save(); c.translate(cs + sh[0] * k, cz + sh[1] * k); c.scale(ts, -ts); logo.draw(c); c.restore();
+  void cs; void cz; void ts;
   return cv;
+}
+
+// fin mark as its own texture: the fin shader draws it readable on both sides (mirrored on
+// the right-hand skin, where the planar fin UVs run backwards)
+function finLogoCanvas(logo, size) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = size;
+  const c = cv.getContext('2d');
+  c.translate(size / 2, size / 2); c.scale(size / 2, size / 2);
+  logo.draw(c);
+  return cv;
+}
+function finRect(logo, T) {
+  const [cs, cz, r] = T.logo, k = T.k ?? 1, sh = logo.tailShift || [0, 0];
+  return new THREE.Vector4(cs + sh[0] * k, cz + sh[1] * k, r * 1.12 * (logo.tailScale || 1), 0);
 }
 
 // ------------------------------------------------------------------ title texture
@@ -330,6 +343,7 @@ export function liveryAssets(liv, layout, big = true) {
     logo, tail, title,
     prim: col(logo.plain ? layout.white : logo.colors.primary), prim2: col(logo.plain ? layout.white : logo.colors.primary2),
     acc1: col(logo.plain ? layout.white : logo.colors.accent1), acc2: col(logo.plain ? layout.white : logo.colors.accent2),
+    finLogo: canvasTex(finLogoCanvas(logo, big ? 1024 : 256), false), finRect: finRect(logo, layout.tail),
     nacelle: col(logo.colors.nacelle || logo.colors.primary), brand: col(logo.colors.brand || logo.colors.primary),
     titleRect: new THREE.Vector4(layout.title.s0, tt.len, layout.title.zc + tt.height / 2, tt.height),
   };
@@ -358,6 +372,30 @@ export function setLiveryUniforms(u, a) {
   u.uLivPrim.value.copy(a.prim); u.uLivPrim2.value.copy(a.prim2);
   u.uLivAcc1.value.copy(a.acc1); u.uLivAcc2.value.copy(a.acc2);
   u.uLivTitle.value = a.title; u.uLivTitleRect.value.copy(a.titleRect);
+}
+
+export function finUniforms(layout) {
+  return { uFinLogo: { value: null }, uFinRect: { value: new THREE.Vector4() }, uFinSCG: { value: layout.sCG } };
+}
+export function setFinUniforms(u, a) { u.uFinLogo.value = a.finLogo; u.uFinRect.value.copy(a.finRect); }
+// localExpr: vertex position in the aircraft root frame (x = sCG - s, y = z, z = -y)
+export function patchFinShader(sh, uniforms, localExpr) {
+  Object.assign(sh.uniforms, uniforms);
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vFinP;')
+    .replace('#include <begin_vertex>', `#include <begin_vertex>\nvFinP = ${localExpr};`);
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vFinP;\nuniform sampler2D uFinLogo; uniform vec4 uFinRect; uniform float uFinSCG;')
+    .replace('#include <map_fragment>', `#include <map_fragment>
+{
+  float s = uFinSCG - vFinP.x, z = vFinP.y;
+  vec2 fu = vec2((s - uFinRect.x) / (2.0 * uFinRect.z) + 0.5, 0.5 - (z - uFinRect.y) / (2.0 * uFinRect.z));
+  if (vFinP.z > 0.0) fu.x = 1.0 - fu.x;       // right-hand side: read front-to-back the other way
+  if (fu.x > 0.0 && fu.x < 1.0 && fu.y > 0.0 && fu.y < 1.0) {
+    vec4 lc = texture2D(uFinLogo, fu);
+    diffuseColor.rgb = mix(diffuseColor.rgb, lc.rgb, lc.a);
+  }
+}`);
 }
 
 // localExpr: GLSL expression giving the vertex position in the aircraft root frame
@@ -436,7 +474,12 @@ export function dressParked(group, liv, layout) {
       delete mm.userData.weathered;
       mm.onBeforeCompile = () => {};
       mm.customProgramCacheKey = () => '';
-      if (n === 'B787_Tail') { mm.map = a.tail; mm.color.set(0xffffff); }
+      if (n === 'B787_Tail') {
+        mm.map = a.tail; mm.color.set(0xffffff);
+        const fu = finUniforms(layout); setFinUniforms(fu, a);
+        mm.onBeforeCompile = (sh) => patchFinShader(sh, fu, 'position');
+        mm.customProgramCacheKey = () => 'fin';
+      }
       else if (n === 'B787_Navy' || n === 'B787_Nacelle') mm.color.setRGB(a.nacelle.x, a.nacelle.y, a.nacelle.z, THREE.LinearSRGBColorSpace);
       else {
         const u = liveryUniforms(layout); setLiveryUniforms(u, a);

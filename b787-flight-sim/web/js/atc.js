@@ -3,6 +3,12 @@
 // (controller and pilots with different voices), one transmission at a time.
 
 export const FREQ = { GND: 'City Builder Ground 121.9', TWR: 'City Builder Tower 118.1' };
+// airport names chosen in the menu (radio phrases, frequencies, signs)
+export const AIRPORT = { name: 'City Builder', name2: 'Minato' };
+export function setAirportNames(a) {
+  Object.assign(AIRPORT, a);
+  FREQ.GND = `${AIRPORT.name} Ground 121.9`; FREQ.TWR = `${AIRPORT.name} Tower 118.1`;
+}
 
 // VHF radio character around the synthesised voices: squelch burst when the carrier opens,
 // band-limited (300 Hz - 2.7 kHz) crackling static under the transmission, and the squelch

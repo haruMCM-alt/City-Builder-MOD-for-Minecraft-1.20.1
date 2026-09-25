@@ -1,4 +1,4 @@
-// Two-way radio between the player and City Builder Ground / Tower.
+// Two-way radio between the player and the airport Ground / Tower (name from the menu).
 //
 // The player makes context-sensitive requests (Y key or the radio hint): push back, taxi,
 // ready for departure, landing, taxi to the gate.  The controllers answer using the same
@@ -6,7 +6,7 @@
 // hold the player when needed and clear them when the runway is free.  Some calls are
 // made by ATC on their own: departure hand-off, landing clearance on final, go-around,
 // runway vacated, and a reprimand for a take-off without clearance.
-import { hdg3 } from './atc.js';
+import { hdg3, AIRPORT } from './atc.js';
 
 const NM = 1852;
 
@@ -68,7 +68,7 @@ export class PlayerATC {
     const face = R.d < 0 ? 'east' : 'west';
     if (ph === 'GATE' && !s.push && !s.pushPending) {
       s.pushPending = true;
-      this.say(cs, `City Builder Ground, ${cs}, stand ${this.gate.id}, request push back and start up.`);
+      this.say(cs, `${AIRPORT.name} Ground, ${cs}, stand ${this.gate.id}, request push back and start up.`);
       this.later(3, () => {
         if (this.apronClear()) this.approvePush(face);
         else { this.say('GND', `${cs}, standby, traffic on the apron, expect push back shortly.`); }
@@ -78,7 +78,7 @@ export class PlayerATC {
     if (ph === 'TAXI' && s.landed && !s.taxiIn) {
       const st = this.pickGate();
       s.taxiIn = st ? st.id : null;
-      this.say(cs, `City Builder Ground, ${cs}, runway vacated, request taxi to the gate.`);
+      this.say(cs, `${AIRPORT.name} Ground, ${cs}, runway vacated, request taxi to the gate.`);
       this.later(3, () => {
         if (st) this.say('GND', `${cs}, taxi to stand ${st.id} via Alpha and the apron taxilane.`);
         else this.say('GND', `${cs}, taxi to the apron via Alpha, stand to be advised.`);
@@ -90,7 +90,7 @@ export class PlayerATC {
       const conn = R.d < 0 ? G.connectors[G.connectors.length - 1] : G.connectors[0];
       const name = 'A' + (G.connectors.indexOf(conn) + 1);
       s.taxi = true;
-      this.say(cs, `City Builder Ground, ${cs}, request taxi.`);
+      this.say(cs, `${AIRPORT.name} Ground, ${cs}, request taxi.`);
       this.later(3, () => {
         this.say('GND', `${cs}, taxi to holding point ${name} runway ${R.id} via Alpha. QNH one zero one three.`);
         this.later(3.5, () => this.say(cs, `Taxi holding point ${name} runway ${R.id} via Alpha, one zero one three, ${cs}.`));
@@ -98,7 +98,7 @@ export class PlayerATC {
       return;
     }
     if ((ph === 'HOLD' || ph === 'RUNWAY') && !s.tkof && !this.waiting && !s.landed) {
-      this.say(cs, `City Builder Tower, ${cs}, ${ph === 'RUNWAY' ? 'lined up' : 'holding point'} runway ${R.id}, ready for departure.`);
+      this.say(cs, `${AIRPORT.name} Tower, ${cs}, ${ph === 'RUNWAY' ? 'lined up' : 'holding point'} runway ${R.id}, ready for departure.`);
       this.waiting = { t: T.time, told: false };
       return;
     }
@@ -107,10 +107,10 @@ export class PlayerATC {
       const dist = Math.max(1, Math.round(Math.hypot(this.P.x - R.tx, this.P.z) / NM));
       const ft = Math.round(this.P.alt / 0.3048 / 100) * 100;
       s.inbound = true;
-      this.say(cs, `City Builder Tower, ${cs}, ${dist} miles, ${ft} feet, request landing runway ${R.id}.`);
+      this.say(cs, `${AIRPORT.name} Tower, ${cs}, ${dist} miles, ${ft} feet, request landing runway ${R.id}.`);
       this.later(3, () => {
-        if (f.aligned && f.along < 20000) this.say('TWR', `${cs}, City Builder Tower, continue approach runway ${R.id}, report four miles final.`);
-        else this.say('TWR', `${cs}, City Builder Tower, expect ILS approach runway ${R.id}, descend to three thousand feet, report established.`);
+        if (f.aligned && f.along < 20000) this.say('TWR', `${cs}, ${AIRPORT.name} Tower, continue approach runway ${R.id}, report four miles final.`);
+        else this.say('TWR', `${cs}, ${AIRPORT.name} Tower, expect ILS approach runway ${R.id}, descend to three thousand feet, report established.`);
       });
     }
   }
@@ -188,7 +188,7 @@ export class PlayerATC {
       const f = this.final();
       if (!s.inbound && f.aligned && f.along < 12000 && P.alt < 900 && !(s.tkof && !s.handoff)) {
         s.inbound = true;
-        this.say('TWR', `${cs}, City Builder Tower, radar contact on final runway ${R.id}.`);
+        this.say('TWR', `${cs}, ${AIRPORT.name} Tower, radar contact on final runway ${R.id}.`);
       }
       if (s.inbound && f.aligned && f.along < 9000 && !s.landCleared) {
         const b = T._runwayBusy(P);
@@ -219,7 +219,7 @@ export class PlayerATC {
     // arrived at the gate
     if (s.taxiIn && ph === 'GATE' && this.gate && this.gate.id === s.taxiIn && !s.welcome) {
       s.welcome = true;
-      this.say('GND', `${cs}, welcome to City Builder. Shut down engines at stand ${s.taxiIn}.`);
+      this.say('GND', `${cs}, welcome to ${AIRPORT.name}. Shut down engines at stand ${s.taxiIn}.`);
       this.later(10, () => { this.s = {}; });
     }
   }

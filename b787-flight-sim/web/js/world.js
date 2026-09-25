@@ -5,10 +5,11 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { TERRAIN, TERRAIN_GLSL } from './terrain.js';
 import { patchFacade } from './shading.js';
+import { stripTriangles, textSign, signTexts } from './signs.js';
 import { clamp, smoothstep, lerp, mulberry32, DEG } from './util.js';
 
 const LIGHT_KIND = { steady: 0, directional: 1, papi: 2, sequenced: 3, blink: 4, night: 5 };
-const NIGHT_ONLY = new Set(['street', 'landmark', 'bridge', 'apron_flood']);
+const NIGHT_ONLY = new Set(['street', 'landmark', 'bridge', 'apron_flood', 'a2_apron_flood']);
 
 // Display-referred custom shaders (clouds, light points, smoke) output sRGB-ish colours.
 // When the HDR post chain is active they are converted to linear radiance instead.
@@ -349,6 +350,7 @@ vTW = vec3(wxz.x, h0, wxz.y);`)
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
 uniform sampler2D uDetail; uniform vec4 uFlat;
+const vec4 cFlat2 = vec4(${TERRAIN.flat2.x0.toFixed(1)}, ${TERRAIN.flat2.x1.toFixed(1)}, ${TERRAIN.flat2.z0.toFixed(1)}, ${TERRAIN.flat2.z1.toFixed(1)});
 float tfH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 varying vec3 vTW; varying float vSlope;`)
         .replace('#include <color_fragment>', `#include <color_fragment>
@@ -385,6 +387,7 @@ varying vec3 vTW; varying float vSlope;`)
     float hedge = 1.0 - smoothstep(1.5, 5.0 + px, edge);
     fc = mix(fc, vec3(0.05, 0.09, 0.035), hedge * 0.75);
     float outside = 1.0 - step(uFlat.x, vTW.x) * step(vTW.x, uFlat.y) * step(uFlat.z, vTW.z) * step(vTW.z, uFlat.w);
+    outside *= 1.0 - step(cFlat2.x - 400.0, vTW.x) * step(vTW.x, cFlat2.y + 400.0) * step(cFlat2.z - 400.0, vTW.z) * step(vTW.z, cFlat2.w + 400.0);
     float farm = smoothstep(0.38, 0.5, d3.b * 0.8 + d2.r * 0.2) * (1.0 - fm) * (1.0 - smoothstep(60.0, 220.0, h))
                * smoothstep(0.5, 2.0, h) * (1.0 - smoothstep(0.06, 0.18, vSlope)) * outside;
     col = mix(col, fc, farm);
@@ -463,8 +466,36 @@ varying vec3 vTW; varying float vSlope;`)
     });
     this.scene.add(root);
     this.worldRoot = root;
+    // baked airport-name letters are replaced by signs drawn from the chosen name
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      const mn = o.material.name;
+      if (mn === 'W_Sign') {
+        this.signColor = '#' + o.material.color.getHexString();
+        stripTriangles(o, (x, y, z) => Math.abs(x) < 140 && ((Math.abs(z + 504.6) < 1.3 && y > 10.4) || (Math.abs(z + 690.6) < 1.3 && y > 16.6)));
+      }
+      if (mn === 'W_TowerOrange') stripTriangles(o, (x, y, z) => Math.abs(z + 329.4) < 1.2 && y > 26 && y < 36 && x > 880 && x < 1260);
+    });
+    this.signs = new THREE.Group();
+    this.scene.add(this.signs);
     // tree prototypes
     this.treeProtos = [0, 1].map((k) => root.getObjectByName('TreeProto_' + k));
+  }
+
+  setAirportName(name) {
+    if (!this.signs) return;
+    for (const m of this.signs.children.slice()) { this.signs.remove(m); m.geometry.dispose(); m.material.map.dispose(); m.material.dispose(); }
+    const T = signTexts(name || 'City Builder');
+    const col = this.signColor || '#20242a';
+    const add = (text, h, maxW, x, y, z, ry, color = col) => {
+      const m = textSign(text, { h, maxW, color });
+      m.position.set(x, y, z); m.rotation.y = ry;
+      this.signs.add(m);
+    };
+    add(T.airside, 4.2, 150, 0, 13.0, -504.1, 0);                 // pier fascia, facing the runway
+    add(T.landside, 5.0, 200, 0, 20.0, -691.0, Math.PI);          // landside, facing the city
+    for (const xc of [970, 1170]) add(T.hangar, 7.0, 150, xc, 31.0, -329.0, 0, '#c8401f');
   }
 
   buildTrees(treeData) {
@@ -914,6 +945,7 @@ varying vec3 vTW; varying float vSlope;`)
     // emissive windows at night
     const em = this.night;
     for (const m of this.emissiveMats) m.emissiveIntensity = m.name === 'W_GlassTower' || m.name === 'W_Sign' ? em * 2 : em * 1.4;
+    if (this.signs) for (const m of this.signs.children) m.material.emissiveIntensity = em * 1.2;
     // lights
     if (this.lightUniforms) {
       const lu = this.lightUniforms;

@@ -8,9 +8,10 @@
 import * as THREE from 'three';
 import { World, HDR, glowTexture } from './world.js';
 import { Path, Mover } from './path.js';
-import { hdg3 } from './atc.js';
+import { hdg3, AIRPORT } from './atc.js';
 import { PlayerATC } from './playeratc.js';
 import { dressParked } from './livery.js';
+import { A2 } from './airport2.js';
 import { weatherModel, weatherGSE } from './shading.js';
 import { terrainHeight } from './terrain.js';
 import { DEG, KT, FT, clamp, lerp, smoothstep, mulberry32 } from './util.js';
@@ -18,10 +19,11 @@ import { DEG, KT, FT, clamp, lerp, smoothstep, mulberry32 } from './util.js';
 const G = 9.81;
 const TAN3 = Math.tan(3 * DEG);
 const GEAR_Y = 5.2;                    // model origin above the ground on the gear
-const TELEPHONY = { spark: 'Claude', crane: 'Tsuru', skyline: 'Citybird', wave: 'Pacific', fuji: 'Fuji Sky', globe: 'Globelink', plane: 'Swift' };
+const TELEPHONY = { jal: 'Japan Air', ana: 'All Nippon', spark: 'Claude', crane: 'Tsuru', skyline: 'Citybird', wave: 'Pacific', fuji: 'Fuji Sky', globe: 'Globelink', plane: 'Swift' };
 const CIRCUIT_ALT = 2000 * FT;
 const BASE_ALT = 1300 * FT;
 const DEPART_ALT = 5000 * FT;
+const CRUISE_ALT = 25000 * FT;         // between the two airports (~200 km)
 const TURN_R = 1800;                   // circuit turn radius (25 deg bank at ~180 kt)
 const wrapPi = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
 const compass = (a) => ((a / DEG + 90) % 360 + 360) % 360;
@@ -513,6 +515,7 @@ export class Traffic {
     this.lights = new LightPoints(scene);
     this._v = new THREE.Vector3();
     this.aircraft = []; this.vehicles = []; this.movingAircraft = [];
+    this.remote = []; this.a2Stands = [];
     this.time = 0;
     this.enabled = true;
     const list = (types && types.length ? types : [{ meta, lod: lodTemplate, weight: 1 }]).filter((t) => t.lod);
@@ -568,7 +571,9 @@ export class Traffic {
 
   // ------------------------------------------------------------------ setup per scenario
   reset({ stands, skipStand, randomLivery, runway, windDir, windKt, playerStand, playerCallsign }) {
-    for (const ac of this.aircraft) { this.scene.remove(ac.static); if (ac.art) this._release(ac.art); }
+    for (const ac of this.aircraft.concat(this.remote || [])) { this.scene.remove(ac.static); if (ac.art) this._release(ac.art); }
+    this.remote = [];
+    this.a2Stands = A2.stands.map((dx, i) => ({ id: 'B' + (i + 1), a2: true, busy: null, cg: [A2.x + dx, 0, A2.z - 352] }));
     for (const v of this.vehicles) this.scene.remove(v.obj);
     this.aircraft = []; this.vehicles = []; this._bag = null;
     this._timers = [];
@@ -610,6 +615,208 @@ export class Traffic {
     // already taxiing to the runway
     if (this.freeStands.length) this._spawnInbound(this.freeStands.shift(), 0.35);
     if (this.freeStands.length) this._spawnTaxiing(this.freeStands.shift());
+    // the shuttle between both airports is already under way: aircraft parked at the second
+    // airport, on their way there and on their way back
+    for (let i = 0; i < 3; i++) this._seedRemote('park', 60 + i * 200 + this.rnd() * 120);
+    this._seedRemote('out', 0.3); this._seedRemote('out', 0.75);
+    this._seedRemote('back', 0.35); this._seedRemote('back', 0.8);
+  }
+
+  // ------------------------------------------------------------------ second airport shuttle
+  // States: R_OUT (en route, lands on runway 09 there) -> R_TAXI -> R_PARK -> R_PUSH ->
+  // R_TAXIOUT -> R_TKOF -> R_BACK (en route home) -> handed over as a straight-in arrival.
+  _a2Stand() { return this.a2Stands.find((s) => !s.busy) || null; }
+
+  _outRoute(ac) {
+    const thr = A2.x - A2.len / 2;
+    const c = Math.cos(ac.a), sn = Math.sin(ac.a);
+    const pts = [{ x: ac.x, z: ac.z }, { x: ac.x + c * 5000, z: ac.z + sn * 5000 }];
+    // departures to the west turn round over the sea side first
+    if (c < 0) pts.push({ x: ac.x + c * 5000, z: ac.z + 12000 }, { x: ac.x + 12000, z: ac.z + 12000 });
+    pts.push({ x: thr - 26000, z: A2.z }, { x: thr - 12000, z: A2.z }, { x: thr + 350, z: A2.z });
+    return pts;
+  }
+
+  _backRoute(ac) {
+    const R = this._rw();
+    const pts = [{ x: ac.x, z: ac.z }, { x: ac.x + 6000, z: ac.z }, { x: ac.x + 6000, z: ac.z + 10000 }, { x: A2.x - 20000, z: A2.z + 10000 }];
+    pts.push({ x: R.tx - R.d * 30000, z: R.d < 0 ? 0 : 9000 }, { x: R.tx - R.d * 24000, z: 0 }, { x: R.tx - R.d * 16000, z: 0 });
+    return pts;
+  }
+
+  _route(ac, pts, state, endAlt = 0) {
+    ac.route = { path: new Path(pts, 3500, 25), s: 0, endAlt, alt0: ac.alt };
+    ac.state = state;
+    ac.air = null;
+  }
+
+  // a departure leaving the area becomes a shuttle flight to the second airport
+  _goRemote(ac) {
+    const st = this._a2Stand();
+    if (!st || this.remote.length >= 9) { this._remove(ac); return; }
+    if (ac.stand && ac.stand.id !== this.skipStand && !ac.stand.a2) this.freeStands.push(ac.stand);
+    this.apron.delete(ac);
+    const qi = this.apronQueue.indexOf(ac);
+    if (qi >= 0) this.apronQueue.splice(qi, 1);
+    this.aircraft = this.aircraft.filter((a) => a !== ac);
+    st.busy = ac; ac.a2 = st; ac.stand = st; ac.sz = st.cg[2] - ac.tm.standShift;
+    ac.inbound = false; ac.plan = null;
+    this._route(ac, this._outRoute(ac), 'R_OUT', 0);
+    this.remote.push(ac);
+  }
+
+  _seedRemote(kind, arg) {
+    const st = this._a2Stand();
+    if (!st) return;
+    const ac = new AIAircraft(this, st, this._randLiv(), this.rnd);
+    st.busy = ac; ac.a2 = st;
+    this.remote.push(ac);
+    if (kind === 'park') {
+      ac.state = 'R_PARK'; ac.timer = 0; ac.parkFor = arg;
+      ac.place(0);
+      return;
+    }
+    const R = this._rw();
+    if (kind === 'out') {
+      ac.x = R.tx + R.d * 26000; ac.z = 0; ac.a = R.d < 0 ? Math.PI : 0; ac.alt = DEPART_ALT;
+      this._route(ac, this._outRoute(ac), 'R_OUT', 0);
+    } else {
+      ac.x = A2.x + A2.len / 2 + 2000; ac.z = A2.z; ac.a = 0; ac.alt = 900;
+      this._route(ac, this._backRoute(ac), 'R_BACK', (16000 + 250) * TAN3);
+    }
+    // somewhere along the way, at the profile altitude and speed
+    const Rt = ac.route;
+    Rt.s = Rt.path.length * arg;
+    const rem = Rt.path.length - Rt.s;
+    ac.alt = Math.min(CRUISE_ALT, Rt.alt0 + (Rt.s + 1500) * 0.08, Rt.endAlt + rem * TAN3);
+    ac.v = ac.alt > 3000 ? 225 : 130; ac.gear = 1; ac.flap = 0; ac.slat = 0; ac.n1 = 80;
+    const p = Rt.path.at(Rt.s, {});
+    ac.x = p.x; ac.z = p.z; ac.a = p.a;
+    Object.assign(ac.lightsOn, { nav: true, beacon: true, strobe: true, logo: true });
+    ac.place(0);
+  }
+
+  // en route: climb / cruise / 3-degree descent along the route, speed by altitude
+  _routeFly(ac, dt) {
+    const Rt = ac.route, P = Rt.path;
+    const rem = P.length - Rt.s;
+    const toA2 = ac.state === 'R_OUT';
+    const altT = Math.max(Math.min(CRUISE_ALT, Rt.alt0 + (Rt.s + 1500) * 0.08, Rt.endAlt + rem * TAN3), toA2 && rem < 60 ? 0 : 30);
+    let vT = ac.alt > 3000 ? 225 : ac.alt > 1200 ? 128 : 92;
+    if (toA2 && rem < 14000) vT = 76;
+    if (!toA2 && rem < 12000) vT = 84;
+    ac.v += clamp(vT - ac.v, -1.0 * dt, 1.3 * dt);
+    let vsT = clamp((altT - ac.alt) * 0.08, -13, 13);
+    if (toA2 && rem < 16000) vsT = clamp(-ac.v * TAN3 + (rem * TAN3 - ac.alt) * 0.12, -7, 1.5);
+    if (toA2 && ac.alt < 7) vsT = -(0.8 + 0.3 * ac.alt);
+    ac.vs += clamp(vsT - ac.vs, -1.6 * dt, 1.6 * dt);
+    ac.alt = Math.max(0, ac.alt + ac.vs * dt);
+    Rt.s = Math.min(P.length, Rt.s + ac.v * dt);
+    const p = P.at(Rt.s, this._rp || (this._rp = {}));
+    ac.x = p.x; ac.z = p.z; ac.a = p.a;
+    const bankT = clamp(Math.atan(ac.v * ac.v * (p.k || 0) / G) / DEG, -25, 25);
+    ac.bank += clamp(bankT - ac.bank, -6 * dt, 6 * dt);
+    const flapT = toA2 ? (rem < 11000 ? 30 : rem < 24000 ? 5 : 0) : (rem < 10000 ? 20 : rem < 22000 ? 5 : 0);
+    ac.flap += clamp(flapT - ac.flap, -1.5 * dt, 1.5 * dt);
+    ac.slat = ac.flap > 0.5 ? 1 : Math.max(0, ac.slat - dt * 0.2);
+    const gearT = (toA2 && rem < 13000) || (!toA2 && rem < 9000) || ac.alt < 150 && Rt.s < 3000 ? 0 : 1;
+    if (gearT > ac.gear) ac.gear = Math.min(1, ac.gear + dt / 10); else ac.gear = Math.max(0, ac.gear - dt / 10);
+    const ff = ac.flap / 30;
+    const alpha = clamp(2 + 5.5 * (75 / Math.max(ac.v, 50)) ** 2 * (1 - 0.35 * ff), 1, 12);
+    ac.pitch += clamp(Math.atan2(ac.vs, ac.v) / DEG + alpha - ac.pitch, -3 * dt, 3 * dt);
+    ac.n1 = lerp(ac.n1, clamp(55 + ac.vs * 2.5 + (vT - ac.v) * 1.5 + ac.flap * 0.4, 30, 95), Math.min(1, dt * 0.5));
+    Object.assign(ac.lightsOn, { nav: true, beacon: true, strobe: true, landing: ac.alt < 3000, taxi: false, logo: true });
+    if (toA2 && ac.alt <= 0.02 && rem < 1200) this._a2Touchdown(ac);
+    else if (!toA2 && rem < 1) this._arriveHome(ac);
+  }
+
+  _a2Touchdown(ac) {
+    ac.alt = 0; ac.vs = 0; ac.pitch = 0;
+    const lane = A2.z + A2.laneZ, xs = ac.a2.cg[0];
+    const pts = [{ x: ac.x, z: A2.z }, { x: A2.x, z: A2.z, v: 7 }, { x: A2.x, z: A2.z + A2.twyZ, v: 10 }, { x: A2.x, z: lane, v: 8 },
+      { x: xs, z: lane, v: 8 }, { x: xs, z: ac.sz + 30, v: 3 }, { x: xs, z: ac.sz, v: 1.2 }];
+    ac.mover = new Mover(new Path(pts, [0, 40, 0, 30, 30, 0, 0], 3), { vmax: 90, acc: 0.4, dec: 2.4, aLat: 0.9, v: ac.v });
+    ac.state = 'R_TAXI'; ac.route = null; ac.spoiler = 1;
+  }
+
+  _arriveHome(ac) {
+    const R = this._rw();
+    const busy = this.aircraft.some((o) => o.state === 'AIR' && o.air && this._leg(o) >= 3 && o.air.tdS - o.air.s > 9000);
+    if (!this.freeStands.length || busy) {
+      // hold: a racetrack back to the same gate
+      const c = Math.cos(ac.a), sn = Math.sin(ac.a);
+      const pts = [{ x: ac.x, z: ac.z }, { x: ac.x - c * 7000, z: ac.z - sn * 7000 + 5000 }, { x: ac.x - c * 12000, z: ac.z + 4000 },
+        { x: R.tx - R.d * 26000, z: 0 }, { x: R.tx - R.d * 16000, z: 0 }];
+      this._route(ac, pts, 'R_BACK', ac.alt);
+      ac.route.alt0 = ac.alt;
+      return;
+    }
+    const st = this.freeStands.splice(Math.floor(this.rnd() * this.freeStands.length), 1)[0];
+    if (ac.a2) { ac.a2.busy = null; ac.a2 = null; }
+    this.remote = this.remote.filter((a) => a !== ac);
+    ac.route = null;
+    this._spawnInbound(st, 0, true, ac);
+  }
+
+  _remoteStep(ac, dt) {
+    ac.timer += dt;
+    switch (ac.state) {
+      case 'R_OUT': case 'R_BACK': this._routeFly(ac, dt); break;
+      case 'R_TAXI': case 'R_TAXIOUT': case 'R_PUSH': {
+        const p = ac.mover.update(dt);
+        ac.x = p.x; ac.z = p.z; ac.a = p.a; ac.v = ac.mover.v;
+        ac.spoiler = ac.state === 'R_TAXI' && ac.v > 20 ? 1 : 0;
+        ac.n1 = ac.state === 'R_PUSH' ? Math.min(22, ac.n1 + dt) : lerp(ac.n1, ac.v > 40 ? 30 : 24, dt);
+        ac.flap = Math.max(ac.state === 'R_TAXIOUT' ? Math.min(5, ac.flap + dt) : 0, ac.flap - dt * 2);
+        ac.slat = ac.flap > 0.5 ? 1 : Math.max(0, ac.slat - dt * 0.2);
+        ac.dirSign = ac.state === 'R_PUSH' ? -1 : 1;
+        Object.assign(ac.lightsOn, { nav: true, beacon: true, strobe: false, landing: false, taxi: ac.state !== 'R_PUSH', logo: true });
+        if (!ac.mover.done) break;
+        const lane = A2.z + A2.laneZ;
+        if (ac.state === 'R_TAXI') {
+          ac.state = 'R_PARK'; ac.timer = 0; ac.parkFor = 300 + this.rnd() * 420; ac.v = 0;
+        } else if (ac.state === 'R_PUSH') {
+          const pts = [{ x: ac.x, z: lane, v: 8 }, { x: A2.x - 420, z: lane, v: 10 }, { x: A2.x - 420, z: A2.z + A2.twyZ, v: 10 },
+            { x: A2.x - A2.conns[2], z: A2.z + A2.twyZ, v: 12 }, { x: A2.x - A2.conns[2], z: A2.z - 60, v: 6 },
+            { x: A2.x - A2.conns[2], z: A2.z, v: 5 }, { x: A2.x - A2.conns[2] + 40, z: A2.z, v: 4 }];
+          ac.mover = new Mover(new Path(pts, [0, 30, 30, 40, 0, 20, 0], 2), { vmax: 12, acc: 0.5, dec: 0.9, aLat: 0.9 });
+          ac.state = 'R_TAXIOUT';
+        } else {
+          ac.mover = new Mover(new Path([{ x: ac.x, z: A2.z }, { x: A2.x + A2.len / 2, z: A2.z }], 0, 3), { vmax: 999 });
+          ac.state = 'R_TKOF'; ac.v = 0; ac.dirSign = 1;
+          if (ac.a2) { ac.a2.busy = null; }
+        }
+        break;
+      }
+      case 'R_PARK': {
+        ac.n1 = Math.max(0, ac.n1 - dt * 6);
+        if (ac.timer > 30) Object.assign(ac.lightsOn, { nav: false, beacon: false, logo: false, taxi: false });
+        if (ac.timer > ac.parkFor) {
+          const lane = A2.z + A2.laneZ, xs = ac.x;
+          ac.mover = new Mover(new Path([{ x: xs, z: ac.z }, { x: xs, z: lane }, { x: xs + 60, z: lane }], [0, 30, 0], 2),
+            { vmax: 1.6, acc: 0.3, dec: 0.5, aLat: 0.5, dir: -1 });
+          ac.state = 'R_PUSH';
+          Object.assign(ac.lightsOn, { nav: true, beacon: true, logo: true });
+        }
+        break;
+      }
+      case 'R_TKOF': {
+        ac.v += (2.25 - 0.006 * ac.v) * dt;
+        ac.n1 = lerp(ac.n1, 95, Math.min(1, dt * 0.6));
+        ac.mover.s += ac.v * dt;
+        const p = ac.mover.path.at(ac.mover.s, ac.mover.pose);
+        ac.x = p.x; ac.z = p.z; ac.a = p.a;
+        if (ac.v > 76) ac.pitch = Math.min(ac.pitch + 2.6 * dt, 12);
+        Object.assign(ac.lightsOn, { landing: true, strobe: true, taxi: false });
+        if (ac.pitch > 7.5 && ac.v > 80) {
+          ac.a2 = null; ac.vs = 3;
+          this._route(ac, this._backRoute(ac), 'R_BACK', (16000 + 250) * TAN3);
+          ac.route.alt0 = 0;
+        }
+        break;
+      }
+      default: break;
+    }
   }
 
   // ------------------------------------------------------------------ GSE fleet
@@ -878,9 +1085,10 @@ export class Traffic {
     return A.legBase + i;   // 0 upwind, 1 crosswind, 2 downwind, 3 base, 4 final, 5 rollout
   }
 
-  _spawnInbound(stand, frac, straightIn = false) {
+  _spawnInbound(stand, frac, straightIn = false, from = null) {
     const R = this._rw();
-    const ac = new AIAircraft(this, stand, this._randLiv(), this.rnd);
+    const ac = from || new AIAircraft(this, stand, this._randLiv(), this.rnd);
+    if (from) { ac.stand = stand; ac.sz = stand.cg[2] - ac.tm.standShift; }
     if (straightIn) {
       // long final: 16 km out on the extended centreline, established on the glide path
       const dist = 16000;
@@ -888,7 +1096,7 @@ export class Traffic {
       ac.alt = (dist + 250) * TAN3; ac.v = 82; ac.gear = 0; ac.flap = 20; ac.slat = 1; ac.n1 = 55;
       ac.activate();
       this._startAir(ac, [{ x: ac.x, z: 0 }, { x: R.tx + R.d * 250, z: 0 }, { x: R.tx + R.d * 1400, z: 0 }], 4);
-      this.radio?.say(ac.callsign, `City Builder Tower, ${ac.callsign}, established ILS runway ${R.id}, eight miles.`);
+      this.radio?.say(ac.callsign, `${AIRPORT.name} Tower, ${ac.callsign}, established ILS runway ${R.id}, eight miles.`);
       this._later(3, () => this.radio?.say('TWR', `${ac.callsign}, continue approach runway ${R.id}, report four miles.`));
     } else {
       const x = lerp(R.far + R.d * 1500, R.tx - R.d * 7000, frac);
@@ -896,7 +1104,7 @@ export class Traffic {
       ac.alt = CIRCUIT_ALT; ac.v = 95; ac.gear = 1; ac.flap = 1; ac.slat = 0.5; ac.n1 = 62;
       ac.activate();
       this._startAir(ac, this._circuitPts(x, 4000, 2), 2);
-      this.radio?.say(ac.callsign, `City Builder Tower, ${ac.callsign}, ${R.d < 0 ? 'left' : 'right'} downwind runway ${R.id}, full stop.`);
+      this.radio?.say(ac.callsign, `${AIRPORT.name} Tower, ${ac.callsign}, ${R.d < 0 ? 'left' : 'right'} downwind runway ${R.id}, full stop.`);
       this._later(3, () => this.radio?.say('TWR', `${ac.callsign}, number one, report final runway ${R.id}.`));
     }
     Object.assign(ac.lightsOn, { nav: true, beacon: true, strobe: true, landing: straightIn, logo: true });
@@ -923,6 +1131,8 @@ export class Traffic {
   // a new arrival from outside, when a gate is free and the sky near the airport has room
   _maybeSpawnInbound() {
     if (!this.freeStands.length) return false;
+    // shuttles returning from the second airport take the free gates first
+    if (this.remote.some((a) => a.state === 'R_BACK' && Math.hypot(a.x, a.z) < 70000)) return false;
     const R = this._rw();
     const air = this.aircraft.filter((a) => a.state === 'AIR');
     if (air.filter((a) => a.inbound).length >= 3) return false;
@@ -945,7 +1155,8 @@ export class Traffic {
     this.apron.delete(ac);
     const qi = this.apronQueue.indexOf(ac);
     if (qi >= 0) this.apronQueue.splice(qi, 1);
-    if (ac.stand && ac.stand.id !== this.skipStand) this.freeStands.push(ac.stand);
+    if (ac.stand && ac.stand.id !== this.skipStand && !ac.stand.a2) this.freeStands.push(ac.stand);
+    if (ac.a2) { ac.a2.busy = null; ac.a2 = null; }
     this.aircraft = this.aircraft.filter((a) => a !== ac);
   }
 
@@ -1017,11 +1228,25 @@ export class Traffic {
     for (const v of this.vehicles) v.update(dt);
     if (this.pTug) this._updatePlayerTug(dt, env.playerSteer);
     while (this._removeList.length) this._remove(this._removeList.pop());
+    while (this._remoteList && this._remoteList.length) { const a = this._remoteList.pop(); if (this.aircraft.includes(a)) this._goRemote(a); }
+    // shuttle flights: fly / taxi, full model only near the camera
+    {
+      const cam = env.camera.position;
+      for (const ac of this.remote.slice()) {
+        this._remoteStep(ac, dt);
+        const d = Math.hypot(ac.x - cam.x, ac.z - cam.z);
+        if (d < 7000 && !ac.art) ac.activate();
+        else if (d > 9000 && ac.art) ac.deactivate();
+        ac.static.visible = !ac.art && d < 60000;
+        if (d < 60000) ac.place(dt);
+      }
+    }
     // lights and visibility culling
     const cam = env.camera.position;
     const L = this.lights;
     L.begin();
     for (const ac of this.aircraft) ac.lights(L, this.time);
+    for (const ac of this.remote) if (Math.hypot(ac.x - cam.x, ac.z - cam.z) < 40000) ac.lights(L, this.time);
     for (const v of this.vehicles) {
       const d = Math.hypot(v.x - cam.x, v.z - cam.z, cam.y);
       v.obj.visible = d < 2600;
@@ -1091,8 +1316,8 @@ export class Traffic {
         .sort((a, b) => a.readyAt - b.readyAt);
       if (cand.length && airborne < 5 && outbound < 3) {
         const ac = cand[0];
-        // about half the departures leave the area; the others fly a circuit and come back
-        ac.plan = this.rnd() < 0.45 ? 'depart' : 'circuit';
+        // most departures fly to the second airport; a few fly a circuit and come back
+        ac.plan = this.rnd() < 0.85 ? 'depart' : 'circuit';
         this._callTug(ac);
         this.nextDeparture = this.time + 40 + this.rnd() * 30;
       } else this.nextDeparture = this.time + 6;
@@ -1242,7 +1467,7 @@ export class Traffic {
   _requestPush(ac) {
     ac.state = 'REQ_PUSH';
     ac.lightsOn.beacon = true;
-    this.radio?.say(ac.callsign, `City Builder Ground, ${ac.callsign}, stand ${ac.stand.id}, request push back and start up.`);
+    this.radio?.say(ac.callsign, `${AIRPORT.name} Ground, ${ac.callsign}, stand ${ac.stand.id}, request push back and start up.`);
     if (this.apron.size || this.apronQueue.length) this._later(3, () => this.radio?.say('GND', `${ac.callsign}, standby, expect push back in two minutes.`));
     this.apronQueue.push(ac);
   }
@@ -1326,7 +1551,7 @@ export class Traffic {
         if (this.apron.has(ac) && ac.z > this.G.taxilaneZ + 12) this.apron.delete(ac);
         if (ac.state === 'TAXI_OUT' && ac.mover.atHold()) {
           ac.state = 'HOLDING'; ac.holdT = this.time;
-          this.radio?.say(ac.callsign, `City Builder Tower, ${ac.callsign}, holding point runway ${R.id}, ready for departure.`);
+          this.radio?.say(ac.callsign, `${AIRPORT.name} Tower, ${ac.callsign}, holding point runway ${R.id}, ready for departure.`);
         }
         if (ac.state === 'LINEUP' && ac.mover.done) { ac.state = 'WAIT_TKOF'; }
         if (ac.state === 'LINEUP' || ac.state === 'WAIT_TKOF') Object.assign(ac.lightsOn, { strobe: true, landing: true });
@@ -1379,7 +1604,7 @@ export class Traffic {
           Object.assign(ac.lightsOn, { strobe: false, landing: false, taxi: true });
           this.radio?.say('TWR', `${ac.callsign}, vacate via ${ac.exitName || 'Alpha'}, contact Ground one two one decimal niner.`);
           this._later(3, () => {
-            this.radio?.say(ac.callsign, `City Builder Ground, ${ac.callsign}, runway vacated, for stand ${ac.stand.id}.`);
+            this.radio?.say(ac.callsign, `${AIRPORT.name} Ground, ${ac.callsign}, runway vacated, for stand ${ac.stand.id}.`);
             this._later(3, () => this.radio?.say('GND', `${ac.callsign}, taxi to stand ${ac.stand.id} via Alpha, hold short of the apron.`));
           });
         }
@@ -1499,7 +1724,10 @@ export class Traffic {
     const look = ac.v * ac.v / 1.6 + 70;
     const others = this.aircraft.filter((o) => o !== ac && o.state !== 'AIR' && o.state !== 'PARKED');
     if (this.player.active && this.player.onGround) others.push(this.player);
+    // deadlock breaker: after a long face-to-face stand-off, pass oncoming aircraft
+    const ghost = ac.ghostUntil && this.time < ac.ghostUntil;
     for (const o of others) {
+      if (ghost && o !== this.player && Math.cos(o.a - ac.a) < -0.2) continue;
       for (const [x, z, r] of o.circles) {
         const dx = x - ac.x, dz = z - ac.z;
         const f = dx * c + dz * s;
@@ -1521,7 +1749,12 @@ export class Traffic {
         gap = Math.min(gap, f - 32 - r + 12);
       }
     }
-    return gap === Infinity ? Infinity : Math.sqrt(2 * 0.9 * Math.max(0, gap - 12));
+    const lim = gap === Infinity ? Infinity : Math.sqrt(2 * 0.9 * Math.max(0, gap - 12));
+    if (lim < 0.3 && ac.v < 0.3) {
+      if (ac.blockSince == null) ac.blockSince = this.time;
+      if (this.time - ac.blockSince > 45) { ac.ghostUntil = this.time + 15; ac.blockSince = null; }
+    } else ac.blockSince = null;
+    return lim;
   }
 
   // circuit flying ---------------------------------------------------------------------
@@ -1538,7 +1771,7 @@ export class Traffic {
       // straight-out departure: climb to 5000 ft, accelerate to 250 kt, then leave the area
       altT = DEPART_ALT; vT = agl < 150 ? 86 : agl < 900 ? 112 : 128;
       flapT = agl < 250 ? 5 : ac.v > 105 ? 0 : 1;
-      if (A.s > A.path.length - 60) { this._removeList.push(ac); A.s = A.path.length - 59; }
+      if (A.s > A.path.length - 60) { (this._remoteList || (this._remoteList = [])).push(ac); A.s = A.path.length - 59; }
     }
     else if (leg === 1) { vT = 103; flapT = 0; }
     else if (leg === 2) {

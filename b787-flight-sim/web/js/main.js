@@ -11,13 +11,15 @@ import { Instruments } from './instruments.js';
 import { CameraRig, VIEW_NAMES } from './camera.js';
 import { Input } from './input.js';
 import { Audio, setEngineSound } from './audio.js';
+import { loadAirportNames, saveAirportNames, DEFAULT_AIRPORTS } from './signs.js';
 import { LOGOS, logoById, drawLogoIcon, randomLivery, dressParked, loadSavedLivery, saveLivery, DEFAULT_LIVERY, liveryAssets, liveryImagesReady, drawLogoTitle } from './livery.js';
 import { Cabin } from './cabin.js';
 import { PostFX } from './postfx.js';
 import { Rain } from './weatherfx.js';
 import { Vapor } from './vapor.js';
 import { Traffic } from './traffic.js';
-import { Radio } from './atc.js';
+import { Radio, setAirportNames } from './atc.js';
+import { Airport2, A2, airport2Lights, airport2Obstacles } from './airport2.js';
 import { MCP3D } from './mcp3d.js';
 import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
@@ -101,6 +103,7 @@ const SCENARIOS = [
   { id: 'gate', name: 'ゲート7 プッシュバック / Gate 7', note: 'J でプッシュバック、P でパーキングブレーキ解除' },
   { id: 'ils27', name: 'ILS 27 進入 12nm / ILS approach', note: 'AP が LOC/GS を捕捉。ギア・フラップを出して着陸' },
   { id: 'final', name: 'ショートファイナル 4nm / Short final', note: '手動着陸。PAPI を見て 3° パスを維持' },
+  { id: 'apt2', name: '第2空港 ファイナル 5nm / Second airport', note: '東へ約200 km の第2空港 RWY 09 へ進入（ILS あり）' },
   { id: 'city', name: '都市上空 遊覧 / City sightseeing', note: '高度 2,000 ft で市街地とランドマークタワーへ' },
   { id: 'cruise', name: '巡航 FL350 M0.85 / Cruise', note: 'オートパイロット巡航。降下して空港へ戻る' },
 ];
@@ -140,6 +143,8 @@ class App {
     const meta = this.types[sel].meta;
     this.meta = meta; this.worldData = world;
     configureTerrain(world);
+    world.obstacles = (world.obstacles || []).concat(airport2Obstacles());
+    Object.assign(world.lights, airport2Lights());
     configureObstacles(world);
     this.world = new World(renderer, this.scene, this.quality);
 
@@ -172,6 +177,10 @@ class App {
     const lodGltf = this.types.b789.lod ? { scene: this.types.b789.lod } : null;
     setLoad(0.92, 'building scene…');
     this.world.attachWorldGLB(worldGltf);
+    this.airports = loadAirportNames();
+    setAirportNames(this.airports);
+    this.world.setAirportName(this.airports.name);
+    this.airport2 = new Airport2(this.scene, this.world.worldRoot, this.airports.name2);
     this.world.buildTrees(world.trees);
     this.world.buildLights(world.lights);
     this.world.setWeather('scattered');
@@ -328,6 +337,7 @@ class App {
     bind('payload', 'payVal', (v) => `${(v / 1000).toFixed(1)} t` +
       (this.meta.cabin ? `（乗客 ${Math.min(this.meta.cabin.total, Math.floor(v / (this.meta.cabin.paxMass || 100)))} 名）` : ''));
     this.buildLiveryMenu();
+    this.buildAirportNames();
     this.buildIFE();
     this.buildTypePick();
     this.buildWeatherPick();
@@ -544,6 +554,25 @@ class App {
     $('ifeGame').classList.toggle('hidden', ch !== 'game');
   }
 
+  // airport names: terminal / hangar signs, radio phrases and the second airport
+  buildAirportNames() {
+    const a = $('apName'), b = $('apName2');
+    if (!a || !b) return;
+    a.value = this.airports.name; b.value = this.airports.name2;
+    let tmr = 0;
+    const upd = () => {
+      clearTimeout(tmr);
+      tmr = setTimeout(() => {
+        this.airports = { name: a.value.trim() || DEFAULT_AIRPORTS.name, name2: b.value.trim() || DEFAULT_AIRPORTS.name2 };
+        saveAirportNames(this.airports);
+        setAirportNames(this.airports);
+        this.world.setAirportName(this.airports.name);
+        this.airport2?.setName(this.airports.name2);
+      }, 300);
+    };
+    a.addEventListener('input', upd); b.addEventListener('input', upd);
+  }
+
   buildLiveryMenu() {
     const nameEl = $('airlineName'), box = $('logoPick'), prev = $('liveryPreview');
     if (!nameEl || !this.meta.livery) { if ($('liveryBox')) $('liveryBox').style.display = 'none'; return; }
@@ -720,6 +749,26 @@ class App {
         this.rig.setView('cockpit');
       }
       Object.assign(L, { strobe: true, landing: true, taxi: id === 'final' });
+    } else if (id === 'apt2') {
+      // short final to runway 09 of the second airport (ILS tuned to it)
+      const r = { ident: '09', threshold: [A2.x - A2.len / 2, 0, A2.z], heading: 90, length: A2.len, width: A2.wid, elevation: 0,
+        ils: { course: 90, glideslope: 3, gsAntennaFromThr: 300, freq: '111.10' } };
+      const dist = 5 * 1852;
+      const h = Math.tan(3 * DEG) * (dist + 300) + 1.5 - this.meta.groundY;
+      setAir(6, true);
+      const vref = sys.vspeeds().vref30;
+      fm.reset(new V3(r.threshold[0] - dist, h, r.threshold[2]), 90, spd(vref + 5, h), 2.2, false);
+      fm.vel.y = -Math.tan(3 * DEG) * (vref + 5) * KT;
+      sys.mcp = { spd: Math.round(vref + 5), hdg: 90, alt: 3000, vs: -700 };
+      sys.selectRunway(r);
+      sys.at.on = true; sys.at.mode = 'SPD';
+      sys.gammaT = -3; sys.phiT = 0;
+      sys.speedbrakeArmed = true; sys.autobrake = 3;
+      sys.tla[0] = sys.tla[1] = sys.pilot.throttle = 0.42;
+      for (const e of fm.engines) e.n1 = 60;
+      fm.ctl.stab = 5 * DEG;
+      this.rig.setView('chase');
+      Object.assign(L, { strobe: true, landing: true, taxi: true });
     } else if (id === 'city') {
       fm.reset(new V3(1500, 2000 * FT, 2600), 20, spd(210, 610), 2, false);
       setAir(1, false);
@@ -1030,6 +1079,7 @@ class App {
     }
     this.rig.update(dt, fm, this.visual.root);
     this.world.update(dt, this.camera, new THREE.Vector3(fm.pos.x, fm.pos.y, fm.pos.z));
+    this.airport2?.update(this.world.night);
     this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit });
     if (this.mcp3d && this.visual.cockpitVisible && (this._mcpT3 = (this._mcpT3 || 0) + dt) > 0.12) { this._mcpT3 = 0; this.mcp3d.update(sys, this.world.night); }
     const hud = $('hud');
