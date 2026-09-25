@@ -8,6 +8,36 @@
 // the fin's planar UV projection.
 import * as THREE from 'three';
 import { weatherMaterial } from './shading.js';
+import { JAL_ICON, JAL_WORDMARK, ANA_LOGO, ANA_ASPECT, JAL_WORD_ASPECT } from './airlinelogos.js';
+
+// ------------------------------------------------------------------ real airline marks (SVG images)
+const IMG = {};
+function svgImage(key, svg) {
+  return new Promise((res) => {
+    const im = new Image();
+    IMG[key] = im;
+    im.onload = () => res(); im.onerror = () => res();
+    im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  });
+}
+// the menu, the aircraft and the AI fleet are drawn once these have loaded
+export const liveryImagesReady = typeof Image === 'undefined' ? Promise.resolve() : Promise.all([
+  svgImage('jalIcon', JAL_ICON),
+  svgImage('jalWord', JAL_WORDMARK),
+  svgImage('ana', ANA_LOGO),
+  svgImage('anaWhite', ANA_LOGO.replace(/#223f9a/gi, '#ffffff')),
+]);
+const imgOk = (k) => IMG[k] && IMG[k].complete && IMG[k].naturalWidth > 0;
+function drawImg(ctx, key, x, y, w, h) { if (imgOk(key)) ctx.drawImage(IMG[key], x, y, w, h); }
+// menu preview: the real wordmark at (x, y centre) with height h px; false for text liveries
+export function drawLogoTitle(ctx, logo, x, y, h, maxW) {
+  const T = logo.title;
+  if (!T || !T.img) return false;
+  let w = h * T.aspect;
+  if (w > maxW) { h *= maxW / w; w = maxW; }
+  drawImg(ctx, T.img, x, y - h / 2, w, h);
+  return true;
+}
 
 export const DEFAULT_LIVERY = { name: 'Claude Air', logo: 'spark' };
 
@@ -17,6 +47,23 @@ function disc(ctx, r, fill) { ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2);
 function ring(ctx, r, w, stroke) { ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.lineWidth = w; ctx.strokeStyle = stroke; ctx.stroke(); }
 
 export const LOGOS = [
+  {
+    // Japan Airlines, 2011 "Tsurumaru" livery: all-white aircraft, red crane on the fin
+    id: 'jal', label: 'JAL 日本航空', name: 'Japan Airlines', real: true,
+    colors: { primary: '#f5f7f9', primary2: '#f5f7f9', accent1: '#f5f7f9', accent2: '#f5f7f9', tailTop: '#f7f8fa', tailBottom: '#f3f4f6', nacelle: '#eceef1', brand: '#e50012' },
+    plain: true, noSweep: true, tailScale: 1.75, tailShift: [0.35, 0],
+    title: { img: 'jalWord', aspect: JAL_WORD_ASPECT, h: 0.62 },
+    draw(ctx) { drawImg(ctx, 'jalIcon', -1, -1, 2, 2); },
+  },
+  {
+    // ANA "Triton Blue": white upper fuselage, Triton-blue belly with a Mohican-blue line,
+    // Triton-blue fin with the white ANA mark
+    id: 'ana', label: 'ANA 全日空', name: 'ANA', real: true,
+    colors: { primary: '#1d3a91', primary2: '#223f9a', accent1: '#00b3f0', accent2: '#f5f7f9', tailTop: '#1a3688', tailBottom: '#223f9a', nacelle: '#eef0f3', brand: '#223f9a' },
+    tailScale: 1.2, tailShift: [1.3, -1.6],
+    title: { img: 'ana', aspect: ANA_ASPECT, h: 1.9 },
+    draw(ctx, onDark = true) { const w = 2, h = w / ANA_ASPECT; drawImg(ctx, onDark ? 'anaWhite' : 'ana', -w / 2, -h / 2, w, h); },
+  },
   {
     id: 'spark', label: 'スパーク Spark', name: 'Claude Air',
     colors: { primary: '#b8583a', primary2: '#d9774f', accent1: '#2a211d', accent2: '#e9b98f', tailTop: '#c7623f', tailBottom: '#8f3f27' },
@@ -196,19 +243,33 @@ function tailCanvas(logo, T, W, H) {
       for (let S = T.s1; S >= sR - k; S -= 0.1) c.lineTo(S, zc(S) - w * k / 2);
       c.closePath(); c.fillStyle = col; c.fill();
     }
-  } else {
+  } else if (!logo.noSweep) {
     // a single accent sweep along the fin root
     c.beginPath(); c.moveTo(T.s0, T.z0); c.lineTo(T.s1, T.z0);
     c.lineTo(T.s1, T.z0 + 1.1 * k); c.quadraticCurveTo(sR + 4 * k, T.z0 + 0.4 * k, T.s0, T.z0 + 0.35 * k); c.closePath();
     c.fillStyle = logo.colors.accent1; c.fill();
   }
   const [cs, cz, r] = T.logo;
-  c.save(); c.translate(cs, cz); c.scale(r * 1.12, -r * 1.12); logo.draw(c); c.restore();
+  const ts = r * 1.12 * (logo.tailScale || 1);
+  const sh = logo.tailShift || [0, 0];
+  c.save(); c.translate(cs + sh[0] * k, cz + sh[1] * k); c.scale(ts, -ts); logo.draw(c); c.restore();
   return cv;
 }
 
 // ------------------------------------------------------------------ title texture
+// real airline wordmark as the fuselage title (height in metres = capHeight * title.h)
+function imageTitleCanvas(logo, TI) {
+  const T = logo.title;
+  let hM = TI.capHeight * T.h, lenM = hM * T.aspect;
+  if (lenM > TI.maxLen) { lenM = TI.maxLen; hM = lenM / T.aspect; }
+  const H = 256, W = Math.min(4096, Math.round(H * T.aspect));
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  drawImg(cv.getContext('2d'), T.img, 0, 0, W, H);
+  return { canvas: cv, len: lenM, height: hM };
+}
+
 function titleCanvas(name, logo, TI) {
+  if (logo.title && logo.title.img) return imageTitleCanvas(logo, TI);
   const H = 192, boxM = TI.capHeight * 1.5;           // box height (m) includes descenders
   let ppm = H / boxM;
   const font = (px) => `italic 800 ${px}px "Helvetica Neue", Helvetica, Arial, "Hiragino Sans", "Noto Sans JP", sans-serif`;
@@ -267,8 +328,9 @@ export function liveryAssets(liv, layout, big = true) {
   const col = (h) => { const c = new THREE.Color(h); return new THREE.Vector3(c.r, c.g, c.b); };
   const a = {
     logo, tail, title,
-    prim: col(logo.colors.primary), prim2: col(logo.colors.primary2),
-    acc1: col(logo.colors.accent1), acc2: col(logo.colors.accent2),
+    prim: col(logo.plain ? layout.white : logo.colors.primary), prim2: col(logo.plain ? layout.white : logo.colors.primary2),
+    acc1: col(logo.plain ? layout.white : logo.colors.accent1), acc2: col(logo.plain ? layout.white : logo.colors.accent2),
+    nacelle: col(logo.colors.nacelle || logo.colors.primary), brand: col(logo.colors.brand || logo.colors.primary),
     titleRect: new THREE.Vector4(layout.title.s0, tt.len, layout.title.zc + tt.height / 2, tt.height),
   };
   cache.set(key, a);
@@ -375,7 +437,7 @@ export function dressParked(group, liv, layout) {
       mm.onBeforeCompile = () => {};
       mm.customProgramCacheKey = () => '';
       if (n === 'B787_Tail') { mm.map = a.tail; mm.color.set(0xffffff); }
-      else if (n === 'B787_Navy' || n === 'B787_Nacelle') mm.color.setRGB(a.prim.x, a.prim.y, a.prim.z, THREE.LinearSRGBColorSpace);
+      else if (n === 'B787_Navy' || n === 'B787_Nacelle') mm.color.setRGB(a.nacelle.x, a.nacelle.y, a.nacelle.z, THREE.LinearSRGBColorSpace);
       else {
         const u = liveryUniforms(layout); setLiveryUniforms(u, a);
         mm.onBeforeCompile = (sh) => patchLiveryShader(sh, u, 'position');

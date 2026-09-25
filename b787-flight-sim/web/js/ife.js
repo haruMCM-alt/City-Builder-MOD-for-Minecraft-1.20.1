@@ -275,7 +275,61 @@ export class IFE {
     this.channel = 'menu';
     this.t = 0; this._acc = 0; this._pacc = 0;
     this.d = { clock: '12:00', altFt: 0, gs: 0, oat: 15, dist: 0, hdg: 0, x: 0, z: 0, cx: 0, cz: 0, airline: 'Claude Air', callsign: '', type: '' };
+    this.screenMats = [];
+    this.uFull = { value: 0 };          // 1: every seat-back screen shows one full-frame source
+    this.safety = false;
     this._buildMap();
+  }
+
+  // ---- safety video: every monitor plays it full screen, with sound through the game audio
+  startSafety(src, audio) {
+    if (!this.video) {
+      const v = this.video = document.createElement('video');
+      v.src = src; v.playsInline = true; v.preload = 'auto';
+      v.addEventListener('ended', () => this.stopSafety());
+      this.vtex = new THREE.VideoTexture(v);
+      this.vtex.colorSpace = THREE.SRGBColorSpace;
+      const ctx = audio && audio.ctx;
+      if (ctx && audio.master) {
+        try {
+          const srcN = ctx.createMediaElementSource(v);
+          this.vLP = ctx.createBiquadFilter(); this.vLP.type = 'lowpass'; this.vLP.frequency.value = 12000;
+          this.vGain = ctx.createGain(); this.vGain.gain.value = 0;
+          srcN.connect(this.vLP); this.vLP.connect(this.vGain); this.vGain.connect(audio.master);
+        } catch (e) { this.vGain = null; }
+      }
+    }
+    this.safety = true;
+    this.video.currentTime = 0;
+    const pr = this.video.play();
+    if (pr && pr.catch) pr.catch(() => {});
+    this._screenSource(this.vtex, 1);
+    return true;
+  }
+
+  stopSafety() {
+    if (!this.safety) return;
+    this.safety = false;
+    if (this.video) this.video.pause();
+    this._screenSource(this.atex, 0);
+  }
+
+  // gain 0..1 and low-pass cut-off (the fuselage muffles it from outside); paused with the game
+  setSafetyAudio(gain, cutoff, paused) {
+    const v = this.video;
+    if (!v || !this.safety) return;
+    if (paused && !v.paused) v.pause();
+    else if (!paused && v.paused && !v.ended) { const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); }
+    if (this.vGain) {
+      const t = this.vGain.context.currentTime;
+      this.vGain.gain.setTargetAtTime(gain, t, 0.08);
+      this.vLP.frequency.setTargetAtTime(cutoff, t, 0.08);
+    } else v.volume = clamp(gain, 0, 1);
+  }
+
+  _screenSource(tex, full) {
+    this.uFull.value = full;
+    for (const m of this.screenMats) { m.map = tex; m.emissiveMap = tex; }
   }
 
   // land / sea raster of the region around the airport (the map channel pans over it)
@@ -314,19 +368,21 @@ export class IFE {
   patchScreen(mat) {
     if (!mat || mat.userData.ife) return;
     mat.userData.ife = true;
-    mat.map = this.atex; mat.emissiveMap = this.atex;
+    mat.map = this.safety ? this.vtex : this.atex; mat.emissiveMap = mat.map;
+    this.screenMats.push(mat);
     mat.emissive = new THREE.Color(1, 1, 1); mat.emissiveIntensity = 0.9; mat.color.set(0xffffff);
     mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uFull = this.uFull;
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute float aTile;')
+        .replace('#include <common>', '#include <common>\nattribute float aTile;\nuniform float uFull;')
         .replace('#include <uv_vertex>', `#include <uv_vertex>
 {
   vec2 tOff = vec2(mod(aTile, 4.0) * 0.25, 1.0 - (floor(aTile / 4.0) + 1.0) / 3.0);
   #ifdef USE_MAP
-  vMapUv = (vec2(1.0) - vMapUv) * vec2(0.25, 1.0 / 3.0) + tOff;
+  vMapUv = mix((vec2(1.0) - vMapUv) * vec2(0.25, 1.0 / 3.0) + tOff, vec2(1.0) - vMapUv, uFull);
   #endif
   #ifdef USE_EMISSIVEMAP
-  vEmissiveMapUv = (vec2(1.0) - vEmissiveMapUv) * vec2(0.25, 1.0 / 3.0) + tOff;
+  vEmissiveMapUv = mix((vec2(1.0) - vEmissiveMapUv) * vec2(0.25, 1.0 / 3.0) + tOff, vec2(1.0) - vEmissiveMapUv, uFull);
   #endif
 }`);
     };
@@ -387,7 +443,8 @@ export class IFE {
         const c = this.player.getContext('2d');
         c.save(); c.scale(2, 2);
         c.textBaseline = 'alphabetic'; c.textAlign = 'left';
-        try { DRAW[this.channel](c, this.t, this.d, S, this.game); } catch (e) { /* ignore */ }
+        if (this.safety && this.video && this.video.readyState >= 2) c.drawImage(this.video, 0, 0, 320, 200);
+        else try { DRAW[this.channel](c, this.t, this.d, S, this.game); } catch (e) { /* ignore */ }
         c.restore();
         this.ptex.needsUpdate = true;
       }

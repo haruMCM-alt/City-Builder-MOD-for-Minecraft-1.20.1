@@ -1441,7 +1441,7 @@ export class Traffic {
     if (!v) return false;
     v.legs = []; v.mover = null; v.onDone = null; v.task = null;
     v.state = 'PLAYER'; v.slaved = true; v.released = null;
-    this.pTug = { v, t: 0, ready: false };
+    this.pTug = { v, t: 0, ready: false, side: v.depot && v.depot.x < P.x ? -1 : 1 };
     return true;
   }
 
@@ -1455,19 +1455,25 @@ export class Traffic {
     const ta = P.a + Math.PI + clamp(steer || 0, -1.2, 1.2);
     // cradle 0.6 m ahead of the tug centre, under the nose gear
     let x = gx - Math.cos(ta) * 0.6, z = gz - Math.sin(ta) * 0.6;
-    const DUR = 7;
+    const DUR = 9;
+    let a = ta;
     if (T.t < DUR) {
-      // drive in from 40 m ahead of the aircraft, slowing down onto the gear
-      const u = T.t / DUR, e = 1 - (1 - u) ** 3;
-      const d = 40 * (1 - e);
-      x += Math.cos(P.a) * d; z += Math.sin(P.a) * d;
-      v.v = 40 * 3 * (1 - u) ** 2 / DUR;
-      v.steerA = 0;
+      // drive in along a curve from the side (clear of the terminal ahead of a nose-in
+      // aircraft), ending straight on to the nose gear
+      const fx = Math.cos(P.a), fz = Math.sin(P.a), sx = -fz * T.side, sz = fx * T.side;
+      const p0 = [x + sx * 30 + fx * 9, z + sz * 30 + fz * 9], p1 = [x + fx * 9, z + fz * 9], p2 = [x, z];
+      const u = T.t / DUR, e = 1 - (1 - u) ** 2;
+      const B = (k) => (1 - e) ** 2 * p0[k] + 2 * (1 - e) * e * p1[k] + e * e * p2[k];
+      const D = (k) => 2 * (1 - e) * (p1[k] - p0[k]) + 2 * e * (p2[k] - p1[k]);
+      x = B(0); z = B(1);
+      a = Math.atan2(D(1), D(0));
+      v.v = Math.hypot(D(0), D(1)) * 2 * (1 - u) / DUR;
+      v.steerA = clamp((1 - e) * 0.5 * T.side, -0.6, 0.6);
     } else {
       T.ready = true;
       v.v = P.v;
     }
-    v.x = x; v.z = z; v.a = ta; v.dir = 1;
+    v.x = x; v.z = z; v.a = a; v.dir = 1;
     v.place(dt);
   }
 

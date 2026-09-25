@@ -226,7 +226,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     const a = liveryAssets(liv, this.meta.livery, true);
     setLiveryUniforms(this.livU, a);
     if (this.tailMat) { this.tailMat.map = a.tail; this.tailMat.color.set(0xffffff); this.tailMat.needsUpdate = true; }
-    for (const m of this.paintMats || []) m.color.setRGB(a.prim.x, a.prim.y, a.prim.z, THREE.LinearSRGBColorSpace);
+    for (const m of this.paintMats || []) m.color.setRGB(a.nacelle.x, a.nacelle.y, a.nacelle.z, THREE.LinearSRGBColorSpace);
   }
 
   setDisplayTextures(textures) {

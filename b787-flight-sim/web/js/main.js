@@ -11,7 +11,7 @@ import { Instruments } from './instruments.js';
 import { CameraRig, VIEW_NAMES } from './camera.js';
 import { Input } from './input.js';
 import { Audio, setEngineSound } from './audio.js';
-import { LOGOS, logoById, drawLogoIcon, randomLivery, dressParked, loadSavedLivery, saveLivery, DEFAULT_LIVERY, liveryAssets } from './livery.js';
+import { LOGOS, logoById, drawLogoIcon, randomLivery, dressParked, loadSavedLivery, saveLivery, DEFAULT_LIVERY, liveryAssets, liveryImagesReady, drawLogoTitle } from './livery.js';
 import { Cabin } from './cabin.js';
 import { PostFX } from './postfx.js';
 import { Rain } from './weatherfx.js';
@@ -22,7 +22,7 @@ import { MCP3D } from './mcp3d.js';
 import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
 import { configureObstacles } from './obstacles.js';
-import { V3, DEG, KT, FT, FPM, clamp, headingVec, wrap360, mulberry32 } from './util.js';
+import { V3, DEG, KT, FT, FPM, clamp, smoothstep, headingVec, wrap360, mulberry32 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
 const DT = 1 / 240;
@@ -153,6 +153,7 @@ class App {
     }
     const loader = this.loader = new GLTFLoader();
     loader.setDRACOLoader(draco);
+    await liveryImagesReady;
     const typeIds = Object.keys(this.types);
     const prog = { ac: 0, world: 0, lod: {}, gse: 0 };
     const lodP = () => typeIds.reduce((a, k) => a + (prog.lod[k] || 0), 0) / typeIds.length;
@@ -555,8 +556,17 @@ class App {
       const c = prev.getContext('2d'), W = prev.width, H = prev.height, lg = logoById(this.livery.logo);
       c.clearRect(0, 0, W, H);
       c.fillStyle = '#f5f7f9'; c.fillRect(0, 0, W, H);
-      c.fillStyle = lg.colors.primary; c.fillRect(0, H * 0.78, W, H * 0.22);
-      c.fillStyle = lg.colors.accent1; c.fillRect(0, H * 0.72, W, H * 0.04);
+      if (!lg.plain) {
+        c.fillStyle = lg.colors.primary; c.fillRect(0, H * 0.78, W, H * 0.22);
+        c.fillStyle = lg.colors.accent1; c.fillRect(0, H * 0.72, W, H * 0.04);
+      }
+      if (lg.real) {
+        // fin colours behind the mark, then the real wordmark
+        c.fillStyle = lg.colors.tailBottom; c.fillRect(H * 0.08, H * 0.06, H * 0.68, H * 0.62);
+        c.save(); c.translate(H * 0.42, H * 0.37); c.scale(H * 0.27, H * 0.27); lg.draw(c); c.restore();
+        drawLogoTitle(c, lg, H * 0.95, H * 0.4, lg.id === 'ana' ? H * 0.3 : H * 0.1, W - H * 1.05);
+        return;
+      }
       c.save(); c.translate(H * 0.42, H * 0.4); c.scale(H * 0.32, H * 0.32); lg.draw(c); c.restore();
       const words = (this.livery.name || ' ').trim().split(/\s+/), last = words.length > 1 ? words.pop() : '';
       let px = H * 0.34;
@@ -575,7 +585,12 @@ class App {
       drawLogoIcon(cv, lg);
       b.appendChild(cv);
       const sp = document.createElement('span'); sp.textContent = lg.label; b.appendChild(sp);
-      b.onclick = () => { this.livery = { ...this.livery, logo: lg.id }; apply(); };
+      b.onclick = () => {
+        // real airlines come with their own name; leaving one restores the default name
+        const was = logoById(this.livery.logo);
+        const name = lg.real ? lg.name : (was.real ? DEFAULT_LIVERY.name : this.livery.name);
+        this.livery = { ...this.livery, logo: lg.id, name }; nameEl.value = name; apply();
+      };
       box.appendChild(b);
     }
     let tmr = 0;
@@ -585,6 +600,14 @@ class App {
     });
     $('liveryReset').onclick = () => { this.livery = { ...DEFAULT_LIVERY }; nameEl.value = this.livery.name; apply(); };
     apply();
+  }
+
+  // JAL livery: the safety video starts on every monitor when the pushback begins
+  startSafetyVideo() {
+    if (this.livery?.logo !== 'jal' || !this.cabin || this.cabin.ife.safety) return;
+    const mp4 = document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"');
+    this.cabin.ifeSafety(true, ASSET + (mp4 ? 'jal_safety.mp4' : 'jal_safety.webm'), this.audio);
+    this.toast('機内安全ビデオ上映中 Safety video');
   }
 
   startFromMenu() {
@@ -640,7 +663,7 @@ class App {
     fm.ctl.pushback = 0;
     this.pushPending = false;
     if (this.traffic?.pTug) this.traffic.playerTug(false);
-    this.cabin?.ifeSafety?.(false);
+    this.cabin?.ifeSafety(false);
     const spd = (kt, altM) => kt * KT * Math.sqrt(1.225 / (1.225 * Math.pow(1 - 2.2558e-5 * altM, 4.256)));
     if (id === 'rwy27' || id === 'rwy09') {
       const r = id === 'rwy27' ? r27 : r09;
@@ -835,17 +858,16 @@ class App {
         if (fm.ctl.pushback || this.pushPending) {
           fm.ctl.pushback = 0; this.pushPending = false;
           this.traffic?.playerTug(false);
-          this.cabin?.ifeSafety?.(false);
           this.toast('プッシュバック終了 — トーイングカー切り離し');
         } else if (this.traffic && this.traffic.playerTug(true)) {
           // the tug drives in to the nose gear first; the push starts once it is connected
           this.pushPending = true;
           this.toast('トーイングカー接続中… Tug connecting');
-          this.cabin?.ifeSafety?.(true);
+          this.startSafetyVideo();
         } else {
           fm.ctl.pushback = -1.3; fm.ctl.parkingBrake = false;
           this.toast('プッシュバック開始 (Q/E で操向)');
-          this.cabin?.ifeSafety?.(true);
+          this.startSafetyVideo();
         }
         break;
       case 'direct': sys.lawDirect = !sys.lawDirect; this.toast('Flight controls ' + (sys.lawDirect ? 'DIRECT (Home/End でトリム)' : 'NORMAL')); break;
@@ -995,6 +1017,16 @@ class App {
         if ($('ifeStatus').textContent !== st) $('ifeStatus').textContent = st;
       }
       this.tailCamFrame(ifeOn && this.cabin.ife.channel === 'camera');
+      // safety video sound: full in the cabin, faint through the flight-deck door, muffled
+      // through the fuselage outside and gone once the camera is ~80 m away
+      if (this.cabin.ife.safety) {
+        const d = this.camera.position.distanceTo(this.visual.root.position);
+        let g = 0, cut = 12000;
+        if (inside) g = 1;
+        else if (cockpit) { g = 0.12; cut = 900; }
+        else { g = 0.3 * (1 - smoothstep(12, 80, d)); cut = 700; }
+        this.cabin.ife.setSafetyAudio(this.audio.enabled ? g : 0, cut, this.paused);
+      }
     }
     this.rig.update(dt, fm, this.visual.root);
     this.world.update(dt, this.camera, new THREE.Vector3(fm.pos.x, fm.pos.y, fm.pos.z));

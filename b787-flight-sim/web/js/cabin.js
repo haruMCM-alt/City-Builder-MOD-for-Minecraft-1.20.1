@@ -150,7 +150,7 @@ export class Cabin {
   setLivery(a) {
     this._livery = a;
     if (!this.group) return;
-    const prim = new THREE.Color().setRGB(a.prim.x, a.prim.y, a.prim.z, THREE.LinearSRGBColorSpace);
+    const b = a.brand || a.prim, prim = new THREE.Color().setRGB(b.x, b.y, b.z, THREE.LinearSRGBColorSpace);
     const grey = new THREE.Color('#2f343c');
     const cY = prim.clone().lerp(grey, 0.72), cW = prim.clone().lerp(grey, 0.5), cJ = prim.clone().lerp(new THREE.Color('#2a2522'), 0.6);
     for (const im of this.inst.Y) {
@@ -180,6 +180,9 @@ export class Cabin {
     // the tail camera is an HDR render of the scene: tone-map it like the main view
     if (M.map !== t) { M.map = t; M.toneMapped = !!tex; M.color.setScalar(tex ? 0.5 : 1); M.needsUpdate = true; }
   }
+
+  // safety video on every monitor (src: video file, audio: the game's Audio for routing)
+  ifeSafety(on, src, audio) { if (on) return this.ife.startSafety(src, audio); this.ife.stopSafety(); return false; }
 
   startService() { return this.service ? this.service.start() : false; }
 
