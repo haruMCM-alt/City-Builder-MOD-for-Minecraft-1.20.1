@@ -258,6 +258,9 @@ export function ifeGeometry(info) {
 }
 
 // -------------------------------------------------------------------------------- IFE system
+// shared by every IFE instance (the cabin screen materials are shared between cabins)
+const U_FULL = { value: 0 };
+
 export class IFE {
   constructor(cabin) {
     this.cabin = cabin;
@@ -275,8 +278,7 @@ export class IFE {
     this.channel = 'menu';
     this.t = 0; this._acc = 0; this._pacc = 0;
     this.d = { clock: '12:00', altFt: 0, gs: 0, oat: 15, dist: 0, hdg: 0, x: 0, z: 0, cx: 0, cz: 0, airline: 'Claude Air', callsign: '', type: '' };
-    this.screenMats = [];
-    this.uFull = { value: 0 };          // 1: every seat-back screen shows one full-frame source
+    this.uFull = U_FULL;                // 1: every seat-back screen shows the whole atlas (one source)
     this.safety = false;
     this._buildMap();
   }
@@ -287,8 +289,6 @@ export class IFE {
       const v = this.video = document.createElement('video');
       v.src = src; v.playsInline = true; v.preload = 'auto';
       v.addEventListener('ended', () => this.stopSafety());
-      this.vtex = new THREE.VideoTexture(v);
-      this.vtex.colorSpace = THREE.SRGBColorSpace;
       const ctx = audio && audio.ctx;
       if (ctx && audio.master) {
         try {
@@ -300,10 +300,17 @@ export class IFE {
       }
     }
     this.safety = true;
-    this.video.currentTime = 0;
-    const pr = this.video.play();
-    if (pr && pr.catch) pr.catch(() => {});
-    this._screenSource(this.vtex, 1);
+    const v = this.video;
+    v.currentTime = 0; v.muted = false;
+    const pr = v.play();
+    if (pr && pr.catch) pr.catch(() => {
+      // autoplay with sound refused: play muted and unmute on the next key / click
+      v.muted = true; v.play().catch(() => {});
+      const un = () => { v.muted = false; window.removeEventListener('keydown', un, true); window.removeEventListener('pointerdown', un, true); };
+      window.addEventListener('keydown', un, true); window.addEventListener('pointerdown', un, true);
+    });
+    this.uFull.value = 1;
+    this._acc = 1;
     return true;
   }
 
@@ -311,7 +318,7 @@ export class IFE {
     if (!this.safety) return;
     this.safety = false;
     if (this.video) this.video.pause();
-    this._screenSource(this.atex, 0);
+    this.uFull.value = 0;
   }
 
   // gain 0..1 and low-pass cut-off (the fuselage muffles it from outside); paused with the game
@@ -327,10 +334,6 @@ export class IFE {
     } else v.volume = clamp(gain, 0, 1);
   }
 
-  _screenSource(tex, full) {
-    this.uFull.value = full;
-    for (const m of this.screenMats) { m.map = tex; m.emissiveMap = tex; }
-  }
 
   // land / sea raster of the region around the airport (the map channel pans over it)
   _buildMap() {
@@ -366,10 +369,10 @@ export class IFE {
 
   // screen material: atlas map + per-instance tile
   patchScreen(mat) {
-    if (!mat || mat.userData.ife) return;
+    if (!mat) return;
+    // (re)bind to this IFE: a cabin model reused by a new IFE instance gets the new atlas
     mat.userData.ife = true;
-    mat.map = this.safety ? this.vtex : this.atex; mat.emissiveMap = mat.map;
-    this.screenMats.push(mat);
+    mat.map = this.atex; mat.emissiveMap = this.atex;
     mat.emissive = new THREE.Color(1, 1, 1); mat.emissiveIntensity = 0.9; mat.color.set(0xffffff);
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uFull = this.uFull;
@@ -421,7 +424,14 @@ export class IFE {
     if (this.channel === 'game') stepGame(this.game, dt, false);
     if (!visible) return;
     this._acc += dt;
-    if (this._acc > 0.25) {
+    if (this.safety) {
+      // safety video: the frame fills the whole atlas, which every screen shows (uFull)
+      if (this._acc > 1 / 15 && this.video && this.video.readyState >= 2) {
+        this._acc = 0;
+        this.atlas.getContext('2d').drawImage(this.video, 0, 0, this.atlas.width, this.atlas.height);
+        this.atex.needsUpdate = true;
+      }
+    } else if (this._acc > 0.25) {
       this._acc = 0;
       const c = this.atlas.getContext('2d');
       const tw = this.atlas.width / 4, th = this.atlas.height / 3;

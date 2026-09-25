@@ -60,7 +60,7 @@ export const LOGOS = [
     // Triton-blue fin with the white ANA mark
     id: 'ana', label: 'ANA 全日空', name: 'ANA', real: true,
     colors: { primary: '#1d3a91', primary2: '#223f9a', accent1: '#00b3f0', accent2: '#f5f7f9', tailTop: '#1a3688', tailBottom: '#223f9a', nacelle: '#eef0f3', brand: '#223f9a' },
-    tailScale: 1.2, tailShift: [1.3, -1.6],
+    tailScale: 1.5, tailShift: [1.6, -1.4],
     title: { img: 'ana', aspect: ANA_ASPECT, h: 1.9 },
     draw(ctx, onDark = true) { const w = 2, h = w / ANA_ASPECT; drawImg(ctx, onDark ? 'anaWhite' : 'ana', -w / 2, -h / 2, w, h); },
   },
