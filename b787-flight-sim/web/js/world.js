@@ -127,6 +127,7 @@ function puffCanvas(size = 128) {
 // worn centre lanes, fine aggregate grain and longitudinal paving joints.
 function patchPavement(m) {
   const asphalt = m.name === 'W_Asphalt' || m.name === 'W_TaxiAsphalt';
+  const concrete = m.name === 'W_Concrete';
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uWet = WET.uWet;
     sh.vertexShader = sh.vertexShader
@@ -165,6 +166,17 @@ uniform float uWet;`)
     float jt = 1.0 - smoothstep(0.0, 0.03, abs(fract(wp.x / 15.0 + 0.5) - 0.5) * 15.0);
     diffuseColor.rgb *= 1.0 - (0.22 * jl + 0.12 * jt) * aa;
   }` : ''}
+  ${concrete ? `
+  // apron slabs: 7.5 m joints, per-slab tone, tyre marks and oil / fuel stains
+  vec2 sl = floor(wp.xz / 7.5);
+  float slab = rwHash(sl);
+  vec2 fj = abs(fract(wp.xz / 7.5 + 0.5) - 0.5) * 7.5;
+  float joint = 1.0 - smoothstep(0.0, 0.05, min(fj.x, fj.y));
+  float g = rwNoise(wp.xz * 21.0) * 0.5 + rwNoise(wp.xz * 3.1) * 0.5;
+  float oil = smoothstep(0.62, 0.8, rwNoise(wp.xz * 0.23) * 0.6 + rwNoise(wp.xz * 1.3) * 0.4);
+  float blot = rwNoise(wp.xz * 0.04);
+  diffuseColor.rgb *= (0.9 + 0.1 * slab) * mix(1.0, 0.9 + 0.16 * g, aa) * (0.9 + 0.14 * blot) * (1.0 - 0.35 * oil) * (1.0 - 0.45 * joint * aa);
+  rwRubber = 0.4 * oil;` : ''}
   if (uWet > 0.0) {
     // water fills the low spots first: puddles, then a continuous film
     float pud = smoothstep(0.42, 0.7, rwNoise(wp.xz * 0.07) * 0.7 + rwNoise(wp.xz * 0.31) * 0.3);
@@ -176,7 +188,7 @@ uniform float uWet;`)
 roughnessFactor *= 1.0 - 0.3 * rwRubber;
 roughnessFactor = mix(roughnessFactor, 0.12, rwWet * 0.85);`);
   };
-  m.customProgramCacheKey = () => 'rwy2-' + (asphalt ? 'a' : 'm');
+  m.customProgramCacheKey = () => 'rwy2-' + (asphalt ? 'a' : concrete ? 'c' : 'm');
 }
 
 export function glowTexture() {
@@ -438,10 +450,11 @@ varying vec3 vTW; varying float vSlope;`)
         if (m.name === 'W_GlassTower' || m.name === 'W_Sign') this.emissiveMats.push(m);
         if (m.map) m.map.anisotropy = 8;
         if (m.name === 'W_Asphalt' || m.name === 'W_TaxiAsphalt') m.color.setScalar(0.62);
-        if (['W_Asphalt', 'W_TaxiAsphalt', 'W_MarkWhite', 'W_MarkYellow'].includes(m.name)) patchPavement(m);
+        if (['W_Asphalt', 'W_TaxiAsphalt', 'W_MarkWhite', 'W_MarkYellow', 'W_Concrete'].includes(m.name)) patchPavement(m);
         if (m.name.startsWith('W_facade_') || m.name === 'W_GlassTower') patchFacade(m);
         if (m.name === 'W_Shoulder') m.color.setScalar(0.75);
-        if (m.name === 'W_Concrete') m.color.setScalar(0.85);
+        if (m.name === 'W_Concrete') m.color.setScalar(0.66);
+        if (m.name === 'W_Roof' || m.name === 'W_PaintWhite') m.color.multiplyScalar(0.72);
       }
       o.receiveShadow = true;
       const n = o.name;
@@ -933,6 +946,6 @@ varying vec3 vTW; varying float vSlope;`)
       this.deck.material.color.setRGB(0.62 * day + 0.03, 0.65 * day + 0.03, 0.7 * day + 0.04);
       this.deck.material.map.offset.set(camera.position.x / 3500, -camera.position.z / 3500);
     }
-    this.renderer.toneMappingExposure = lerp(0.95, 0.52, day);
+    this.renderer.toneMappingExposure = lerp(0.95, 0.45, day);
   }
 }

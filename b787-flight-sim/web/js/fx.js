@@ -21,7 +21,8 @@ function puffTexture() {
     const r = Math.hypot(dx, dy);
     let n = 0, f = 3, a = 0.5;
     for (let o = 0; o < 4; o++) { n += a * noise(x / 128 * f + 7, y / 128 * f + 3); f *= 2; a *= 0.5; }
-    const v = Math.max(0, 1 - r * (1.05 - 0.45 * n)) ** 1.6;
+    const edge = Math.min(1, Math.max(0, (0.98 - r) / 0.3));   // exactly 0 before the sprite border
+    const v = Math.max(0, 1 - r * (1.05 - 0.45 * n)) ** 1.6 * edge * edge * (3 - 2 * edge);
     const k = (y * 128 + x) * 4;
     img.data[k] = img.data[k + 1] = img.data[k + 2] = 255;
     img.data[k + 3] = Math.min(255, v * 255 * (0.75 + 0.5 * n));
