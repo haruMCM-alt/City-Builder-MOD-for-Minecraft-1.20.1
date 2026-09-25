@@ -401,7 +401,7 @@ class Vehicle {
   lights(L, time, night) {
     if (!this.obj.visible) return;
     const c = Math.cos(this.a), s = Math.sin(this.a);
-    const moving = this.mover || this.state === 'SERVICE';
+    const moving = this.mover || this.state === 'SERVICE' || this.state === 'PLAYER';
     const on = moving || this.leader;
     if (!on) return;
     // amber beacon (rotating: ~1.3 Hz flashes)
@@ -1015,6 +1015,7 @@ export class Traffic {
       this._aiStep(ac, dt);
     }
     for (const v of this.vehicles) v.update(dt);
+    if (this.pTug) this._updatePlayerTug(dt, env.playerSteer);
     while (this._removeList.length) this._remove(this._removeList.pop());
     // lights and visibility culling
     const cam = env.camera.position;
@@ -1420,6 +1421,54 @@ export class Traffic {
     ac.onRunwayArmed = true;
     ac.flap = 5; ac.slat = 1;
     Object.assign(ac.lightsOn, { strobe: true, landing: true, taxi: false });
+  }
+
+  // ------------------------------------------------------------------ the player's pushback tug
+  // on: a free tug from the nearest depot drives in to the nose gear (ready after ~7 s);
+  // off: it backs away and returns to its depot
+  playerTug(on) {
+    const P = this.player;
+    if (!on) {
+      if (this.pTug) { const v = this.pTug.v; v.slaved = false; this._tugAway(v, P); this.pTug = null; }
+      return false;
+    }
+    if (this.pTug) return true;
+    if (!this.depots) return false;
+    const deps = this.depots.slice().sort((a, b) => Math.hypot(a.x - P.x, a.z - P.z) - Math.hypot(b.x - P.x, b.z - P.z));
+    let v = null;
+    for (const d of deps) if ((v = this._free(d, 'Tug'))) break;
+    if (!v) v = this.vehicles.find((u) => u.kind === 'Tug' && u.state === 'IDLE');
+    if (!v) return false;
+    v.legs = []; v.mover = null; v.onDone = null; v.task = null;
+    v.state = 'PLAYER'; v.slaved = true; v.released = null;
+    this.pTug = { v, t: 0, ready: false };
+    return true;
+  }
+
+  get playerTugReady() { return !!this.pTug?.ready; }
+
+  _updatePlayerTug(dt, steer) {
+    const T = this.pTug, v = T.v, P = this.player;
+    T.t += dt;
+    const na = P.tm.noseAhead;
+    const gx = P.x + Math.cos(P.a) * na, gz = P.z + Math.sin(P.a) * na;
+    const ta = P.a + Math.PI + clamp(steer || 0, -1.2, 1.2);
+    // cradle 0.6 m ahead of the tug centre, under the nose gear
+    let x = gx - Math.cos(ta) * 0.6, z = gz - Math.sin(ta) * 0.6;
+    const DUR = 7;
+    if (T.t < DUR) {
+      // drive in from 40 m ahead of the aircraft, slowing down onto the gear
+      const u = T.t / DUR, e = 1 - (1 - u) ** 3;
+      const d = 40 * (1 - e);
+      x += Math.cos(P.a) * d; z += Math.sin(P.a) * d;
+      v.v = 40 * 3 * (1 - u) ** 2 / DUR;
+      v.steerA = 0;
+    } else {
+      T.ready = true;
+      v.v = P.v;
+    }
+    v.x = x; v.z = z; v.a = ta; v.dir = 1;
+    v.place(dt);
   }
 
   _tugAway(tug, ac) {

@@ -437,6 +437,18 @@ export class FlightModel {
       const top = obstacleAt(pc.x, pc.y, pc.z);
       if (top > 0) {
         const sp = this.vel.len();
+        if (sp < 9 && wow) {
+          // taxiing into a building: dented skin, the aircraft is stopped (not destroyed)
+          this.pos.addScaled(this.vel, -3 * dt);
+          this.vel.scale(-0.15); this.w.scale(0);
+          if (!this._hitT.bump || this.time - this._hitT.bump > 3) {
+            this._hitT.bump = this.time;
+            const text = '建物に接触 (' + h.name + ')';
+            this.dmg.list.push(text);
+            this.events.push({ type: 'damage', part: 'bump', side: h.p0.z < 0 ? 0 : 1, text, sev: sp, time: this.time });
+          }
+          return;
+        }
         if (['nose', 'noseTop', 'fuse', 'belly'].includes(h.name) || sp > 120 && h.name.startsWith('wingmid')) {
           this.crash('collided with a building');
           return;

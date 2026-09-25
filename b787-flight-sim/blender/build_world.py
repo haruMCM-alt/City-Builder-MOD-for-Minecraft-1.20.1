@@ -599,6 +599,7 @@ def build_tower(M, col):
     x, y = 830.0, 640.0
     box(tb, x - 25, y - 15, x + 25, y + 15, 0, 12, 0, 1, FACADES["facade_office"])
     cylinder(tb, x, y, 7.5, 5.5, 12, 82, 2, n=32, tile=(6, 6))
+    obstacle(x - 11, y - 11, x + 11, y + 11, 99.0)
     for zz in range(20, 80, 12):
         cylinder(tb, x, y, 7.3, 7.3, zz, zz + 0.6, 3, n=32)
     cylinder(tb, x, y, 6.5, 11.5, 82, 88, 2, n=8)
@@ -638,6 +639,7 @@ def build_airport_buildings(M, col):
     # maintenance hangars
     for (x0, x1) in ((880, 1060), (1080, 1260)):
         barrel_hangar(b, x0, x1, 330, 470, 26, 38, 0, 1, 2)
+        obstacle(x0, 330, x1, 470, 38.0)
         vertical_text(b, "CITY BUILDER", (x0 + x1) / 2, 329.4, 31, 7, -math.pi / 2, 8, extrude=0.3)
     box(b, 1280, 360, 1420, 460, 0, 14, 5, 1, FACADES["facade_office"])        # engineering office
     # cargo terminal
@@ -647,6 +649,7 @@ def build_airport_buildings(M, col):
     for i in range(3):
         for j in range(2):
             cylinder(b, -1100 + i * 42, 640 + j * 42, 16, 16, 0, 17, 4, n=32, tile=(10, 10))
+            obstacle(-1100 + i * 42 - 14, 640 + j * 42 - 14, -1100 + i * 42 + 14, 640 + j * 42 + 14, 17.0)
     box(b, -1180, 590, -980, 592, 0, 2.5, 9)
     # fire station (south side, midfield)
     box(b, 180, -300, 260, -260, 0, 9, 3, 1, (10, 10))
@@ -921,6 +924,7 @@ def build_landmarks(M, col):
     for px in (RIVER_X - 150, RIVER_X + 150):
         for sy in (-1, 1):
             beam(mb, (px, yb + sy * 17, -8), (px, yb + sy * 4, 135), 5, 5, 2)
+            obstacle(px - 3, yb + min(sy * 4, sy * 17) - 3, px + 3, yb + max(sy * 4, sy * 17) + 3, 135.0)   # pylon legs
         beam(mb, (px, yb - 10, 110), (px, yb + 10, 110), 4, 4, 2)
         for k in range(1, 12):
             for dirx in (-1, 1):
@@ -945,6 +949,8 @@ def build_landmarks(M, col):
                 continue
             hgt = 2.6 * int(RNG.integers(1, 5))
             box(mb, x, y, x + 60, y + 12, 0, hgt, 8, 9, (12.2, 2.6 * 8 / 1.0))
+            if hgt < 4.0:
+                obstacle(x, y, x + 60, y + 12, hgt)
     for i in range(6):
         x = -4550 + i * 230
         # gantry crane
@@ -955,6 +961,9 @@ def build_landmarks(M, col):
         beam(mb, (x + 12, -1430, 48), (x + 12, -1350, 48), 2.5, 3.0, 7)
         beam(mb, (x, -1480, 50), (x, -1340, 50), 5, 3, 7)
         box(mb, x - 5, -1400, x + 5, -1392, 44, 52, 4)
+        for sy in (-1, 1):
+            obstacle(x - 14, -1390 + sy * 14 - 2, x + 14, -1390 + sy * 14 + 2, 52.0)     # crane legs + girders
+        obstacle(x - 3, -1480, x + 3, -1340, 52.0)                                          # boom
         add_light("obstruction", (x, -1480, 51), "#ff1a1a", 2.0, kind="blink")
     # quay
     box(mb, -4700, -1440, -2500, -1400, -4, 0.8, 6, 6, (10, 10))

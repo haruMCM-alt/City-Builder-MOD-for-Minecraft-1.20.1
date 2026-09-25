@@ -638,6 +638,9 @@ class App {
     };
     let skipStand = null;
     fm.ctl.pushback = 0;
+    this.pushPending = false;
+    if (this.traffic?.pTug) this.traffic.playerTug(false);
+    this.cabin?.ifeSafety?.(false);
     const spd = (kt, altM) => kt * KT * Math.sqrt(1.225 / (1.225 * Math.pow(1 - 2.2558e-5 * altM, 4.256)));
     if (id === 'rwy27' || id === 'rwy09') {
       const r = id === 'rwy27' ? r27 : r09;
@@ -829,9 +832,21 @@ class App {
       case 'time': this.world.tod = (this.world.tod + 1) % 24; $('tod').value = this.world.tod; this.toast(`時刻 ${Math.floor(this.world.tod)}:00`); break;
       case 'pushback':
         if (!o.wow || o.gs > 3) break;
-        fm.ctl.pushback = fm.ctl.pushback ? 0 : -1.3;
-        if (fm.ctl.pushback) fm.ctl.parkingBrake = false;
-        this.toast(fm.ctl.pushback ? 'プッシュバック開始 (Q/E で操向)' : 'プッシュバック終了');
+        if (fm.ctl.pushback || this.pushPending) {
+          fm.ctl.pushback = 0; this.pushPending = false;
+          this.traffic?.playerTug(false);
+          this.cabin?.ifeSafety?.(false);
+          this.toast('プッシュバック終了 — トーイングカー切り離し');
+        } else if (this.traffic && this.traffic.playerTug(true)) {
+          // the tug drives in to the nose gear first; the push starts once it is connected
+          this.pushPending = true;
+          this.toast('トーイングカー接続中… Tug connecting');
+          this.cabin?.ifeSafety?.(true);
+        } else {
+          fm.ctl.pushback = -1.3; fm.ctl.parkingBrake = false;
+          this.toast('プッシュバック開始 (Q/E で操向)');
+          this.cabin?.ifeSafety?.(true);
+        }
         break;
       case 'direct': sys.lawDirect = !sys.lawDirect; this.toast('Flight controls ' + (sys.lawDirect ? 'DIRECT (Home/End でトリム)' : 'NORMAL')); break;
       case 'mute': this.audio.enabled = !this.audio.enabled; this.toast('Sound ' + (this.audio.enabled ? 'ON' : 'OFF')); break;
@@ -946,8 +961,14 @@ class App {
       const o = fm.out;
       this.traffic.update(dt, {
         player: { x: fm.pos.x, z: fm.pos.z, alt: o.ra ?? 0, a: ((o.hdg || 0) - 90) * DEG, v: (o.gs || 0) * KT, onGround: !!o.wow },
+        playerSteer: fm.ctl.steer || 0,
         camera: this.camera, night: this.world.night, touchdown: (ac) => this.aiTouchdown(ac),
       });
+    }
+    if (this.pushPending && this.traffic?.playerTugReady) {
+      this.pushPending = false;
+      fm.ctl.pushback = -1.3; fm.ctl.parkingBrake = false;
+      this.toast('プッシュバック開始 (Q/E で操向、J で終了)');
     }
     if (this.rig.view === 'traffic' && this.traffic) this.rig.trafficTarget = this.pickTrafficFocus();
     const cockpit = this.rig.view === 'cockpit';
