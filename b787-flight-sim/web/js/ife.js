@@ -323,10 +323,10 @@ export class IFE {
 {
   vec2 tOff = vec2(mod(aTile, 4.0) * 0.25, 1.0 - (floor(aTile / 4.0) + 1.0) / 3.0);
   #ifdef USE_MAP
-  vMapUv = vec2(1.0 - vMapUv.x, vMapUv.y) * vec2(0.25, 1.0 / 3.0) + tOff;
+  vMapUv = (vec2(1.0) - vMapUv) * vec2(0.25, 1.0 / 3.0) + tOff;
   #endif
   #ifdef USE_EMISSIVEMAP
-  vEmissiveMapUv = vec2(1.0 - vEmissiveMapUv.x, vEmissiveMapUv.y) * vec2(0.25, 1.0 / 3.0) + tOff;
+  vEmissiveMapUv = (vec2(1.0) - vEmissiveMapUv) * vec2(0.25, 1.0 / 3.0) + tOff;
   #endif
 }`);
     };

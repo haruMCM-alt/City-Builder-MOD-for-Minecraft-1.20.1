@@ -19,6 +19,9 @@ import { Vapor } from './vapor.js';
 import { Traffic } from './traffic.js';
 import { Radio } from './atc.js';
 import { MCP3D } from './mcp3d.js';
+import { FX } from './fx.js';
+import { Mishap } from './mishap.js';
+import { configureObstacles } from './obstacles.js';
 import { V3, DEG, KT, FT, FPM, clamp, headingVec, wrap360, mulberry32 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -137,6 +140,7 @@ class App {
     const meta = this.types[sel].meta;
     this.meta = meta; this.worldData = world;
     configureTerrain(world);
+    configureObstacles(world);
     this.world = new World(renderer, this.scene, this.quality);
 
     const draco = new DRACOLoader();
@@ -181,6 +185,8 @@ class App {
 
     // aircraft (the selected type; the others are loaded when picked in the menu)
     this.post = new PostFX(renderer, this.scene, this.camera);
+    this.fx = new FX(this.scene);
+    this.liveryAssets = () => (this.meta.livery ? liveryAssets(this.livery, this.meta.livery, true) : null);
     this.rain = new Rain(this.scene);
     this._camPrev = new THREE.Vector3(); this.camVel = new THREE.Vector3();
     this.resize();
@@ -188,6 +194,7 @@ class App {
     this.instruments = new Instruments($('pfd'), $('nd'), $('eicas'), $('hud'), world);
     this.rig = new CameraRig(this.camera, canvas, meta, world);
     this.installType(sel);
+    this.mishap = new Mishap(this);
     this.input = new Input((c) => this.command(c));
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     if (this.isTouch) this.input.bindTouch($('touch'));
@@ -732,6 +739,8 @@ class App {
       this.trafficFocus = null;
     }
     this.crashShown = false;
+    this.mishap?.reset();
+    $('dmg').classList.add('hidden');
     this._serviceDone = false;
     this.acc = 0;
     this.tdReport = null;
@@ -842,6 +851,11 @@ class App {
         this.toast('ATC 音声 voice ' + (this.radio.voice ? 'ON' : 'OFF'));
         break;
       case 'reset': this.startScenario(this.scenario, true); break;
+      case 'extinguish': {
+        const n = fm.extinguish();
+        this.toast(n ? '🧯 消火装置作動 Fire handles pulled — engine fire extinguished' : '消火できる火災はありません (燃料火災は消えません)', 3500);
+        break;
+      }
       case 'service': {
         if (!this.cabin.available) break;
         if (!this.cabin.group) { this.cabin.ensure().then(() => this.cabin.startService()); this.toast('機内食サービスを開始します Meal service'); break; }
@@ -990,6 +1004,7 @@ class App {
       if (cv.length() < 400) this.camVel.lerp(cv, Math.min(1, dt * 10));
       this._camPrev.copy(this.camera.position);
     }
+    if (!this.paused) { this.fx.update(dt, this.camera); this.mishap.update(dt); }
     this.vapor.update(dt, fm, { camera: this.camera, humidity: this.world.weather.hum ?? 0.5, light: 1 - this.world.night,
       emit: (p, v, life, size, grow, alpha) => this.visual.emit(p, v, life, size, grow, alpha) });
     this.rain.update(dt, { camera: this.camera, amount: this.world.rain || 0, wind: fm.wind, camVel: this.camVel,
@@ -1099,11 +1114,19 @@ class App {
       this.audio.thump(clamp(-e.vs / 3, 0.15, 1.2));
       this.toast(`接地 Touchdown ${Math.round(fpm)} fpm · ${Math.round(e.ias)} kt · ` +
         (onRwy ? `滑走路端から ${Math.round(along)} m · 中心線 ${lat.toFixed(1)} m — ${grade}` : '滑走路外 Off runway!'), 6500);
+    } else if (e.type === 'damage') {
+      this.mishap.onDamage(e);
+      this.toast('⚠ 損傷 ' + e.text, 4500);
     } else if (e.type === 'crash' && !this.crashShown) {
       this.crashShown = true;
       $('crashTitle').textContent = e.reason.includes('water') ? '着水 DITCHED' : '墜落 CRASH';
       $('crashText').textContent = e.reason;
-      setTimeout(() => $('crash').classList.remove('hidden'), 900);
+      this.mishap.crash(e.reason);
+      // watch the wreckage from outside before the crash screen appears
+      if (['cockpit', 'cabin', 'wing', 'ife'].includes(this.rig.view)) this.rig.setView('orbit');
+      this.rig.dist = 240; this.rig.orbitPitch = 0.35;
+      ['ife', 'panel'].forEach((i) => $(i).classList.add('hidden'));
+      setTimeout(() => { if (this.crashShown) $('crash').classList.remove('hidden'); }, 7000);
     } else if (e.type === 'scrape') {
       this.toast('⚠ ' + (e.part === 'tail' ? 'テールストライク Tail strike!' : e.part + ' strike'), 3000);
     }
@@ -1122,6 +1145,22 @@ class App {
       `ALT ${Math.round(o.altFt)} ft  RA ${o.raFt < 2500 ? Math.round(o.raFt) : '---'}  VS ${Math.round(o.vs / FPM)}\n` +
       `HDG ${String(Math.round(o.hdg) % 360).padStart(3, '0')}  PITCH ${o.pitch.toFixed(1)}  BANK ${o.bank.toFixed(0)}\n` +
       `FLAPS ${f}  GEAR ${gear}  THR ${Math.round(s.tla[0] * 100)}%  ${s.pilot.reverse ? 'REV ' : ''}${this.fm.ctl.parkingBrake ? 'PRK ' : ''}${s.mode}`;
+    // damage status panel
+    const D = this.fm.dmg;
+    const dm = $('dmg');
+    if (D && D.list.length && !this.fm.crashed) {
+      const fire = D.engFire[0] || D.engFire[1] || D.wingFire[0] || D.wingFire[1];
+      const lines = [];
+      if (D.engFire[0]) lines.push('<b class="w">FIRE ENG L</b>'); if (D.engFire[1]) lines.push('<b class="w">FIRE ENG R</b>');
+      if (D.wingFire[0] || D.wingFire[1]) lines.push('<b class="w">FIRE WING ' + (D.wingFire[0] ? 'L' : '') + (D.wingFire[1] ? 'R' : '') + '</b>');
+      for (let i = 0; i < 2; i++) if (D.eng[i]) lines.push(`<b>ENG ${i ? 'R' : 'L'} ${D.eng[i] >= 2 ? 'SEPARATED' : 'FAIL'}</b>`);
+      if (D.wing[0] || D.wing[1]) lines.push(`<b>WING DAMAGE ${D.wing[0] ? 'L ' + Math.round(D.wing[0] * 100) + '% ' : ''}${D.wing[1] ? 'R ' + Math.round(D.wing[1] * 100) + '%' : ''}</b>`);
+      if (D.tail) lines.push(`<b>STAB / RUDDER DAMAGE ${Math.round(D.tail * 100)}%</b>`);
+      if (D.leak) lines.push(`<b>FUEL LEAK ${Math.round(D.leak * 3.6)} t/h</b>`);
+      const html = lines.join('') + (fire ? '<span>Shift+X 消火 Fire handle</span>' : '');
+      if (dm.innerHTML !== html) dm.innerHTML = html;
+      dm.classList.remove('hidden');
+    } else dm.classList.add('hidden');
     const W = s.warn;
     const b = $('banner');
     const txt = this.fm.crashed ? '' : W.stall ? 'STALL' : W.pullUp ? 'PULL UP' : W.overspeed ? 'OVERSPEED' : W.config ? 'CONFIG' :

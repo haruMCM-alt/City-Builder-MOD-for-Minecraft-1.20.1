@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { TERRAIN, TERRAIN_GLSL } from './terrain.js';
+import { patchFacade } from './shading.js';
 import { clamp, smoothstep, lerp, mulberry32, DEG } from './util.js';
 
 const LIGHT_KIND = { steady: 0, directional: 1, papi: 2, sequenced: 3, blink: 4, night: 5 };
@@ -335,7 +336,8 @@ vTW = vec3(wxz.x, h0, wxz.y);`)
         .replace('#include <begin_vertex>', 'vec3 transformed = vec3(position.x, h0, position.z);');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-uniform sampler2D uDetail;
+uniform sampler2D uDetail; uniform vec4 uFlat;
+float tfH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 varying vec3 vTW; varying float vSlope;`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 {
@@ -352,6 +354,29 @@ varying vec3 vTW; varying float vSlope;`)
   vec3 forest = vec3(0.07, 0.12, 0.05) * (0.75 + 0.5 * d1.g);
   float fm = smoothstep(0.52, 0.6, d3.r * 0.7 + d2.b * 0.3) * smoothstep(15.0, 60.0, h);
   vec3 col = mix(grass, forest, fm);
+  // farmland patchwork outside the city: rotated field blocks, crops, soil, hedgerows
+  {
+    vec2 fp = vTW.xz;
+    vec2 blk = floor(fp / 2400.0);
+    float an = (tfH(blk) - 0.5) * 0.9;
+    vec2 r = mat2(cos(an), -sin(an), sin(an), cos(an)) * fp;
+    vec2 fsz = vec2(230.0, 150.0) * (0.8 + 0.5 * tfH(blk + 5.0));
+    vec2 cell = floor(r / fsz), fr = fract(r / fsz);
+    float hc = tfH(cell + blk * 37.0);
+    vec3 fc = hc < 0.28 ? vec3(0.17, 0.25, 0.07) : hc < 0.46 ? vec3(0.34, 0.31, 0.15)
+            : hc < 0.62 ? vec3(0.24, 0.18, 0.11) : hc < 0.8 ? vec3(0.12, 0.21, 0.06) : vec3(0.42, 0.38, 0.19);
+    fc *= 0.82 + 0.3 * d1.r + 0.12 * (tfH(cell + 3.3) - 0.5);
+    float px = length(fwidth(r));
+    float rows = step(0.5, fract(r.x / 3.2 + hc * 7.0)) * (1.0 - smoothstep(0.4, 1.6, px));
+    fc *= 1.0 - 0.1 * rows;
+    float edge = min(min(fr.x, 1.0 - fr.x) * fsz.x, min(fr.y, 1.0 - fr.y) * fsz.y);
+    float hedge = 1.0 - smoothstep(1.5, 5.0 + px, edge);
+    fc = mix(fc, vec3(0.05, 0.09, 0.035), hedge * 0.75);
+    float outside = 1.0 - step(uFlat.x, vTW.x) * step(vTW.x, uFlat.y) * step(uFlat.z, vTW.z) * step(vTW.z, uFlat.w);
+    float farm = smoothstep(0.38, 0.5, d3.b * 0.8 + d2.r * 0.2) * (1.0 - fm) * (1.0 - smoothstep(60.0, 220.0, h))
+               * smoothstep(0.5, 2.0, h) * (1.0 - smoothstep(0.06, 0.18, vSlope)) * outside;
+    col = mix(col, fc, farm);
+  }
   vec3 rock = vec3(0.33, 0.31, 0.28) * (0.7 + 0.5 * d1.b);
   col = mix(col, rock, smoothstep(0.22, 0.42, vSlope));
   col = mix(col, rock, smoothstep(750.0, 1150.0, h + d2.g * 250.0));
@@ -414,6 +439,7 @@ varying vec3 vTW; varying float vSlope;`)
         if (m.map) m.map.anisotropy = 8;
         if (m.name === 'W_Asphalt' || m.name === 'W_TaxiAsphalt') m.color.setScalar(0.62);
         if (['W_Asphalt', 'W_TaxiAsphalt', 'W_MarkWhite', 'W_MarkYellow'].includes(m.name)) patchPavement(m);
+        if (m.name.startsWith('W_facade_') || m.name === 'W_GlassTower') patchFacade(m);
         if (m.name === 'W_Shoulder') m.color.setScalar(0.75);
         if (m.name === 'W_Concrete') m.color.setScalar(0.85);
       }

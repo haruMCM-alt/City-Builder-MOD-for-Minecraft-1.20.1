@@ -208,7 +208,7 @@ export class Systems {
         pCmd = clamp(1.1 * (this.phiT - phi), this.ap.on ? -4 : -10, this.ap.on ? 4 : 10) * DEG;
       }
       const ep = pCmd - p;
-      this.ip = clamp(this.ip + 3.0 * ep * dt, -0.3, 0.3);
+      this.ip = clamp(this.ip + 3.0 * ep * dt, -0.44, 0.44);   // full authority: holds a damaged wing
       const ailCmd = clamp((4.5 * ep + this.ip) * sched, -25 * DEG, 25 * DEG);
       this.ail = approach(this.ail, ailCmd, 60 * DEG, dt);
 

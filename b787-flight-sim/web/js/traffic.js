@@ -11,6 +11,7 @@ import { Path, Mover } from './path.js';
 import { hdg3 } from './atc.js';
 import { PlayerATC } from './playeratc.js';
 import { dressParked } from './livery.js';
+import { weatherModel, weatherGSE } from './shading.js';
 import { terrainHeight } from './terrain.js';
 import { DEG, KT, FT, clamp, lerp, smoothstep, mulberry32 } from './util.js';
 
@@ -515,7 +516,9 @@ export class Traffic {
     this.time = 0;
     this.enabled = true;
     const list = (types && types.length ? types : [{ meta, lod: lodTemplate, weight: 1 }]).filter((t) => t.lod);
+    if (gse) weatherGSE(gse);
     this.types = list.map((t) => {
+      weatherModel(t.lod);
       const tm = typeModel(t.meta);
       tm.weight = t.weight ?? 1;
       tm.layout = t.meta.liveryLayout || (tm.type === 'b789' ? livery : null) || livery;

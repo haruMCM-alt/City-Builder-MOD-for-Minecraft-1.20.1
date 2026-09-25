@@ -7,6 +7,7 @@
 // baked detail like real paint.  The fin is a canvas texture drawn in metres on
 // the fin's planar UV projection.
 import * as THREE from 'three';
+import { weatherMaterial } from './shading.js';
 
 export const DEFAULT_LIVERY = { name: 'Claude Air', logo: 'spark' };
 
@@ -370,12 +371,17 @@ export function dressParked(group, liv, layout) {
     const k = base.uuid + '|' + key;
     if (!matCache.has(k)) {
       const mm = base.clone();
+      delete mm.userData.weathered;
+      mm.onBeforeCompile = () => {};
+      mm.customProgramCacheKey = () => '';
       if (n === 'B787_Tail') { mm.map = a.tail; mm.color.set(0xffffff); }
       else if (n === 'B787_Navy' || n === 'B787_Nacelle') mm.color.setRGB(a.prim.x, a.prim.y, a.prim.z, THREE.LinearSRGBColorSpace);
       else {
         const u = liveryUniforms(layout); setLiveryUniforms(u, a);
         mm.onBeforeCompile = (sh) => patchLiveryShader(sh, u, 'position');
+        mm.customProgramCacheKey = () => 'livery';
       }
+      weatherMaterial(mm);
       matCache.set(k, mm);
     }
     m.material = matCache.get(k);

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { DEG, clamp, lerp, smoothstep } from './util.js';
 import { glowTexture, HDR } from './world.js';
 import { liveryUniforms, patchLiveryShader, liveryAssets, setLiveryUniforms } from './livery.js';
+import { patchWeathering, weatherKind } from './shading.js';
 
 const COCKPIT_PARTS = ['CockpitShell', 'CockpitInterior', 'CockpitDetail', 'HUD_Combiner', 'Throttle_L', 'Throttle_R', 'Yoke_L', 'Yoke_R',
   'Display_PFD_L', 'Display_ND_L', 'Display_EICAS', 'Display_ND_R', 'Display_PFD_R'];
@@ -37,6 +38,8 @@ export class AircraftVisual {
     this.flexUniforms = {
       uFlex: { value: 0 }, uRootInv: { value: new THREE.Matrix4() }, uRootUp: { value: new THREE.Vector3(0, 1, 0) },
       uFlexK: { value: new THREE.Vector3(this.flexR, this.flexD, this.flexX) },
+      // damage: lateral cut of the left / right wing, fin cut height, fin region (aircraft frame)
+      uCut: { value: new THREE.Vector4(1e5, 1e5, 1e5, -1e5) },
     };
     this.flex = 0; this.flexVel = 0;
     this.livU = meta.livery ? liveryUniforms(meta.livery) : null;
@@ -119,7 +122,7 @@ export class AircraftVisual {
           Object.assign(sh.uniforms, self.flexUniforms);
           sh.vertexShader = sh.vertexShader
             .replace('#include <common>', `#include <common>
-uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 uFlexK;`)
+uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 uFlexK; varying vec3 vDmgP;`)
             .replace('#include <begin_vertex>', `#include <begin_vertex>
 {
   vec4 wpF = modelMatrix * vec4(transformed, 1.0);
@@ -127,10 +130,20 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
   float span = max(abs(lp.z) - uFlexK.x, 0.0);
   float fl = uFlex * span * span / uFlexK.y * step(uFlexK.z, lp.x);
   transformed += inverse(mat3(modelMatrix)) * (uRootUp * fl);
+  vDmgP = lp;
 }`);
+          // broken-off wing / fin sections are not drawn
+          sh.uniforms.uCut = self.flexUniforms.uCut;
+          sh.fragmentShader = sh.fragmentShader
+            .replace('#include <common>', '#include <common>\nuniform vec4 uCut; uniform vec3 uFlexK; varying vec3 vDmgP;')
+            .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+  if (vDmgP.x > uFlexK.z && (vDmgP.z < -uCut.x || vDmgP.z > uCut.y)) discard;
+  if (vDmgP.y > uCut.z && vDmgP.x < uCut.w) discard;`);
           if (m.name === 'B787_Fuselage' && self.livU) patchLiveryShader(sh, self.livU, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
+          if (wx) patchWeathering(sh, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz', wx);
         };
-        m.customProgramCacheKey = () => (m.name === 'B787_Fuselage' ? 'flex-livery' : 'flex');
+        const wx = weatherKind(m.name);
+        m.customProgramCacheKey = () => (m.name === 'B787_Fuselage' ? 'flex-livery' : 'flex') + (wx || '');
         if (m.name === 'B787_Tail') this.tailMat = m;
         if (m.name === 'B787_Navy' || m.name === 'B787_Nacelle') (this.paintMats ||= []).push(m);
       }
@@ -178,6 +191,27 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     this._initParticles();
     this.lightsOn = { nav: true, beacon: true, strobe: false, landing: false, taxi: false, logo: true };
     this.cockpitVisible = true;
+  }
+
+  // show structural damage (see FlightModel.dmg): lost outer wings, fin, separated engines
+  setDamage(D) {
+    const m = this.meta;
+    const half = (m.span || 60) / 2, root = (m.fusW || 5.77) / 2 + 0.3;
+    const cut = (f) => (f > 0 ? root + (half - root) * (1 - f) : 1e5);
+    const u = this.flexUniforms.uCut.value;
+    const finTop = (m.height || 17) + m.groundY, base = (m.fusH || 5.97) / 2;
+    u.set(cut(D.wing[0]), cut(D.wing[1]), D.tail > 0.55 ? base + (finTop - base) * 0.35 : 1e5, m.tailStrike[0] + 8 * ((m.length || 62.8) / 62.8));
+    for (let i = 0; i < 2; i++) {
+      const L = i === 0 ? '_L' : '_R';
+      for (const n of ['Nacelle', 'Fan', 'Pylon']) { const o = this.root.getObjectByName(n + L); if (o) o.visible = D.eng[i] < 2; }
+      for (const l of this.lights) if (l.name.endsWith(L) && /Nav|Strobe/.test(l.name) && D.wing[i] > 0) { l.obj.visible = false; l.dead = true; }
+    }
+  }
+
+  clearDamage() {
+    this.flexUniforms.uCut.value.set(1e5, 1e5, 1e5, -1e5);
+    for (const n of ['Nacelle', 'Fan', 'Pylon']) for (const L of ['_L', '_R']) { const o = this.root.getObjectByName(n + L); if (o) o.visible = true; }
+    for (const l of this.lights) { l.obj.visible = true; l.dead = false; }
   }
 
   setAO(fus, wing) {

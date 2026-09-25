@@ -13,6 +13,7 @@
 import { V3, Quat, DEG, RAD, KT, FT, G0, clamp, lerp, smoothstep, approach, wrap360 } from './util.js';
 import { isa, tas2cas } from './atmosphere.js';
 import { terrainHeight, isWater, TERRAIN } from './terrain.js';
+import { obstacleAt } from './obstacles.js';
 
 export const SPEC = {
   S: 377.0, b: 60.12, c: 7.71,
@@ -115,7 +116,16 @@ export class FlightModel {
       { name: 'engineR', p: P(meta.engineR) },
       { name: 'nose', p: P([meta.noseTip[0] - 1.0 * this.kL, meta.noseTip[1] - 2.2 * kH, 0]) },
       { name: 'belly', p: P([0, -3.3 * kH, 0]) },
+      // extra points used against buildings (not the ground): mid-span, fin tip, cabin roof
+      { name: 'wingmidL', p: P([meta.wingTipL[0] * 0.5, meta.wingTipL[1] * 0.5 - 1.5 * kH, meta.wingTipL[2] * 0.5]), air: true },
+      { name: 'wingmidR', p: P([meta.wingTipR[0] * 0.5, meta.wingTipR[1] * 0.5 - 1.5 * kH, meta.wingTipR[2] * 0.5]), air: true },
+      { name: 'fin', p: P([meta.tailStrike[0] + 2 * this.kL, (meta.height || 17) + meta.groundY - 0.5, 0]), air: true },
+      { name: 'fuse', p: P([0, 2.9 * kH, 0]), air: true },
+      { name: 'noseTop', p: P([meta.noseTip[0] - 2, meta.noseTip[1] + 1.2 * kH, 0]), air: true },
     ];
+    for (const h of this.hard) h.p0 = h.p.clone();
+    this.wingRootZ = (meta.fusW || 5.77) / 2;
+    this.resetDamage();
     this.engAxis = [P(meta.engineAxisL), P(meta.engineAxisR)];
     this.engines = [new Engine(-1), new Engine(1)];
 
@@ -162,6 +172,60 @@ export class FlightModel {
 
   get mass() { return SPEC.OEW + this.payload + this.fuel; }
 
+  // ------------------------------------------------------------------ damage
+  // wing[i]: fraction of the half span lost (0 = intact), tail: 0..1, eng[i]: 0 ok, 1 fire / failed,
+  // 2 separated; fire flags; leak: fuel lost per second
+  resetDamage() {
+    this.dmg = { wing: [0, 0], tail: 0, eng: [0, 0], engFire: [false, false], wingFire: [false, false], leak: 0, list: [] };
+    for (const h of this.hard) { h.p = h.p0.clone(); h.gone = false; }
+    if (this.engines) for (const e of this.engines) e.running = true;
+    this._hitT = {};
+  }
+
+  // a localised impact: part name of a contact point, sev = impact speed (m/s), obstacle = building
+  impact(part, sev, obstacle = false) {
+    const now = this.time, D = this.dmg;
+    if (this._hitT[part] && now - this._hitT[part] < 1.0) return;
+    this._hitT[part] = now;
+    const side = /L$/.test(part) ? 0 : 1;
+    const ev = (kind, text) => { D.list.push(text); this.events.push({ type: 'damage', part: kind, side, text, sev, time: now }); };
+    if (part.startsWith('wingtip') || part.startsWith('wingmid')) {
+      const f = part.startsWith('wingmid') ? 0.55 + Math.min(sev / 400, 0.2) : clamp(0.14 + sev * 0.004, 0.14, 0.4);
+      if (f <= D.wing[side] + 0.02) return;
+      D.wing[side] = f;
+      // the contact points move to the new, shorter tip
+      const tip = this.hard.find((h) => h.name === (side ? 'wingtipR' : 'wingtipL'));
+      const k = 1 - f;
+      tip.p = new V3(tip.p0.x * k, tip.p0.y * k + (1 - k) * -1.5, tip.p0.z * k + Math.sign(tip.p0.z) * this.wingRootZ * (1 - k));
+      if (f > 0.5) this.hard.find((h) => h.name === (side ? 'wingmidR' : 'wingmidL')).gone = true;
+      D.leak += 4 + f * 10;
+      if (f > 0.2 || obstacle) D.wingFire[side] = D.wingFire[side] || Math.random() < 0.7;
+      ev('wing', `${side ? '右' : '左'}主翼 ${Math.round(f * 100)}% 損失${D.wingFire[side] ? '・炎上' : ''}`);
+    } else if (part.startsWith('engine')) {
+      if (D.eng[side] >= 2) return;
+      const lost = sev > 6 || obstacle;
+      D.eng[side] = lost ? 2 : 1;
+      D.engFire[side] = true;
+      this.engines[side].running = false;
+      if (lost) this.hard.find((h) => h.name === (side ? 'engineR' : 'engineL')).gone = true;
+      ev('engine', `${side ? '右' : '左'}エンジン ${lost ? '脱落' : '損傷'}・火災`);
+    } else if (part === 'fin' || part === 'tail') {
+      const t = part === 'fin' ? 0.6 : clamp(0.2 + sev * 0.05, 0.2, 0.6);
+      if (t <= D.tail + 0.02) return;
+      D.tail = t;
+      if (part === 'fin') this.hard.find((h) => h.name === 'fin').gone = true;
+      ev('tail', `尾翼 損傷 ${Math.round(t * 100)}%`);
+    }
+  }
+
+  // pull the fire handles: engine fires go out (fuel fires on a broken wing keep burning)
+  extinguish() {
+    const D = this.dmg;
+    let n = 0;
+    for (let i = 0; i < 2; i++) if (D.engFire[i]) { D.engFire[i] = false; n++; }
+    return n;
+  }
+
   inertia() {
     const m = this.mass;
     // radii of gyration scale with span (roll) and length (pitch / yaw)
@@ -170,6 +234,7 @@ export class FlightModel {
   }
 
   reset(pos, hdg, speedMS, pitchDeg = 0, onGround = true) {
+    this.resetDamage();
     this.pos.copy(pos);
     this.q = Quat.fromHPB(hdg, pitchDeg, 0);
     const fwd = this.q.rotate(new V3(1, 0, 0));
@@ -248,7 +313,12 @@ export class FlightModel {
     }
     const stalled = alpha > aLin + dA;
     // tail contribution: elevator TE down / stabiliser nose-down trim raise the tail lift
-    let CL = CLw + 4.8 * qn + 1.2 * adn + 0.30 * ctl.elevator - 0.45 * ctl.stab;
+    // damage: lost outer wing panels take lift, roll control and add drag; a broken tail loses authority
+    const Dm = this.dmg;
+    const kWL = 1 - 0.95 * Dm.wing[0] ** 1.1, kWR = 1 - 0.95 * Dm.wing[1] ** 1.1;
+    const kAil = clamp(1 - 0.6 * Math.max(Dm.wing[0], Dm.wing[1]), 0.1, 1);
+    const kTail = 1 - 0.85 * Dm.tail;
+    let CL = CLw * 0.5 * (kWL + kWR) + 4.8 * qn * kTail + 1.2 * adn + (0.30 * ctl.elevator - 0.45 * ctl.stab) * kTail;
     CL -= 0.28 * sb + 0.85 * gs * (1 - 0.3 * clamp(ctl.flapAngle / 30, 0, 1));
 
     // ---- drag ---------------------------------------------------------------------
@@ -260,16 +330,18 @@ export class FlightModel {
       + k * (CLw - 0.12) ** 2 * phiGE + CDwave + 0.35 * beta * beta
       + 0.012 * Math.abs(ctl.rudder) + 0.02 * Math.abs(ctl.aileron) * 0.5;
     if (aa > aLin) CD += 1.3 * Math.sin(Math.min(aa, Math.PI / 2)) ** 2 * smoothstep(aLin, aLin + 10 * DEG, aa);
+    CD += 0.035 * (Dm.wing[0] + Dm.wing[1]) + 0.02 * Dm.tail + (Dm.eng[0] === 1 ? 0.004 : 0) + (Dm.eng[1] === 1 ? 0.004 : 0);
     CD += ctl.reverse[0] + ctl.reverse[1] > 0 ? 0.01 : 0;
 
     // ---- side force & moments -----------------------------------------------------
-    const CY = -0.92 * beta - 0.19 * ctl.rudder;
-    const Cl = (-0.10 - 0.06 * CLw) * beta - 0.42 * pn + (0.05 + 0.22 * CLw) * rn
-      + 0.074 * ctl.aileron + 0.008 * ctl.rudder;
-    const Cn = 0.125 * beta - (0.20 + 0.03 * CLw * CLw) * rn - 0.055 * CLw * pn
-      + 0.074 * ctl.rudder - 0.006 * ctl.aileron;
-    const SM = 0.105;
-    let Cm = 0.030 - SM * CLa * alpha - 27 * qn - 9 * adn - 1.35 * ctl.elevator + 3.0 * ctl.stab
+    const CY = -0.92 * beta * (1 - 0.6 * Dm.tail) - 0.19 * ctl.rudder * kTail;
+    // asymmetric lift: the damaged side drops (+Cl = right wing down)
+    const Cl = (-0.10 - 0.06 * CLw) * beta - 0.42 * pn * (0.6 + 0.2 * (kWL + kWR)) + (0.05 + 0.22 * CLw) * rn
+      + 0.074 * ctl.aileron * kAil + 0.008 * ctl.rudder + 0.045 * CLw * (kWL - kWR);
+    const Cn = 0.125 * beta * (1 - 0.7 * Dm.tail) - (0.20 + 0.03 * CLw * CLw) * rn - 0.055 * CLw * pn
+      + 0.074 * ctl.rudder * kTail - 0.006 * ctl.aileron - 0.03 * (Dm.wing[0] - Dm.wing[1]);
+    const SM = 0.105 * (1 - 0.5 * Dm.tail);
+    let Cm = 0.030 - SM * CLa * alpha - 27 * qn * kTail - 9 * adn - 1.35 * ctl.elevator * kTail + 3.0 * ctl.stab * kTail
       + dCmf - 0.012 * sb - 0.02 * gs + 0.006 * gearOut;
     Cm += -0.06 * (1 - phiGE);                                   // ground effect nose down
     if (mach > 0.86) Cm -= 0.9 * (mach - 0.86) ** 1.5;            // Mach tuck
@@ -297,6 +369,7 @@ export class FlightModel {
       this.fuel = Math.max(0, this.fuel - e.ff * dt);
       if (this.fuel <= 0) e.running = false;
     }
+    if (this.dmg.leak) this.fuel = Math.max(0, this.fuel - this.dmg.leak * dt);
 
     // ---- to world, gravity ----------------------------------------------------------
     const Fw = q.rotate(F);
@@ -355,22 +428,54 @@ export class FlightModel {
     }
     // structural contacts
     let scrape = null;
+    const km = m / 254011;
     for (const h of this.hard) {
+      if (h.gone) continue;
       const rw = q.rotate(h.p);
       const pc = V3.add(this.pos, rw);
+      // buildings / towers: a clipped wing tip or engine is torn off, the fuselage does not survive
+      const top = obstacleAt(pc.x, pc.y, pc.z);
+      if (top > 0) {
+        const sp = this.vel.len();
+        if (['nose', 'noseTop', 'fuse', 'belly'].includes(h.name) || sp > 120 && h.name.startsWith('wingmid')) {
+          this.crash('collided with a building');
+          return;
+        }
+        this.impact(h.name, sp, true);
+        // the hit side is dragged back
+        const side = h.p0.z < 0 ? 1 : -1;
+        this.vel.scale(1 - 0.08 * Math.min(1, dt * 60));
+        this.w.y += side * 0.25 * dt * 60 * (h.name.startsWith('wing') ? 1 : 0.3);
+        continue;
+      }
+      if (h.air) continue;
       const gh = terrainHeight(pc.x, pc.z);
       const d = gh - pc.y;
       if (d > 0) {
         const vc = V3.add(this.vel, q.rotate(V3.cross(this.w, h.p)));
-        const N = Math.max(8e6 * d - 1.5e6 * vc.y, 0);
+        const N = Math.max((8e6 * d - 1.5e6 * vc.y) * Math.max(km, 0.25), 0);
         const vh = new V3(vc.x, 0, vc.z);
         const Fh = new V3(0, N, 0).addScaled(vh, -0.5 * N / Math.max(vh.len(), 0.5));
         Fw.add(Fh);
         Mb.add(q.invRotate(V3.cross(rw, Fh)));
         scrape = h.name;
         const water = isWater(pc.x, pc.z);
-        if (-vc.y > 3.5 || d > 0.8 || (h.name === 'belly' && this.vel.len() > 40) || water) {
-          this.crash(water ? 'ditched in water' : 'structural impact (' + h.name + ')');
+        const sink = -vc.y, hs = vh.len();
+        if (water && this.vel.len() > 15) { this.crash('ditched in water'); continue; }
+        if (h.name === 'belly' || h.name === 'nose') {
+          if (sink > 3.5 || d > 0.8 || (h.name === 'belly' && this.vel.len() > 45)) this.crash('structural impact (' + h.name + ')');
+        } else if (h.name.startsWith('wingtip')) {
+          // wing tip strike: the outer wing breaks off; a deep strike cartwheels the aircraft
+          if (d > 2.5) this.crash('wing dug into the ground');
+          else if (sink > 2 || (d > 0.35 && hs > 20)) this.impact(h.name, Math.max(sink * 10, hs));
+        } else if (h.name.startsWith('engine')) {
+          if (sink > 1.5 || (d > 0.1 && hs > 15)) this.impact(h.name, Math.max(sink, hs * 0.1));
+          if (d > 1.2) this.crash('engine dug into the ground');
+        } else if (h.name === 'tail') {
+          if (d > 1.5) this.crash('tail strike');
+          else if (sink > 2.5) this.impact('tail', sink);
+        } else if (sink > 3.5 || d > 0.8) {
+          this.crash('structural impact (' + h.name + ')');
         }
       }
     }
@@ -415,6 +520,7 @@ export class FlightModel {
   crash(reason) {
     if (this.crashed) return;
     this.crashed = true;
+    this.crashVel = this.vel.clone();
     this.events.push({ type: 'crash', reason, time: this.time });
     this.vel.set(0, 0, 0);
     this.w.set(0, 0, 0);

@@ -142,8 +142,17 @@ def rect(mb, cx, cy, L, W, ang, z, mat, uv=("world", 25.0), u_len=None):
     mb.add_poly(pts, uvs, mat=mat, normal=UP)
 
 
+OBST = []      # collision boxes for the simulator: (x0, y0, x1, y1, top) in Blender x / y, metres
+
+
+def obstacle(x0, y0, x1, y1, h):
+    OBST.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), h))
+
+
 def box(mb, x0, y0, x1, y1, z0, z1, wall_mat, roof_mat=None, tile=(10, 10), uoff=0.0, top=True, bottom=False):
     """Axis aligned box, walls with facade UV (u along wall / tile_w, v height / tile_h)."""
+    if z0 < 2.0 and z1 - z0 > 4.0:
+        obstacle(x0, y0, x1, y1, z1)
     tw, th = tile
     corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
     u = uoff
@@ -681,6 +690,7 @@ def in_river(x0, x1):
 
 def skyscraper(mb, x0, y0, x1, y1, h, style, rng, roofm):
     """Towers with setbacks / crowns / spires."""
+    obstacle(x0, y0, x1, y1, h)
     tw, th = FACADES[STYLE_ORDER[style]]
     kind = rng.random()
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
@@ -874,6 +884,8 @@ def build_landmarks(M, col):
             M["crane"], M["containers"], M["roof"], M["metal"]]
     # --- broadcast tower (450 m) --------------------------------------------------
     tx, ty = 6400.0, 4300.0
+    obstacle(tx - 40, ty - 40, tx + 40, ty + 40, 60.0)          # tower legs
+    obstacle(tx - 18, ty - 18, tx + 18, ty + 18, 452.0)         # shaft
     for k in range(3):
         a = k * 2 * math.pi / 3
         beam(mb, (tx + 38 * math.cos(a), ty + 38 * math.sin(a), 0), (tx + 12 * math.cos(a), ty + 12 * math.sin(a), 330),
@@ -1015,6 +1027,9 @@ def main():
                                 dict(rwy="09", x0=-450.0, x1=-450.0 + 310.0 * math.cos(math.radians(30)))],
                     gseDepots=[[x, -y] for (x, y) in GSE_DEPOTS], standLaneDX=40.0),
         trees=[v for t in TREES for v in (t[0], t[2], -t[1], t[3])],
+        # buildings / towers as boxes for collisions (three.js x0, z0, x1, z1, top)
+        obstacles=[round(v, 1) for (x0, y0, x1, y1, h) in OBST for v in (x0, -y1, x1, -y0, h)] +
+        [round(v, 1) for v in (tower["x"] - 6, -tower["y"] - 6, tower["x"] + 6, -tower["y"] + 6, tower["h"])],
     )
     with open(os.path.join(C.WEB_ASSETS, "world.json"), "w") as fh:
         json.dump(world, fh, separators=(",", ":"), default=lambda o: o.item() if hasattr(o, "item") else str(o))

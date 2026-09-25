@@ -70,6 +70,7 @@ export class Input {
     };
     if (e.shiftKey && k === 'r') return this.onCommand('toga');
     if (e.shiftKey && k === 'f') return this.onCommand('idle');
+    if (e.shiftKey && k === 'x') return this.onCommand('extinguish');
     if (map[k]) this.onCommand(map[k]);
   }
 

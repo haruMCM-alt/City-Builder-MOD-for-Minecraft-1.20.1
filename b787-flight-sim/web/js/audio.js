@@ -246,6 +246,70 @@ export class Audio {
     s.start(t, Math.random() * 3); s.stop(t + dur + 0.05);
   }
 
+  // ---- alarms: fire bell and master warning (repeat until switched off) ---------------
+  setAlarm(kind, on) {
+    this._alarms = this._alarms || {};
+    const A = this._alarms;
+    if (!!A[kind] === !!on) return;
+    if (!on) { clearInterval(A[kind]); A[kind] = null; return; }
+    const strike = () => {
+      if (!this.ctx || !this.enabled) return;
+      const ctx = this.ctx, t = ctx.currentTime;
+      if (kind === 'fire') {
+        // classic fire bell: inharmonic partials, fast decay, ~3 strikes per second
+        for (const [f, g] of [[880, 0.16], [2420, 0.08], [4750, 0.04]]) {
+          const o = ctx.createOscillator(), gg = ctx.createGain();
+          o.frequency.value = f; gg.gain.setValueAtTime(g, t); gg.gain.exponentialRampToValueAtTime(0.0005, t + 0.3);
+          o.connect(gg); gg.connect(this.master); o.start(t); o.stop(t + 0.32);
+        }
+      } else {
+        // master warning: two-tone chime
+        [[1150, 0], [760, 0.18]].forEach(([f, dt]) => {
+          const o = ctx.createOscillator(), gg = ctx.createGain();
+          o.type = 'triangle'; o.frequency.value = f;
+          gg.gain.setValueAtTime(0.0001, t + dt); gg.gain.linearRampToValueAtTime(0.12, t + dt + 0.02); gg.gain.exponentialRampToValueAtTime(0.0005, t + dt + 0.35);
+          o.connect(gg); gg.connect(this.master); o.start(t + dt); o.stop(t + dt + 0.4);
+        });
+      }
+    };
+    strike();
+    A[kind] = setInterval(strike, kind === 'fire' ? 330 : 1100);
+  }
+
+  stopAlarms() { for (const k of Object.keys(this._alarms || {})) this.setAlarm(k, false); }
+
+  // structural impact: metallic crunch
+  crunch(strength = 1) {
+    if (!this.ctx) return;
+    this.burst(this.brown, 220, 0.8, 1.2 * strength, 0.9);
+    this.burst(this.crackle, 1800, 1.5, 0.5 * strength, 0.7, 'bandpass');
+    this.burst(this.white, 4200, 2, 0.25 * strength, 0.4, 'bandpass');
+  }
+
+  // explosion: deep boom with a long rumbling tail and debris clatter
+  explosion(power = 1) {
+    if (!this.ctx) return;
+    this.burst(this.brown, 90, 0.6, 2.2 * power, 3.5);
+    this.burst(this.brown, 300, 0.7, 1.4 * power, 1.4);
+    this.burst(this.crackle, 1200, 1.0, 0.8 * power, 2.4, 'bandpass');
+    setTimeout(() => this.burst(this.crackle, 2600, 1.2, 0.35, 3.0, 'bandpass'), 400);
+  }
+
+  // continuous fire roar (0..1)
+  setFire(level) {
+    if (!this.ctx) return;
+    if (!this.fireG) {
+      const ctx = this.ctx;
+      this.fireG = ctx.createGain(); this.fireG.gain.value = 0;
+      const src = this.noise(this.brown, 1.1), f = ctx.createBiquadFilter();
+      f.type = 'lowpass'; f.frequency.value = 500;
+      const src2 = this.noise(this.crackle, 0.8), f2 = ctx.createBiquadFilter();
+      f2.type = 'bandpass'; f2.frequency.value = 1500; f2.Q.value = 0.8;
+      src.connect(f); f.connect(this.fireG); src2.connect(f2); f2.connect(this.fireG); this.fireG.connect(this.master);
+    }
+    this.fireG.gain.setTargetAtTime(this.enabled ? level * 0.5 : 0, this.ctx.currentTime, 0.3);
+  }
+
   thump(strength) {
     if (!this.ctx) return;
     this.burst(this.brown, 140, 0.7, clamp(strength, 0.1, 1.2) * 1.4, 0.55);

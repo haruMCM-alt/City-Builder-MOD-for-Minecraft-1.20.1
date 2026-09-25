@@ -170,6 +170,12 @@
   #ifeBtns button.sel { background: #d9c29a; color: #17130c; border-color: #d9c29a; }
   #ifeGame { display: flex; gap: 10px; justify-content: center; margin-top: 6px; }
   #ifeGame button { min-width: 90px; font-size: 18px; touch-action: none; }
+  #dmg { position: fixed; top: 92px; right: 12px; z-index: 6; display: flex; flex-direction: column; gap: 3px; align-items: flex-end;
+    font: 12px var(--mono); pointer-events: none; }
+  #dmg b { background: rgba(40, 8, 8, .85); color: #ffb020; border: 1px solid #ffb020; padding: 3px 8px; border-radius: 4px; }
+  #dmg b.w { color: #fff; background: #d11; border-color: #ff5b5b; animation: dmgBlink .6s steps(2) infinite; }
+  #dmg span { color: #fff; background: rgba(0,0,0,.6); padding: 2px 6px; border-radius: 4px; }
+  @keyframes dmgBlink { 50% { opacity: .35; } }
   /* ---------- in-flight UI ---------- */
   #mcp {
     position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5;
@@ -271,6 +277,7 @@
   </div>
 </div>
 
+<div id="dmg" class="hidden"></div>
 <div id="ife" class="hidden">
   <div class="ifeTop"><b>🎧 機内エンタメ</b><span>チャンネルを選んでください（ドラッグで視線を動かせます）</span><span class="spacer"></span>
     <span id="ifeStatus"></span><button id="ifeMeal">🍱 機内食サービス (O)</button></div>
@@ -384,6 +391,7 @@
         <div><b>T</b> 時刻 Time +1h</div>
         <div><b>Y</b> 管制と交信 Talk to ATC</div>
         <div><b>O</b> 機内食サービス Meal service</div>
+        <div><b>Shift+X</b> エンジン消火 Fire handles</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>
@@ -441,6 +449,7 @@
         <div><b>T</b> 時刻 Time +1h</div>
         <div><b>Y</b> 管制と交信 Talk to ATC</div>
         <div><b>O</b> 機内食サービス Meal service</div>
+        <div><b>Shift+X</b> エンジン消火 Fire handles</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>
