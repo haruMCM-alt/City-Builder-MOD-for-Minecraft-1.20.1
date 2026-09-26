@@ -364,6 +364,14 @@ python3 build_textures.py
 
 ---
 
+## 関連プロジェクト: B787-9 フライトシミュレーター
+
+[`b787-flight-sim/`](b787-flight-sim/README.md) に、Blender で寸法どおりに数値モデリングした Boeing 787-9 と空港・都市を、ブラウザで操縦できるフライトシミュレーターを収録しています。
+
+```bash
+cd b787-flight-sim/web && python3 -m http.server 8000   # http://localhost:8000
+```
+
 ## ライセンス
 
 MIT License (予定)
