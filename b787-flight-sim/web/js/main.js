@@ -20,6 +20,8 @@ import { Vapor } from './vapor.js';
 import { Traffic } from './traffic.js';
 import { Radio, setAirportNames } from './atc.js';
 import { Airport2, A2, airport2Lights, airport2Obstacles } from './airport2.js';
+import { AutoPush } from './pushback.js';
+import { FIDS } from './fids.js';
 import { MCP3D } from './mcp3d.js';
 import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
@@ -349,6 +351,8 @@ class App {
     $('atcHint').onclick = () => this.command('atc');
     $('btnPanel').onclick = () => this.command('panel');
     $('btnMenu').onclick = () => this.command('menu');
+    this.fids = new FIDS(this, $('fids'));
+    $('btnFids').onclick = () => this.command('fids');
     $('resumeBtn').onclick = () => this.resume();
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && ['menu', 'crash', 'pause'].every((id) => $(id).classList.contains('hidden'))) this.pause();
@@ -631,6 +635,22 @@ class App {
     apply();
   }
 
+  // pushback track of the main gear: straight back onto the taxilane, then turn to face the
+  // departure end (as the AI does); away from a stand simply 60 m straight back
+  makeAutoPush() {
+    const fm = this.fm, meta = this.meta, W = this.worldData;
+    const f = fm.q.rotate(new V3(1, 0, 0)), a = Math.atan2(f.z, f.x);
+    const mg = { x: fm.pos.x + Math.cos(a) * meta.mainGearL[0], z: fm.pos.z + Math.sin(a) * meta.mainGearL[0] };
+    const pushZ = W.ground?.pushZ ?? -340;
+    const atStand = (W.stands || []).some((st) => Math.hypot(st.cg[0] - fm.pos.x, st.cg[2] - fm.pos.z) < 45) && Math.abs(Math.sin(a) + 1) < 0.1 && mg.z < pushZ - 20;
+    let pts;
+    if (atStand) {
+      const face = (this.traffic?.rwy || '27') === '27' ? 1 : -1;
+      pts = [mg, { x: mg.x, z: pushZ }, { x: mg.x - face * 70, z: pushZ }];
+    } else pts = [mg, { x: mg.x - Math.cos(a) * 30, z: mg.z - Math.sin(a) * 30 }, { x: mg.x - Math.cos(a) * 60, z: mg.z - Math.sin(a) * 60 }];
+    return new AutoPush(fm, meta, pts);
+  }
+
   // JAL livery: the safety video starts on every monitor when the pushback begins
   startSafetyVideo() {
     if (this.livery?.logo !== 'jal' || !this.cabin || this.cabin.ife.safety) return;
@@ -690,7 +710,7 @@ class App {
     };
     let skipStand = null;
     fm.ctl.pushback = 0;
-    this.pushPending = false;
+    this.pushPending = false; this.autoPush = null; if (this.sys) this.sys.autoSteer = null;
     if (this.traffic?.pTug) this.traffic.playerTug(false);
     this.cabin?.ifeSafety(false);
     const spd = (kt, altM) => kt * KT * Math.sqrt(1.225 / (1.225 * Math.pow(1 - 2.2558e-5 * altM, 4.256)));
@@ -805,11 +825,13 @@ class App {
       const head27 = Math.cos((wdir - 270) * DEG) * wkt;
       this.traffic.enabled = $('traffic') ? $('traffic').checked : true;
       this.radio.voice = $('atcVoice') ? $('atcVoice').checked : true;
+      this.radio.noise = $('atcNoise') ? $('atcNoise').checked : true;
       this.radio.enabled = run;
       const tel = (this.livery?.name || 'Claude').split(/\s+/)[0];
       this.playerCallsign = `${tel} ${100 + Math.floor(Math.random() * 800)}`;
       this.traffic.reset({ stands: W.stands, skipStand, randomLivery, runway: head27 < -3 ? '09' : '27', windDir: wdir, windKt: wkt,
         playerCallsign: this.playerCallsign });
+      this.clockBase = (this.world.tod || 12) * 3600 - (this.traffic.time || 0);
       this.radio.enabled = true;
       this.trafficFocus = null;
     }
@@ -833,6 +855,11 @@ class App {
   // ------------------------------------------------------------------- commands
   command(c) {
     const sys = this.sys, fm = this.fm, o = fm.out;
+    if (c === 'fids') {
+      // the board of the airport you are nearest to
+      this.fids.toggle(!this.fids.open, this.fm.pos.x > 100000 ? 'a2' : 'home');
+      return;
+    }
     if (c === 'menu') {
       // Esc: in flight -> pause screen; on the pause screen -> resume; in the main menu -> start
       if (!$('pause').classList.contains('hidden')) this.resume();
@@ -887,7 +914,7 @@ class App {
         break;
       case 'view': {
         const v = this.rig.next();
-        if ((v === 'cabin' || v === 'wing' || v === 'ife') && !this.cabin.group && this.cabin.available) this.toast('機内を読み込み中… Loading cabin');
+        if ((v === 'cabin' || v === 'walk' || v === 'wing' || v === 'ife') && !this.cabin.group && this.cabin.available) this.toast('機内を読み込み中… Loading cabin');
         $('panel').classList.toggle('hidden', !this.panelOn || v === 'cockpit' || v === 'ife');
         this.toast('視点 ' + VIEW_NAMES[v]);
         break;
@@ -905,7 +932,7 @@ class App {
       case 'pushback':
         if (!o.wow || o.gs > 3) break;
         if (fm.ctl.pushback || this.pushPending) {
-          fm.ctl.pushback = 0; this.pushPending = false;
+          fm.ctl.pushback = 0; this.pushPending = false; this.autoPush = null; sys.autoSteer = null;
           this.traffic?.playerTug(false);
           this.toast('プッシュバック終了 — トーイングカー切り離し');
         } else if (this.traffic && this.traffic.playerTug(true)) {
@@ -1039,7 +1066,20 @@ class App {
     if (this.pushPending && this.traffic?.playerTugReady) {
       this.pushPending = false;
       fm.ctl.pushback = -1.3; fm.ctl.parkingBrake = false;
-      this.toast('プッシュバック開始 (Q/E で操向、J で終了)');
+      this.autoPush = this.makeAutoPush();
+      this.toast('プッシュバック開始 — 誘導路に沿うまで自動 (J で中止)');
+    }
+    // automatic pushback: the tug steers the aircraft onto the taxilane and stops
+    if (this.autoPush && !this.paused) {
+      const r = this.autoPush.update();
+      sys.autoSteer = r.steer; fm.ctl.pushback = -r.speed;
+      if (this.autoPush.done) {
+        this.autoPush = null; sys.autoSteer = null;
+        fm.ctl.pushback = 0; fm.ctl.parkingBrake = true;
+        this.traffic?.playerTug(false);
+        this.toast('プッシュバック完了 — トーイングカー切り離し。P でブレーキ解除して地上走行へ');
+        this.traffic?.pc?.pushDone?.();
+      }
     }
     if (this.rig.view === 'traffic' && this.traffic) this.rig.trafficTarget = this.pickTrafficFocus();
     const cockpit = this.rig.view === 'cockpit';
@@ -1048,7 +1088,7 @@ class App {
     {
       // cabin: passengers, crew and the IFE (live flight data for the maps / info channels)
       const v = this.rig.view, o = fm.out;
-      const inside = v === 'cabin' || v === 'wing' || v === 'ife';
+      const inside = v === 'cabin' || v === 'walk' || v === 'wing' || v === 'ife';
       const tod = this.world.tod || 0;
       const dist = Math.hypot(fm.pos.x, fm.pos.z) / 1000;
       this.cabin.update(inside, this.world.night, this.paused ? 0 : dt, {
@@ -1077,9 +1117,12 @@ class App {
         this.cabin.ife.setSafetyAudio(this.audio.enabled ? g : 0, cut, this.paused);
       }
     }
+    this.input.walk = this.rig.view === 'walk';
+    this.rig.walkInput = this.input.walk && !this.paused ? this.input.walkAxes() : null;
     this.rig.update(dt, fm, this.visual.root);
     this.world.update(dt, this.camera, new THREE.Vector3(fm.pos.x, fm.pos.y, fm.pos.z));
     this.airport2?.update(this.world.night);
+    this.fids?.update(dt);
     this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit });
     if (this.mcp3d && this.visual.cockpitVisible && (this._mcpT3 = (this._mcpT3 || 0) + dt) > 0.12) { this._mcpT3 = 0; this.mcp3d.update(sys, this.world.night); }
     const hud = $('hud');
@@ -1111,7 +1154,7 @@ class App {
     this.vapor.update(dt, fm, { camera: this.camera, humidity: this.world.weather.hum ?? 0.5, light: 1 - this.world.night,
       emit: (p, v, life, size, grow, alpha) => this.visual.emit(p, v, life, size, grow, alpha) });
     this.rain.update(dt, { camera: this.camera, amount: this.world.rain || 0, wind: fm.wind, camVel: this.camVel,
-      inside: cockpit || this.rig.view === 'cabin' || this.rig.view === 'wing' || this.rig.view === 'ife', night: this.world.night });
+      inside: cockpit || ['cabin', 'walk', 'wing', 'ife'].includes(this.rig.view), night: this.world.night });
     const hdr = !!this.post && this.quality !== 'low';
     HDR.uLin.value = hdr ? 1 : 0;
     // clouds / smoke: lit like white surfaces; point lights: bright enough to bloom at night
@@ -1226,7 +1269,7 @@ class App {
       $('crashText').textContent = e.reason;
       this.mishap.crash(e.reason);
       // watch the wreckage from outside before the crash screen appears
-      if (['cockpit', 'cabin', 'wing', 'ife'].includes(this.rig.view)) this.rig.setView('orbit');
+      if (['cockpit', 'cabin', 'walk', 'wing', 'ife'].includes(this.rig.view)) this.rig.setView('orbit');
       this.rig.dist = 240; this.rig.orbitPitch = 0.35;
       ['ife', 'panel'].forEach((i) => $(i).classList.add('hidden'));
       setTimeout(() => { if (this.crashShown) $('crash').classList.remove('hidden'); }, 7000);

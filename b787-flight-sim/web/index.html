@@ -67,6 +67,37 @@
   .scen button { text-align: left; }
   #liveryBox { margin-top: 16px; }
   .livrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  /* ---------- departures board (Narita style) ---------- */
+  #fids { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 30; width: min(1080px, calc(100vw - 32px));
+    max-height: calc(100vh - 40px); overflow: auto; background: #050608; color: #f4f4f0; border: 3px solid #23262b; border-radius: 6px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6); font-family: "Hiragino Sans", "Noto Sans JP", "Helvetica Neue", Arial, sans-serif; }
+  #fids .fHead { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: linear-gradient(#1b2a4a, #0e1830); border-bottom: 2px solid #d9b73a; }
+  #fids .fPlane { font-size: 26px; color: #d9b73a; transform: rotate(-20deg); }
+  #fids .fTitle { font-size: 28px; font-weight: 700; letter-spacing: .08em; }
+  #fids .fApt { font-size: 15px; color: #b9c3d6; flex: 1; }
+  #fids .fClock { font: 700 26px/1 "DejaVu Sans Mono", Menlo, monospace; color: #ffd84a; }
+  #fids .fClose { background: none; border: 1px solid #556; color: #ccd; border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+  #fids .fTabs { display: flex; gap: 6px; padding: 8px 16px 0; }
+  #fids .fTabs button { background: #151a22; color: #aab; border: 1px solid #2c3340; border-bottom: none; padding: 5px 14px; border-radius: 5px 5px 0 0; cursor: pointer; font-size: 13px; }
+  #fids .fTabs button.sel { background: #1b2a4a; color: #fff; }
+  #fids table { width: 100%; border-collapse: collapse; }
+  #fids th { text-align: left; font-size: 13px; font-weight: 600; color: #9aa6ba; padding: 6px 12px; background: #11151c; border-bottom: 1px solid #2c3340; }
+  #fids td { padding: 9px 12px; font-size: 22px; border-bottom: 1px solid #1a1e25; white-space: nowrap; }
+  #fids tr:nth-child(even) td { background: #0b0d11; }
+  #fids .fTime { font: 700 24px/1 "DejaVu Sans Mono", Menlo, monospace; color: #ffd84a; }
+  #fids .fTime s { color: #777; font-size: 16px; margin-right: 8px; }
+  #fids .fNew { color: #ff9c3a; }
+  #fids .fDest { font-weight: 700; letter-spacing: .03em; }
+  #fids .fFlt { font: 600 21px/1 "DejaVu Sans Mono", Menlo, monospace; }
+  #fids .fFlt img { width: 26px; height: 26px; border-radius: 4px; vertical-align: -6px; margin-right: 10px; }
+  #fids .fGate { font: 700 24px/1 "DejaVu Sans Mono", Menlo, monospace; text-align: center; }
+  #fids .fRem { font-weight: 700; font-size: 19px; }
+  #fids .rOk { color: #e8e8e8; } #fids .rBoard { color: #43e06b; } #fids .rFinal { color: #43e06b; animation: fBlink 1s steps(2) infinite; }
+  #fids .rClosed { color: #ff5a4a; } #fids .rGone { color: #7fa3ff; } #fids .rDelay { color: #ff9c3a; }
+  #fids .fEmpty { text-align: center; color: #889; font-size: 17px; }
+  #fids .fFoot { padding: 7px 16px; font-size: 12px; color: #8791a3; background: #0b0e14; }
+  @keyframes fBlink { 50% { opacity: .35; } }
+  @media (max-width: 700px) { #fids td { font-size: 15px; padding: 7px 6px; } #fids .fTime, #fids .fGate { font-size: 16px; } #fids .fTitle { font-size: 20px; } }
   .apNames { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
   .apNames label { flex: 1 1 200px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--bs-muted); }
   .apNames input { padding: 7px 10px; font-size: 15px; border-radius: 8px; border: 1px solid rgba(214, 196, 160, .35); background: rgba(0, 0, 0, .35); color: inherit; }
@@ -305,6 +336,7 @@
           <div class="opts">
             <label class="chk"><input type="checkbox" id="traffic" checked> AI交通・地上車両 Traffic &amp; GSE</label>
             <label class="chk"><input type="checkbox" id="atcVoice" checked> ATC 無線音声 Radio voice</label>
+            <label class="chk"><input type="checkbox" id="atcNoise" checked> 無線ノイズ Radio static</label>
             <label class="chk"><input type="checkbox" id="sound" checked> サウンド Sound</label>
             <label class="inl">画質 Graphics
               <select id="quality">
@@ -399,6 +431,7 @@
         <div><b>Y</b> 管制と交信 Talk to ATC</div>
         <div><b>O</b> 機内食サービス Meal service</div>
         <div><b>Shift+X</b> エンジン消火 Fire handles</div>
+        <div><b>Shift+D</b> 出発案内 Departures board</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>
@@ -457,6 +490,7 @@
         <div><b>Y</b> 管制と交信 Talk to ATC</div>
         <div><b>O</b> 機内食サービス Meal service</div>
         <div><b>Shift+X</b> エンジン消火 Fire handles</div>
+        <div><b>Shift+D</b> 出発案内 Departures board</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>
@@ -506,8 +540,10 @@
 <div id="corner" class="hidden">
   <button id="btnView">視点 View (C)</button>
   <button id="btnPanel">計器 Panel (I)</button>
+  <button id="btnFids" title="出発案内 Departures (Shift+D)">🛫 出発案内</button>
   <button id="btnMenu">⏸ 一時停止 (Esc)</button>
 </div>
+<div id="fids" class="hidden"></div>
 <div id="touch" class="hidden">
   <div id="stick"><div id="stickKnob"></div></div>
   <div id="thrWrap"><span>THR</span><input type="range" id="thr" min="0" max="100" value="0" aria-label="Throttle"></div>

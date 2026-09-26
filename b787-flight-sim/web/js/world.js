@@ -9,7 +9,7 @@ import { stripTriangles, textSign, signTexts } from './signs.js';
 import { clamp, smoothstep, lerp, mulberry32, DEG } from './util.js';
 
 const LIGHT_KIND = { steady: 0, directional: 1, papi: 2, sequenced: 3, blink: 4, night: 5 };
-const NIGHT_ONLY = new Set(['street', 'landmark', 'bridge', 'apron_flood', 'a2_apron_flood']);
+const NIGHT_ONLY = new Set(['street', 'landmark', 'bridge', 'apron_flood', 'a2_apron_flood', 'a2_street']);
 
 // Display-referred custom shaders (clouds, light points, smoke) output sRGB-ish colours.
 // When the HDR post chain is active they are converted to linear radiance instead.

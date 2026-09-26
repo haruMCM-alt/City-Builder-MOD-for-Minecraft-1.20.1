@@ -116,7 +116,7 @@ export class Systems {
     const tillerMax = 65 * DEG * (1 - smoothstep(12, 45, gsKt)) + 7 * DEG;
     // on the ground the roll input (A/D, arrows, stick left/right) also steers the nose wheel
     const steerIn = Math.abs(P.yaw) > 0.02 ? P.yaw : (anyWow ? P.roll * (1 - smoothstep(25, 45, gsKt)) : 0);
-    let steer = P.tiller !== 0 ? P.tiller * tillerMax : steerIn * tillerMax;
+    let steer = this.autoSteer != null ? this.autoSteer : P.tiller !== 0 ? P.tiller * tillerMax : steerIn * tillerMax;   // autoSteer: tug-driven pushback
     if (this.ap.on && this.ap.roll === 'ROLLOUT') steer += this.rolloutCmd * 0.5 * DEG;
     ctl.steer = approach(ctl.steer, steer, 25 * DEG, dt);
 

@@ -16,10 +16,50 @@ export const A2 = {
   tower: { x: 600, z: -440, h: 50 },
   hangar: { x: [700, 880], z: [-400, -280], h: 25 },
 };
+// ------------------------------------------------------------------ town around the airport
+// Deterministic layout (same buildings for geometry, collision boxes and street lights):
+// 120 m blocks north and south of the airport, a denser centre north-west of the terminal,
+// nothing inside the airport fence or under the approach / departure corridors.
+function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+let _town = null;
+export function townLayout() {
+  if (_town) return _town;
+  const R = rng(20250925), B = 120, road = 18;
+  const bld = [], roads = [], lamps = [];
+  const inAirport = (x, z) => x > -2100 && x < 2100 && z > -560 && z < 380;
+  const inCorridor = (x, z) => Math.abs(z) < 700 && Math.abs(x) > 1500;
+  const centre = [-1300, -1900];
+  for (let gx = -5400; gx < 5400; gx += B) {
+    for (let gz = -4200; gz < 3000; gz += B) {
+      const x0 = gx + road / 2, x1 = gx + B - road / 2, z0 = gz + road / 2, z1 = gz + B - road / 2;
+      const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+      if (inAirport(cx, cz) || inCorridor(cx, cz)) continue;
+      const d = Math.hypot(cx - centre[0], cz - centre[1]);
+      const dens = Math.exp(-d / 1700);
+      if (R() > 0.25 + 0.75 * dens + (d < 3200 ? 0.2 : 0)) continue;       // sparser towards the edges
+      roads.push([gx, gz]);
+      if (R() < 0.08) continue;                                            // a park
+      const lots = dens > 0.45 && R() < 0.5 ? 1 : 2 + Math.floor(R() * 3);
+      for (let k = 0; k < lots; k++) {
+        const wx = (x1 - x0) / (lots > 2 ? 2 : lots), wz = lots > 2 ? (z1 - z0) / 2 : z1 - z0;
+        const lx = x0 + (k % 2) * wx, lz = z0 + (lots > 2 ? Math.floor(k / 2) * wz : 0);
+        const ins = 4 + R() * 6;
+        const h = Math.min(8 + (R() ** 2) * 30 + dens * dens * 90 * R(), Math.abs(cz) < 1400 ? 35 : 140);
+        const style = h > 45 ? ['glass', 'glass2', 'office'][Math.floor(R() * 3)] : h > 18 ? ['office', 'resid', 'concrete'][Math.floor(R() * 3)] : ['resid', 'brick'][Math.floor(R() * 2)];
+        bld.push({ x0: lx + ins, z0: lz + ins, x1: lx + wx - ins, z1: lz + wz - ins, h: Math.round(h / 3.2) * 3.2 || 6.4, style });
+      }
+      lamps.push([gx + B / 2, gz + 2], [gx + 2, gz + B / 2]);
+    }
+  }
+  _town = { bld, roads, B, road, lamps };
+  return _town;
+}
+
 // collision boxes (three.js x0, z0, x1, z1, top) for obstacles.js
 export function airport2Obstacles() {
   const b = (x0, z0, x1, z1, h) => [A2.x + x0, A2.z + z0, A2.x + x1, A2.z + z1, h];
-  return [b(A2.term.x[0], A2.term.z[0], A2.term.x[1], A2.term.z[1], A2.term.h),
+  return [...townLayout().bld.flatMap((t) => b(t.x0, t.z0, t.x1, t.z1, t.h)),
+    b(A2.term.x[0], A2.term.z[0], A2.term.x[1], A2.term.z[1], A2.term.h),
     b(A2.tower.x - 8, A2.tower.z - 8, A2.tower.x + 8, A2.tower.z + 8, A2.tower.h + 8),
     b(A2.hangar.x[0], A2.hangar.z[0], A2.hangar.x[1], A2.hangar.z[1], A2.hangar.h)].flat();
 }
@@ -49,7 +89,8 @@ export function airport2Lights() {
   g('a2_als', '#fff3d0', 2.2, 'steady', als);
   g('a2_twy_edge', '#3a7bff', 1.0, 'steady', twy);
   g('a2_apron_flood', '#ffe2b0', 6.0, 'steady', flood);
-  g('a2_obstruction', '#ff1a1a', 3.0, 'blink', obst);
+  g('a2_obstruction', '#ff1a1a', 3.0, 'blink', obst.concat(townLayout().bld.filter((t) => t.h > 45).map((t) => [X((t.x0 + t.x1) / 2), t.h + 0.5, Z((t.z0 + t.z1) / 2)])));
+  g('a2_street', '#ffc27a', 2.2, 'steady', townLayout().lamps.map(([x, z]) => [X(x), 9, Z(z)]));
   return L;
 }
 
@@ -90,6 +131,9 @@ function findMaterials(root) {
     facade: fb('W_facade_terminal', 0xb8c4cc, 0.4), roof: fb('W_Roof', 0x8d9096, 0.8), glass: fb('W_GlassTower', 0x6d8aa0, 0.1),
     paint: fb('W_PaintWhite', 0xe8e8e4, 0.6), metal: fb('W_MetalPanel', 0xb9bec4, 0.5), door: fb('W_HangarDoor', 0x8e959c, 0.5),
     office: fb('W_facade_office', 0xb0b8c0, 0.5),
+    f_glass: fb('W_facade_glass', 0x8fa8bb, 0.2), f_glass2: fb('W_facade_glass2', 0x7f98ab, 0.2), f_office: fb('W_facade_office', 0xb0b8c0, 0.5),
+    f_resid: fb('W_facade_resid', 0xd8d0c0, 0.7), f_brick: fb('W_facade_brick', 0xa0664a, 0.8), f_concrete: fb('W_facade_concrete', 0xb5b2aa, 0.8),
+    road: fb('W_Road', 0x3c3e42, 0.9), grass: fb('W_ParkGrass', 0x4f7a35, 0.95),
   };
 }
 
@@ -169,6 +213,32 @@ export class Airport2 {
     this.group.add(dm);
     // car park
     this._add(rectGeo(T.x[0], T.z[0] - 140, T.x[1], T.z[0] - 20, 0.1), M.taxi);
+    this._buildTown();
+  }
+
+  // the town: facade boxes merged per material, flat roofs, block pavements with streets
+  _buildTown() {
+    const M = this.M, TW = townLayout();
+    const tiles = { glass: [12.0, 16.0], glass2: [14.4, 16.0], office: [12.8, 14.4], resid: [14.0, 12.0], brick: [14.0, 12.8], concrete: [16.0, 14.0] };
+    const walls = {}, roofs = [];
+    for (const b of TW.bld) {
+      const [tw, th] = tiles[b.style];
+      const g = buildingGeo(b.x0, b.z0, b.x1, b.z1, b.h, tw, th);
+      (walls[b.style] ||= []).push(g.wall); roofs.push(g.roof);
+    }
+    for (const [st, list] of Object.entries(walls)) {
+      for (let i = 0; i < list.length; i += 400) this._add(mergeGeometries(list.slice(i, i + 400)), M['f_' + st], true);
+    }
+    for (let i = 0; i < roofs.length; i += 600) this._add(mergeGeometries(roofs.slice(i, i + 600)), M.roof);
+    // streets: the block grid as asphalt, blocks as pavement
+    const streets = [], blocks = [];
+    for (const [gx, gz] of TW.roads) {
+      streets.push(rectGeo(gx - TW.road / 2, gz - TW.road / 2, gx + TW.B + TW.road / 2, gz + TW.road / 2, 0.06, 20));
+      streets.push(rectGeo(gx - TW.road / 2, gz, gx + TW.road / 2, gz + TW.B, 0.061, 20));
+      blocks.push(rectGeo(gx + TW.road / 2, gz + TW.road / 2, gx + TW.B - TW.road / 2, gz + TW.B - TW.road / 2, 0.05, 25));
+    }
+    for (let i = 0; i < streets.length; i += 800) this._add(mergeGeometries(streets.slice(i, i + 800)), M.road);
+    for (let i = 0; i < blocks.length; i += 800) this._add(mergeGeometries(blocks.slice(i, i + 800)), M.concrete);
   }
 
   setName(name) {

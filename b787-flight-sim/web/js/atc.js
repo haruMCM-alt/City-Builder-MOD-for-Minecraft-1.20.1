@@ -98,6 +98,7 @@ export class Radio {
     this.el = el;
     this.lines = [];
     this.voice = true;
+    this.noise = true;              // squelch / static around transmissions (menu option)
     this.enabled = true;
     this.queue = [];
     this.speaking = false;
@@ -119,8 +120,10 @@ export class Radio {
   // who: 'GND' | 'TWR' (controller) or a pilot callsign; text: the transmission
   say(who, text, { station = null, me = false } = {}) {
     if (!this.enabled) return;
-    const atc = who === 'GND' || who === 'TWR';
-    const label = atc ? (who === 'GND' ? 'GROUND' : 'TOWER') : who;
+    // 'GND' / 'TWR': home airport; 'GND2' / 'TWR2': the second airport
+    const atc = /^(GND|TWR)2?$/.test(who);
+    const two = atc && who.endsWith('2');
+    const label = atc ? (two ? AIRPORT.name2.toUpperCase() + ' ' : '') + (who.startsWith('GND') ? 'GROUND' : 'TOWER') : who;
     this.lines.push({ label: me ? label + ' (YOU)' : label, text, atc, me, t: performance.now() });
     if (this.lines.length > 6) this.lines.shift();
     this.render();
@@ -143,11 +146,11 @@ export class Radio {
     this.speaking = true;
     const lvl = m.me ? 0.7 : 1;
     let closed = false;
-    try { this.fx.open(lvl); } catch (e) { /* no audio */ }
+    if (this.noise) try { this.fx.open(lvl); } catch (e) { /* no audio */ }
     const done = () => {
       if (closed) return;
       closed = true;
-      try { this.fx.close(lvl); } catch (e) { /* no audio */ }
+      if (this.noise) try { this.fx.close(lvl); } catch (e) { /* no audio */ }
       this.speaking = false; setTimeout(() => this._next(), 450);
     };
     u.onend = done; u.onerror = done;

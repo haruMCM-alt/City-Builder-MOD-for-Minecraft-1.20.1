@@ -622,6 +622,65 @@ export class Traffic {
     this._seedRemote('back', 0.35); this._seedRemote('back', 0.8);
   }
 
+  // ------------------------------------------------------------------ second airport ground crews
+  // A small vehicle park at the east end of the apron; the crews drive along the service road in
+  // front of the terminal to the parked aircraft, a tug pushes them back.
+  _buildA2Fleet(make) {
+    this.a2Units = [];
+    ['Tug', 'Tug', 'Catering', 'Catering', 'Fuel', 'Fuel', 'BeltLoader', 'BeltLoader'].forEach((kind, k) => {
+      const v = make(kind);
+      if (!v) return;
+      v.kind = kind; v.a2 = true;
+      v.home = { x: A2.x + 408 + (k % 2) * 20, z: A2.z - 390 + Math.floor(k / 2) * 16 };
+      this._park(v);
+      this.a2Units.push(v);
+    });
+  }
+
+  _a2Dispatch(ac, kind) {
+    const v = (this.a2Units || []).find((u) => u.kind === kind && u.state === 'IDLE');
+    if (!v) return null;
+    const SL = A2.z - 398;
+    const pl = this._servicePlan(kind, ac.a2, SL, SL, ac);
+    let pts;
+    if (kind === 'Tug') {
+      const zg = ac.sz - ac.tm.noseAhead;
+      pl.pose = [ac.x, zg - 0.6, Math.PI / 2];
+      pts = [{ x: v.x, z: v.z }, { x: v.x, z: SL }, { x: ac.x, z: SL, v: 3 }, { x: ac.x, z: zg - 0.6, v: 1 }];
+    } else pts = [{ x: v.x, z: v.z }, { x: v.x, z: SL }].concat(pl.in);
+    v.state = 'DISPATCH'; v.task = { ac, kind, plan: pl, a2: true };
+    v.go([{ path: new Path(pts, 7) }], () => {
+      v.state = 'SERVICE'; this._onServiceArrive(v);
+      if (v.task.goHome) this._a2Home(v);
+    });
+    return v;
+  }
+
+  _a2Home(v) {
+    const T = v.task, SL = A2.z - 398;
+    const legs = [];
+    if (T.kind === 'Tug') {
+      const c = Math.cos(v.a), sn = Math.sin(v.a);
+      const bx = v.x - c * 16, bz = v.z - sn * 16;
+      legs.push({ path: new Path([{ x: v.x, z: v.z }, { x: bx, z: bz }], 0), dir: -1 });
+      legs.push({ path: new Path([{ x: bx, z: bz }, { x: bx - c * 12, z: bz - 14 }, { x: bx - c * 12, z: SL }, { x: v.home.x, z: SL }, { x: v.home.x, z: v.home.z }], 6) });
+    } else {
+      const pl = T.plan;
+      if (pl.rev) legs.push({ path: new Path(pl.rev, 5), dir: -1 });
+      legs.push({ path: new Path(pl.out.concat([{ x: v.home.x, z: SL }, { x: v.home.x, z: v.home.z }]), 7) });
+    }
+    v.liftT = 0; v.state = 'RETURN';
+    const go = () => v.go(legs, () => { this._park(v); });
+    if (T.kind === 'Tug') go(); else v._waitLift = go;
+  }
+
+  // radio at the second airport: only heard near it
+  _a2Say(who, text, delay = 0) {
+    const cam = this.env?.camera?.position;
+    if (!cam || Math.hypot(cam.x - A2.x, cam.z - A2.z) > 60000) return;
+    if (delay) this._later(delay, () => this.radio?.say(who, text)); else this.radio?.say(who, text);
+  }
+
   // ------------------------------------------------------------------ second airport shuttle
   // States: R_OUT (en route, lands on runway 09 there) -> R_TAXI -> R_PARK -> R_PUSH ->
   // R_TAXIOUT -> R_TKOF -> R_BACK (en route home) -> handed over as a straight-in arrival.
@@ -726,6 +785,13 @@ export class Traffic {
     ac.pitch += clamp(Math.atan2(ac.vs, ac.v) / DEG + alpha - ac.pitch, -3 * dt, 3 * dt);
     ac.n1 = lerp(ac.n1, clamp(55 + ac.vs * 2.5 + (vT - ac.v) * 1.5 + ac.flap * 0.4, 30, 95), Math.min(1, dt * 0.5));
     Object.assign(ac.lightsOn, { nav: true, beacon: true, strobe: true, landing: ac.alt < 3000, taxi: false, logo: true });
+    if (toA2 && rem < 20000 && !ac.a2App) {
+      ac.a2App = true;
+      const n2 = AIRPORT.name2;
+      this._a2Say(ac.callsign, `${n2} Tower, ${ac.callsign}, established ILS runway zero niner.`);
+      this._a2Say('TWR2', `${ac.callsign}, ${n2} Tower, runway zero niner, cleared to land.`, 4);
+      this._a2Say(ac.callsign, `Cleared to land runway zero niner, ${ac.callsign}.`, 8);
+    }
     if (toA2 && ac.alt <= 0.02 && rem < 1200) this._a2Touchdown(ac);
     else if (!toA2 && rem < 1) this._arriveHome(ac);
   }
@@ -737,6 +803,9 @@ export class Traffic {
       { x: xs, z: lane, v: 8 }, { x: xs, z: ac.sz + 30, v: 3 }, { x: xs, z: ac.sz, v: 1.2 }];
     ac.mover = new Mover(new Path(pts, [0, 40, 0, 30, 30, 0, 0], 3), { vmax: 90, acc: 0.4, dec: 2.4, aLat: 0.9, v: ac.v });
     ac.state = 'R_TAXI'; ac.route = null; ac.spoiler = 1;
+    ac.crew = null; ac.crewHome = false; ac.tugA2 = null; ac.a2App = false; ac.pushCalled = false;
+    this._a2Say(ac.callsign, `${AIRPORT.name2} Ground, ${ac.callsign}, runway vacated.`, 25);
+    this._a2Say('GND2', `${ac.callsign}, taxi to stand ${ac.a2.id} via Bravo.`, 29);
   }
 
   _arriveHome(ac) {
@@ -771,7 +840,14 @@ export class Traffic {
         ac.slat = ac.flap > 0.5 ? 1 : Math.max(0, ac.slat - dt * 0.2);
         ac.dirSign = ac.state === 'R_PUSH' ? -1 : 1;
         Object.assign(ac.lightsOn, { nav: true, beacon: true, strobe: false, landing: false, taxi: ac.state !== 'R_PUSH', logo: true });
+        const tug = ac.tugA2 && ac.tugA2 !== 'none' ? ac.tugA2 : null;
+        if (ac.state === 'R_PUSH' && tug) {
+          const na = ac.tm.noseAhead, gx = ac.x + Math.cos(ac.a) * na, gz = ac.z + Math.sin(ac.a) * na, ta = ac.a + Math.PI;
+          tug.x = gx - Math.cos(ta) * 0.6; tug.z = gz - Math.sin(ta) * 0.6; tug.a = ta; tug.v = ac.v; tug.dir = 1; tug.slaved = true;
+          tug.place(dt);
+        }
         if (!ac.mover.done) break;
+        if (ac.state === 'R_PUSH' && tug) { tug.slaved = false; this._a2Home(tug); ac.tugA2 = null; }
         const lane = A2.z + A2.laneZ;
         if (ac.state === 'R_TAXI') {
           ac.state = 'R_PARK'; ac.timer = 0; ac.parkFor = 300 + this.rnd() * 420; ac.v = 0;
@@ -781,9 +857,13 @@ export class Traffic {
             { x: A2.x - A2.conns[2], z: A2.z, v: 5 }, { x: A2.x - A2.conns[2] + 40, z: A2.z, v: 4 }];
           ac.mover = new Mover(new Path(pts, [0, 30, 30, 40, 0, 20, 0], 2), { vmax: 12, acc: 0.5, dec: 0.9, aLat: 0.9 });
           ac.state = 'R_TAXIOUT';
+          this._a2Say(ac.callsign, `${AIRPORT.name2} Ground, ${ac.callsign}, request taxi.`, 3);
+          this._a2Say('GND2', `${ac.callsign}, taxi to holding point runway zero niner via Bravo.`, 7);
         } else {
           ac.mover = new Mover(new Path([{ x: ac.x, z: A2.z }, { x: A2.x + A2.len / 2, z: A2.z }], 0, 3), { vmax: 999 });
           ac.state = 'R_TKOF'; ac.v = 0; ac.dirSign = 1;
+          this._a2Say('TWR2', `${ac.callsign}, ${AIRPORT.name2} Tower, runway zero niner, cleared for takeoff.`);
+          this._a2Say(ac.callsign, `Cleared for takeoff runway zero niner, ${ac.callsign}.`, 4);
           if (ac.a2) { ac.a2.busy = null; }
         }
         break;
@@ -791,7 +871,20 @@ export class Traffic {
       case 'R_PARK': {
         ac.n1 = Math.max(0, ac.n1 - dt * 6);
         if (ac.timer > 30) Object.assign(ac.lightsOn, { nav: false, beacon: false, logo: false, taxi: false });
-        if (ac.timer > ac.parkFor) {
+        // ground crews: catering, fuel and bags while parked; a tug before departure
+        if (!ac.crew && ac.timer > 15 && ac.parkFor - ac.timer > 200) ac.crew = ['Catering', 'Fuel', 'BeltLoader'].map((k) => this._a2Dispatch(ac, k)).filter(Boolean);
+        if (ac.crew && !ac.crewHome && ac.timer > ac.parkFor - 140) {
+          ac.crewHome = true;
+          for (const v of ac.crew) { if (v.state === 'SERVICE') this._a2Home(v); else if (v.task) v.task.goHome = true; }
+        }
+        if (!ac.tugA2 && ac.timer > ac.parkFor - 100) ac.tugA2 = this._a2Dispatch(ac, 'Tug') || 'none';
+        const tugReady = !ac.tugA2 || ac.tugA2 === 'none' || ac.tugA2.state === 'SERVICE' || ac.timer > ac.parkFor + 120;
+        if (ac.timer > ac.parkFor - 20 && !ac.pushCalled && tugReady) {
+          ac.pushCalled = true;
+          this._a2Say(ac.callsign, `${AIRPORT.name2} Ground, ${ac.callsign}, stand ${ac.a2?.id}, request push back.`);
+          this._a2Say('GND2', `${ac.callsign}, push back approved, face west.`, 4);
+        }
+        if (ac.timer > ac.parkFor && tugReady) {
           const lane = A2.z + A2.laneZ, xs = ac.x;
           ac.mover = new Mover(new Path([{ x: xs, z: ac.z }, { x: xs, z: lane }, { x: xs + 60, z: lane }], [0, 30, 0], 2),
             { vmax: 1.6, acc: 0.3, dec: 0.5, aLat: 0.5, dir: -1 });
@@ -810,6 +903,7 @@ export class Traffic {
         Object.assign(ac.lightsOn, { landing: true, strobe: true, taxi: false });
         if (ac.pitch > 7.5 && ac.v > 80) {
           ac.a2 = null; ac.vs = 3;
+          this._a2Say('TWR2', `${ac.callsign}, contact departure, good day.`, 8);
           this._route(ac, this._backRoute(ac), 'R_BACK', (16000 + 250) * TAN3);
           ac.route.alt0 = 0;
         }
@@ -834,6 +928,7 @@ export class Traffic {
       return v;
     };
     const G = this.G;
+    this._buildA2Fleet(make);
     this.depots = G.gseDepots.map(([dx, dz], di) => ({ x: dx, z: dz, side: di === 0 ? -1 : 1, units: [] }));
     for (const dep of this.depots) {
       const cols = [];
@@ -1229,6 +1324,7 @@ export class Traffic {
     if (this.pTug) this._updatePlayerTug(dt, env.playerSteer);
     while (this._removeList.length) this._remove(this._removeList.pop());
     while (this._remoteList && this._remoteList.length) { const a = this._remoteList.pop(); if (this.aircraft.includes(a)) this._goRemote(a); }
+    for (const v of this.a2Units || []) if (v._waitLift && v.lift < 0.02) { const f = v._waitLift; v._waitLift = null; f(); }
     // shuttle flights: fly / taxi, full model only near the camera
     {
       const cam = env.camera.position;
@@ -1662,7 +1758,7 @@ export class Traffic {
     const deps = this.depots.slice().sort((a, b) => Math.hypot(a.x - P.x, a.z - P.z) - Math.hypot(b.x - P.x, b.z - P.z));
     let v = null;
     for (const d of deps) if ((v = this._free(d, 'Tug'))) break;
-    if (!v) v = this.vehicles.find((u) => u.kind === 'Tug' && u.state === 'IDLE');
+    if (!v) v = this.vehicles.find((u) => u.kind === 'Tug' && u.state === 'IDLE' && !u.a2);
     if (!v) return false;
     v.legs = []; v.mover = null; v.onDone = null; v.task = null;
     v.state = 'PLAYER'; v.slaved = true; v.released = null;

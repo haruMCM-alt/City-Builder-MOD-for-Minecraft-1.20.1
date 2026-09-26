@@ -51,7 +51,7 @@ export const LOGOS = [
     // Japan Airlines, 2011 "Tsurumaru" livery: all-white aircraft, red crane on the fin
     id: 'jal', label: 'JAL 日本航空', name: 'Japan Airlines', real: true,
     colors: { primary: '#f5f7f9', primary2: '#f5f7f9', accent1: '#f5f7f9', accent2: '#f5f7f9', tailTop: '#f7f8fa', tailBottom: '#f3f4f6', nacelle: '#eceef1', brand: '#e50012' },
-    plain: true, noSweep: true, tailScale: 1.3, tailShift: [0.35, -0.2],
+    plain: true, noSweep: true, tailScale: 1.45, boxAspect: 1,
     title: { img: 'jalWord', aspect: JAL_WORD_ASPECT, h: 0.62 },
     draw(ctx) { drawImg(ctx, 'jalIcon', -1, -1, 2, 2); },
   },
@@ -60,7 +60,7 @@ export const LOGOS = [
     // Triton-blue fin with the white ANA mark
     id: 'ana', label: 'ANA 全日空', name: 'ANA', real: true,
     colors: { primary: '#1d3a91', primary2: '#223f9a', accent1: '#00b3f0', accent2: '#f5f7f9', tailTop: '#1a3688', tailBottom: '#223f9a', nacelle: '#eef0f3', brand: '#223f9a' },
-    tailScale: 1.15, tailShift: [1.3, -1.2],
+    tailScale: 1.6, boxAspect: ANA_ASPECT,
     title: { img: 'ana', aspect: ANA_ASPECT, h: 1.9 },
     draw(ctx, onDark = true) { const w = 2, h = w / ANA_ASPECT; drawImg(ctx, onDark ? 'anaWhite' : 'ana', -w / 2, -h / 2, w, h); },
   },
@@ -266,7 +266,39 @@ function finLogoCanvas(logo, size) {
 }
 function finRect(logo, T) {
   const [cs, cz, r] = T.logo, k = T.k ?? 1, sh = logo.tailShift || [0, 0];
-  return new THREE.Vector4(cs + sh[0] * k, cz + sh[1] * k, r * 1.12 * (logo.tailScale || 1), 0);
+  const rMax = r * 1.12 * (logo.tailScale || 1);
+  if (T.fin && T.fin.length > 3) {
+    const f = fitFin(T.fin, rMax, logo.boxAspect || 1);
+    if (f) return new THREE.Vector4(f[0], f[1], f[2], 0);
+  }
+  return new THREE.Vector4(cs + sh[0] * k, cz + sh[1] * k, rMax, 0);
+}
+
+// Largest mark (half-width R, box aspect a = width / height) that fits inside the fin outline
+// [z, leading edge s, trailing edge s], low on the fin and as far aft as it goes.
+function fitFin(F, rMax, a) {
+  const at = (z, c) => {
+    if (z <= F[0][0]) return F[0][c];
+    for (let i = 1; i < F.length; i++) if (z <= F[i][0]) { const t = (z - F[i - 1][0]) / (F[i][0] - F[i - 1][0]); return F[i - 1][c] + t * (F[i][c] - F[i - 1][c]); }
+    return F[F.length - 1][c];
+  };
+  const z0 = F[0][0], zTop = F[F.length - 1][0], H = zTop - z0, m = 0.035 * H;
+  let best = null;
+  for (let fb = 0.22; fb <= 0.451; fb += 0.01) {
+    const zb = z0 + fb * H;
+    let R = rMax;
+    for (let it = 0; it < 60; it++, R *= 0.97) {
+      const zt = zb + 2 * R / a;
+      if (zt > zTop - m) continue;
+      let le = -1e9, te = 1e9;
+      for (let z = zb; z <= zt + 1e-6; z += 0.1) { le = Math.max(le, at(z, 1)); te = Math.min(te, at(z, 2)); }
+      if (te - le - 2 * m >= 2 * R) {
+        if (!best || R > best[2] + 1e-3) best = [te - m - R, zb + R / a, R];
+        break;
+      }
+    }
+  }
+  return best;
 }
 
 // ------------------------------------------------------------------ title texture

@@ -353,7 +353,7 @@ export class Audio {
     const set = (p, v, tc = 0.08) => p.setTargetAtTime(v, t, tc);
     const view = L.view;
     const inside = view === 'cockpit';
-    const cabin = view === 'wing' || view === 'ife' || view === 'cabin';
+    const cabin = view === 'wing' || view === 'ife' || view === 'cabin' || view === 'walk';
     // ---- listener geometry -------------------------------------------------------------------
     const ac = L.acPos;
     const dx = L.camPos.x - ac.x, dy = L.camPos.y - ac.y, dz = L.camPos.z - ac.z;

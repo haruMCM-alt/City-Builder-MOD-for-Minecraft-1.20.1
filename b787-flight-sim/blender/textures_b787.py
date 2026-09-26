@@ -360,6 +360,11 @@ if G.TYPE != "b789":
                 k=round(_k, 4), sRef=round(G.VT_S_LE0 - 1.25 * _k, 3))
 
 
+# fin outline for fitting the airline mark inside it: [z, leading edge s, trailing edge s]
+TAIL["fin"] = [[round(z, 2), round(float(G.vt_le(z)), 2), round(float(G.vt_te(z)), 2)]
+               for z in np.arange(G.VT_Z0, G.VT_ZTIP + 0.01, 0.5)]
+
+
 def livery_layout():
     return dict(
         note="design frame: s aft from nose, z up; three.js x = sCG - s, y = z, z = -y",

@@ -15,6 +15,7 @@ export class Input {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown', 'Home', 'End', '/', 'Tab'].includes(e.key)) e.preventDefault();
       if (!e.repeat) this.command(k, e);
       this.keys.add(k);
+      if (e.shiftKey) this.keys.add('Shift');
     });
     window.addEventListener('keyup', (e) => {
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
@@ -71,17 +72,27 @@ export class Input {
     if (e.shiftKey && k === 'r') return this.onCommand('toga');
     if (e.shiftKey && k === 'f') return this.onCommand('idle');
     if (e.shiftKey && k === 'x') return this.onCommand('extinguish');
+    if (e.shiftKey && k === 'd') return this.onCommand('fids');
     if (map[k]) this.onCommand(map[k]);
   }
 
   down(...ks) { return ks.some((k) => this.keys.has(k)); }
 
+  walkAxes() {
+    const K = this;
+    return { fwd: (K.down('ArrowUp', 'w') ? 1 : 0) - (K.down('ArrowDown', 's') ? 1 : 0),
+      side: (K.down('ArrowRight', 'd') ? 1 : 0) - (K.down('ArrowLeft', 'a') ? 1 : 0),
+      turn: (K.down('e') ? 1 : 0) - (K.down('q') ? 1 : 0), run: K.down('Shift') };
+  }
+
   // returns pilot inputs; rate-limited so a keyboard feels like a stick
   update(dt, pilot, sys) {
     const K = this;
-    const tgtPitch = (K.down('ArrowDown', 's') ? 1 : 0) - (K.down('ArrowUp', 'w') ? 1 : 0);
-    const tgtRoll = (K.down('ArrowRight', 'd') ? 1 : 0) - (K.down('ArrowLeft', 'a') ? 1 : 0);
-    const tgtYaw = (K.down('e') ? 1 : 0) - (K.down('q') ? 1 : 0);
+    // walking in the cabin: the movement keys walk instead of flying
+    const fly = this.walk ? 0 : 1;
+    const tgtPitch = fly * ((K.down('ArrowDown', 's') ? 1 : 0) - (K.down('ArrowUp', 'w') ? 1 : 0));
+    const tgtRoll = fly * ((K.down('ArrowRight', 'd') ? 1 : 0) - (K.down('ArrowLeft', 'a') ? 1 : 0));
+    const tgtYaw = fly * ((K.down('e') ? 1 : 0) - (K.down('q') ? 1 : 0));
     const r = (cur, t, up, down) => approach(cur, t, t === 0 ? down : up, dt);
     this.axes.pitch = r(this.axes.pitch, tgtPitch * 0.85, 1.6, 3.5);
     this.axes.roll = r(this.axes.roll, tgtRoll, 2.2, 4);
