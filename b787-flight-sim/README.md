@@ -158,6 +158,14 @@ python3 render_previews.py world
 
 Blender アプリから使う場合：`blender --background --python build_b787.py`。
 
+## 単一 HTML 版 / Single-file build
+
+```bash
+npm i esbuild                       # 初回のみ
+python3 tools/build_single_html.py  # → dist/MicomsoftFrightSimulator.html（約 80 MB）
+```
+JavaScript（three.js 含む）を esbuild で 1 本にまとめ、モデル・データ・テクスチャ・安全ビデオ・Draco デコーダーをすべて base64 で埋め込んだ 1 ファイル。サーバー不要で、ダブルクリックでブラウザ（Chrome / Edge / Firefox）で開けます。起動時に埋め込みデータをメモリ上の blob URL に展開し（`window.B787_ASSETS`）、`main.js` が fetch と three.js のローダーをそこへ振り向けます。
+
 ## テスト / Tests
 
 ```bash

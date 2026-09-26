@@ -34,6 +34,16 @@ const DT = 1 / 240;
 const ASSET = './assets/';
 // model files: .glb by default; a host that cannot serve .glb can set window.B787_MODEL_EXT = '.gltf.json'
 const MODEL_EXT = window.B787_MODEL_EXT || '.glb';
+// single-file build (tools/build_single_html.py): every asset is embedded in the page and
+// window.B787_ASSETS maps its path to an in-memory blob URL; fetch() and the three.js loaders
+// are redirected there
+const EMBEDDED = window.B787_ASSETS || null;
+const assetURL = (u) => (EMBEDDED && EMBEDDED[String(u).replace(/^\.\//, '')]) || u;
+if (EMBEDDED) {
+  THREE.DefaultLoadingManager.setURLModifier(assetURL);
+  const fetch0 = window.fetch.bind(window);
+  window.fetch = (u, o) => fetch0(typeof u === 'string' ? assetURL(u) : u, o);
+}
 
 // aircraft types (Blender builds: blender/build_b787.py with AC_TYPE) and the AI fleet mix
 const TYPES = [
@@ -482,7 +492,7 @@ class App {
       b.type = 'button';
       b.dataset.id = t.id;
       const seats = m.cabin ? m.cabin.total : '—';
-      b.innerHTML = `<img alt="" src="${ASSET}type_${t.id}.jpg" onerror="this.style.display='none'">` +
+      b.innerHTML = `<img alt="" src="${assetURL(ASSET + 'type_' + t.id + '.jpg')}" onerror="this.style.display='none'">` +
         `<div class="tb"><div class="tn">Boeing ${t.short}<em>${t.cls}</em></div>` +
         `<div class="ts">全長 ${m.length.toFixed(2)} m · 全幅 ${m.span.toFixed(2)} m · 全高 ${m.height.toFixed(2)} m<br>` +
         `最大離陸重量 ${(s.MTOW / 1000).toFixed(1)} t · 座席 ${seats}<br>${m.engineName || ''} ×2 · Mmo ${s.MMO}</div></div>`;
@@ -693,7 +703,7 @@ class App {
   startSafetyVideo() {
     if (this.livery?.logo !== 'jal' || !this.cabin || this.cabin.ife.safety) return;
     const mp4 = document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"');
-    this.cabin.ifeSafety(true, ASSET + (mp4 ? 'jal_safety.mp4' : 'jal_safety.webm'), this.audio);
+    this.cabin.ifeSafety(true, assetURL(ASSET + (mp4 || EMBEDDED ? 'jal_safety.mp4' : 'jal_safety.webm')), this.audio);
     this.toast('機内安全ビデオ上映中 Safety video');
   }
 
