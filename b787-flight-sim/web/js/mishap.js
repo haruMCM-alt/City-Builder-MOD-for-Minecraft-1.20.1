@@ -78,10 +78,9 @@ export class Mishap {
   onDamage(e) {
     const A = this.app, fm = A.fm, D = fm.dmg, m = A.meta, root = A.visual.root;
     A.visual.setDamage(D);
-    A.audio.crunch?.(Math.min(1.2, 0.4 + e.sev / 60));
+    if (!e.quiet) { A.audio.crunch?.(Math.min(1.2, 0.4 + e.sev / 60)); A.rig.impulse(0.8); }
     A.audio.setAlarm?.('warn', true);
     this._warnT = 8;
-    A.rig.impulse(0.8);
     const side = e.side, sgn = side === 0 ? -1 : 1;        // left = -z
     const half = (m.span || 60) / 2, rootZ = (m.fusW || 5.77) / 2 + 0.3;
     if (e.part === 'wing') {

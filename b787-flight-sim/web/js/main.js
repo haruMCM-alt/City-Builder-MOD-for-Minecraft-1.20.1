@@ -26,6 +26,7 @@ import { FIDS } from './fids.js';
 import { MCP3D } from './mcp3d.js';
 import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
+import { ARFF } from './emergency.js';
 import { configureObstacles } from './obstacles.js';
 import { V3, DEG, KT, FT, FPM, clamp, smoothstep, headingVec, wrap360, mulberry32 } from './util.js';
 
@@ -227,6 +228,8 @@ class App {
     this.rig = new CameraRig(this.camera, canvas, meta, world);
     this.installType(sel);
     this.mishap = new Mishap(this);
+    this.arff = new ARFF(this);
+    this.setupEmergency();
     this.input = new Input((c) => this.command(c));
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     if (this.isTouch) this.input.bindTouch($('touch'));
@@ -390,6 +393,7 @@ class App {
     });
     $('restartBtn').onclick = () => { $('pause').classList.add('hidden'); this.audio.start(); this.startScenario(this.scenario, true); };
     $('toMenuBtn').onclick = () => this.openMenu();
+    document.querySelectorAll('.failBtn').forEach((b) => { b.onclick = () => { this.resume(); this.command('failure:' + b.dataset.fail); }; });
     // MCP
     document.querySelectorAll('.mcpbtn').forEach((b) => { b.onclick = () => this.command(b.dataset.cmd === 'ap' ? 'ap' : b.dataset.cmd === 'at' ? 'at' : b.dataset.cmd); });
     document.querySelectorAll('.num').forEach((n) => {
@@ -763,6 +767,7 @@ class App {
     this.cabin?.ifeSafety(false);
     const spd = (kt, altM) => kt * KT * Math.sqrt(1.225 / (1.225 * Math.pow(1 - 2.2558e-5 * altM, 4.256)));
     this.autoFlight = null;
+    this.arff?.reset(); this._sprayT = 0;
     if (id === 'rwy27' || id === 'rwy09' || id === 'auto') {
       // auto flight: from the runway in use (headwind) to the destination chosen in the menu
       const wd = +$('windDir').value, wk = +$('windSpd').value;
@@ -1026,6 +1031,15 @@ class App {
         this.toast(n ? '🧯 消火装置作動 Fire handles pulled — engine fire extinguished' : '消火できる火災はありません (燃料火災は消えません)', 3500);
         break;
       }
+      case 'failure': case 'failure:engineFire': case 'failure:engineFail': case 'failure:fuelLeak': {
+        // emergency practice: a failure (random kind unless chosen in the pause menu)
+        if (fm.crashed) break;
+        const kinds = ['engineFire', 'engineFail', 'fuelLeak'];
+        const kind = c.includes(':') ? c.split(':')[1] : kinds[Math.floor(Math.random() * kinds.length)];
+        const t = fm.failure(kind);
+        this.toast(t ? `⚠ 故障発生 ${t} — Y で${kind === 'engineFire' ? 'メーデー' : 'パンパン'}を宣言` : 'これ以上の故障は発生できません', 5000);
+        break;
+      }
       case 'service': {
         if (!this.cabin.available) break;
         if (!this.cabin.group) { this.cabin.ensure().then(() => this.cabin.startService()); this.toast('機内食サービスを開始します Meal service'); break; }
@@ -1061,6 +1075,58 @@ class App {
       if (score < bd) { bd = score; best = r; }
     }
     return best;
+  }
+
+  // ------------------------------------------------------------------- emergencies
+  // MAYDAY / PAN-PAN (playeratc.js): the airport's fire trucks (emergency.js) stand by at the
+  // runway, follow the aircraft after the landing and put out the fires
+  setupEmergency() {
+    const T = this.traffic;
+    if (!T) return;
+    const fm = this.fm;
+    const pos = () => ({ x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90) * DEG, v: (fm.out.gs || 0) * KT });
+    const fire = () => {
+      const D = fm.dmg, m = this.meta, root = this.visual?.root;
+      if (!root) return null;
+      let p = null;
+      for (let i = 0; i < 2 && !p; i++) {
+        if (D.engFire[i] && D.eng[i] < 2) p = (i ? m.engineAxisR : m.engineAxisL).slice();
+        else if (D.wingFire[i]) { const t = i ? m.wingTipR : m.wingTipL; p = [t[0] * 0.5, t[1] * 0.5, t[2] * 0.5]; }
+      }
+      return p ? new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(root.matrixWorld) : null;
+    };
+    this._sprayT = 0;
+    T.onEmergency = ({ apt, runway, onGround }) => {
+      if (!runway) return;
+      this.arff.deploy(apt, runway);
+      if (onGround) this.arff.attend(pos, fire);
+      this.toast(onGround ? '🚒 消防車が出動しました Fire trucks on their way' : '🚒 消防車が滑走路脇で待機します Emergency services standing by', 4500);
+    };
+    T.onEmergencyLanded = () => this.arff.attend(pos, fire);
+    T.onEmergencyEnd = () => { this.arff.stand(); this.toast('✅ 緊急事態解除 — 滑走路再開 Emergency closed out', 4000); };
+    T.onBrace = () => this.toast('📢 客室「頭を下げて！」 Brace for impact!', 5000);
+    // AI emergencies: the same trucks meet the aircraft
+    T.onAIEmergency = (ac, runway) => this.arff.deploy(1, runway);
+    T.onAIEmergencyLanded = (ac) => this.arff.attend(() => ({ x: ac.x, z: ac.z, a: ac.a, v: ac.v }), () => null);
+    T.onAIEmergencyEnd = () => this.arff.stand();
+  }
+
+  updateEmergency(dt) {
+    this.arff.update(dt);
+    // water on the fire for ~15 s puts it out (engine and wing fires)
+    const D = this.fm.dmg;
+    const burning = D.engFire[0] || D.engFire[1] || D.wingFire[0] || D.wingFire[1];
+    if (burning && this.arff.spraying) {
+      this._sprayT += dt;
+      if (this._sprayT > 15) {
+        this._sprayT = 0;
+        this.fm.extinguish();
+        D.wingFire = [false, false];
+        const F = this.mishap.fireSrc;
+        for (const k of ['wf0', 'wf1']) if (F[k]) { F[k].dur = 0; F[k] = null; }
+        this.toast('🧯 消防隊が消火しました Fire extinguished by the fire brigade', 4500);
+      }
+    } else if (!burning) this._sprayT = 0;
   }
 
   toast(msg, ms = 2200) {
@@ -1140,11 +1206,12 @@ class App {
     if (this.traffic && !this.paused) {
       const o = fm.out;
       this.traffic.update(dt, {
-        player: { x: fm.pos.x, z: fm.pos.z, alt: o.ra ?? 0, a: ((o.hdg || 0) - 90) * DEG, v: (o.gs || 0) * KT, onGround: !!o.wow },
+        player: { x: fm.pos.x, z: fm.pos.z, alt: o.ra ?? 0, a: ((o.hdg || 0) - 90) * DEG, v: (o.gs || 0) * KT, onGround: !!o.wow, dmg: fm.dmg, fuel: fm.fuel },
         playerSteer: fm.ctl.steer || 0,
         camera: this.camera, night: this.world.night, touchdown: (ac) => this.aiTouchdown(ac),
       });
     }
+    if (!this.paused) this.updateEmergency(dt);
     if (this.pushPending && this.traffic?.playerTugReady) {
       this.pushPending = false;
       fm.ctl.pushback = -1.3; fm.ctl.parkingBrake = false;
@@ -1385,6 +1452,9 @@ class App {
       if (D.wing[0] || D.wing[1]) lines.push(`<b>WING DAMAGE ${D.wing[0] ? 'L ' + Math.round(D.wing[0] * 100) + '% ' : ''}${D.wing[1] ? 'R ' + Math.round(D.wing[1] * 100) + '%' : ''}</b>`);
       if (D.tail) lines.push(`<b>STAB / RUDDER DAMAGE ${Math.round(D.tail * 100)}%</b>`);
       if (D.leak) lines.push(`<b>FUEL LEAK ${Math.round(D.leak * 3.6)} t/h</b>`);
+      const M = this.traffic?.pc?.s;
+      if (M?.squawk) lines.unshift(`<b class="w">${M.mayday.kind === 'MAYDAY' ? 'MAYDAY' : 'PAN-PAN'} · SQUAWK 7700</b>`);
+      else if (!M?.mayday && this.traffic?.pc?.emergencyKind?.()) lines.push('<span>Y: ' + (this.traffic.pc.emergencyKind() === 'MAYDAY' ? 'メーデー' : 'パンパン') + '宣言 Declare</span>');
       const html = lines.join('') + (fire ? '<span>Shift+X 消火 Fire handle</span>' : '');
       if (dm.innerHTML !== html) dm.innerHTML = html;
       dm.classList.remove('hidden');

@@ -110,8 +110,77 @@ export class PlayerATC {
     return (this.T.remote || []).some((a) => a.state === 'R_TKOF' && a.rap === C.ap);
   }
 
+  // ---------------------------------------------------------------- emergencies
+  // what the damage calls for: 'MAYDAY' (distress), 'PAN' (urgency) or null
+  emergencyKind() {
+    const D = this.P.dmg;
+    if (!D) return null;
+    const fire = D.engFire[0] || D.engFire[1] || D.wingFire[0] || D.wingFire[1];
+    if (fire || D.eng[0] >= 2 || D.eng[1] >= 2 || (D.eng[0] && D.eng[1]) || D.wing[0] > 0.2 || D.wing[1] > 0.2 || D.tail > 0.3) return 'MAYDAY';
+    if (D.eng[0] || D.eng[1] || D.leak > 0 || D.wing[0] || D.wing[1] || D.tail) return 'PAN';
+    return null;
+  }
+
+  // the problem in radio words
+  problem() {
+    const D = this.P.dmg, out = [];
+    for (let i = 0; i < 2; i++) {
+      const sd = i ? 'right' : 'left';
+      if (D.engFire[i]) out.push(`${sd} engine fire`);
+      else if (D.eng[i] >= 2) out.push(`${sd} engine separated`);
+      else if (D.eng[i]) out.push(`${sd} engine failure`);
+    }
+    if (D.wingFire[0] || D.wingFire[1]) out.push('wing fire');
+    else if (D.wing[0] || D.wing[1]) out.push('wing damage');
+    if (D.tail) out.push('tail damage');
+    if (D.leak && !out.length) out.push('fuel leak');
+    return out.slice(0, 2).join(' and ') || 'technical problem';
+  }
+
+  // the runway in world.json format for the airport the player is working with
+  worldRunway(C = this.ctx()) {
+    const T = this.T;
+    return C.apt === 1 ? T._rw().r : T.W.runways.find((x) => x.apt === C.apt && x.ident === C.R.id);
+  }
+
+  // MAYDAY / PAN-PAN: priority, squawk 7700, landing clearance, rescue services
+  declare(kind) {
+    const C = this.ctx(), P = this.P, T = this.T, s = this.s, cs = this.cs, R = C.R;
+    const word = kind === 'MAYDAY' ? 'Mayday, mayday, mayday' : 'Pan-pan, pan-pan, pan-pan';
+    const ack = kind === 'MAYDAY' ? 'Mayday' : 'Pan-pan';
+    s.mayday = { kind, apt: C.apt, t: T.time };
+    s.squawk = '7700';
+    const souls = 180 + ((cs.length * 37) % 120);
+    const fuelMin = Math.max(20, Math.round((P.fuel || 20000) / 110));
+    if (P.onGround) {
+      this.say(cs, `${word}, ${C.name} Tower, ${cs}, ${this.problem()}, stopping on the ${P.v > 3 ? 'runway' : 'ground'}, request emergency assistance, ${souls} persons on board.`);
+      this.later(4, () => {
+        this.say('TWR', `${cs}, ${C.name} Tower, roger ${ack}. Emergency services are on their way to you. Hold position.`);
+        this.later(4, () => this.say(cs, `Holding position, ${cs}.`));
+        T.onEmergency?.({ apt: C.apt, runway: this.worldRunway(C), onGround: true });
+      });
+      return;
+    }
+    s.inbound = true; s.landCleared = true; s.continued = true;
+    this.say(cs, `${word}, ${C.name} Tower, ${cs}, ${this.problem()}, request immediate landing runway ${R.id}, ${souls} persons on board, fuel ${fuelMin} minutes.`);
+    this.later(4, () => {
+      // vectors to a 12 km final
+      const fx = R.tx - R.d * 12000, fz = C.oz;
+      const dx = fx - P.x, dz = fz - P.z, dist = Math.hypot(dx, dz);
+      const f = this.final(C);
+      const hdg = Math.round(((Math.atan2(dx, -dz) * 180 / Math.PI) + 360) % 360 / 5) * 5 || 360;
+      const vec = f.aligned && f.along < 20000 ? `continue approach` : `turn heading ${hdg3(hdg)}, ${Math.max(1, Math.round(dist / NM))} miles to final, descend at your discretion`;
+      this.say('TWR', `${cs}, ${C.name} Tower, roger ${ack}. Squawk seven seven zero zero. ${vec[0].toUpperCase() + vec.slice(1)}. Runway ${R.id} cleared to land, wind ${hdg3(T.windDir)} at ${Math.round(T.windKt)} knots. Emergency services are standing by.`);
+      this.later(7, () => this.say(cs, `Squawk seven seven zero zero, cleared to land runway ${R.id}, ${cs}.`));
+      this.later(12, () => this.say('TWR', `All stations, ${C.name} Tower, emergency in progress. All departures hold position, arriving traffic expect holding.`));
+      T.onEmergency?.({ apt: C.apt, runway: this.worldRunway(C), onGround: false });
+    });
+  }
+
   hint() {
     const ph = this.phase(), s = this.s;
+    const ek = this.emergencyKind();
+    if (ek && !s.mayday) return ek === 'MAYDAY' ? '🆘 メーデー宣言 Declare MAYDAY' : '⚠ パンパン宣言 Declare PAN-PAN';
     if (ph === 'GATE' && !s.push && !s.pushPending) return 'プッシュバック要求 Request push back';
     if (ph === 'TAXI' && s.landed && !s.taxiIn) return 'スポットへ Request taxi to the gate';
     if ((ph === 'TAXI' || ph === 'GATE') && !s.taxi && !s.landed) return 'タキシー要求 Request taxi';
@@ -122,6 +191,8 @@ export class PlayerATC {
 
   request() {
     const C = this.ctx(), ph = this.phase(C), s = this.s, cs = this.cs, R = C.R;
+    const ek = this.emergencyKind();
+    if (ek && !s.mayday && ph !== 'OFF') { this.declare(ek); return; }
     if (ph === 'OFF') return;
     const face = R.d < 0 ? 'east' : 'west';
     if (ph === 'GATE' && !s.push && !s.pushPending) {
@@ -213,7 +284,48 @@ export class PlayerATC {
   runwayClaim(apt = 1) {
     const s = this.s;
     if (!this.P.active || this.apt !== apt) return false;
-    return (s.tkof && !s.airborne) || (s.landCleared && !s.landed);
+    return (s.tkof && !s.airborne) || (s.landCleared && !s.landed) || !!(s.mayday && !s.closedOut);
+  }
+
+  // emergency follow-up: handover, observed damage, brace call, rescue on the runway, close-out
+  emergencyUpdate(dt, C) {
+    const s = this.s, P = this.P, T = this.T, cs = this.cs;
+    const M = s.mayday;
+    if (!M) {
+      // tower sees a problem the crew has not declared
+      if (this.emergencyKind() && !P.onGround && !s.askedEmerg) {
+        s._eT = (s._eT || 0) + dt;
+        if (s._eT > 20) { s.askedEmerg = true; this.say('TWR', `${cs}, ${C.name} Tower, are you declaring an emergency? Say intentions.`); }
+      }
+      return;
+    }
+    if (M.apt !== C.apt && !P.onGround) {
+      M.apt = C.apt;
+      s.inbound = true; s.landCleared = true; s.continued = true;
+      this.say('TWR', `${cs}, ${C.name} Tower, we have your ${M.kind === 'MAYDAY' ? 'Mayday' : 'Pan-pan'}. Runway ${C.R.id} cleared to land, emergency services are standing by.`);
+      T.onEmergency?.({ apt: C.apt, runway: this.worldRunway(C), onGround: false });
+    }
+    if (M.kind === 'MAYDAY' && !P.onGround && P.alt < 300 && !s.braced && (P.dmg?.wing[0] > 0.2 || P.dmg?.wing[1] > 0.2 || P.dmg?.wingFire?.some(Boolean) || (P.dmg?.eng[0] && P.dmg?.eng[1]))) {
+      s.braced = true; T.onBrace?.();
+    }
+    if (P.onGround && !s.rescue && (s.landed || T.time - M.t > 8)) {
+      s.rescue = true;
+      T.onEmergencyLanded?.();
+    }
+    if (s.rescue && P.v < 1.5 && !s.stoppedCall) {
+      s.stoppedCall = true;
+      this.say('TWR', `${cs}, emergency services are with you. Runway ${C.R.id} closed. Report when ready to taxi, or advise if you require evacuation.`);
+    }
+    // no fire any more and stopped for a while: close out, the runway reopens
+    if (s.stoppedCall && !s.closedOut) {
+      const D = P.dmg, fire = D && (D.engFire[0] || D.engFire[1] || D.wingFire[0] || D.wingFire[1]);
+      s._cT = fire ? 0 : (s._cT || 0) + dt;
+      if (s._cT > 45) {
+        s.closedOut = true; s.squawk = null;
+        this.say('TWR', `${cs}, fire services report the aircraft safe. Runway ${C.R.id} reopened for traffic. Taxi when able, follow the fire vehicles.`);
+        T.onEmergencyEnd?.();
+      }
+    }
   }
 
   update(dt) {
@@ -222,9 +334,11 @@ export class PlayerATC {
     const C = this.ctx();
     // a new airport's frequencies: start over with its controllers
     if (this._apt !== C.apt) {
-      if (this._apt !== null && !this.s.departed) this.s = { departed: !P.onGround };
+      // an emergency is handed over to the next airport's controllers
+      if (this._apt !== null && !this.s.departed) this.s = { departed: !P.onGround, mayday: this.s.mayday, squawk: this.s.squawk };
       this._apt = C.apt; this.waiting = null;
     }
+    this.emergencyUpdate(dt, C);
     const s = this.s, R = C.R;
     const ph = this.phase(C);
     P.state = C.apt === 1 && ph === 'RUNWAY' && P.v > 5 && !s.landed ? 'TAKEOFF' : undefined;

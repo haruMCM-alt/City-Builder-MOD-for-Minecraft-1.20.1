@@ -573,6 +573,7 @@ export class Traffic {
   reset({ stands, skipStand, randomLivery, runway, windDir, windKt, playerStand, playerCallsign }) {
     for (const ac of this.aircraft.concat(this.remote || [])) { this.scene.remove(ac.static); if (ac.art) this._release(ac.art); }
     this.remote = [];
+    this.aiEmerg = null; this.nextAIEmerg = 420 + Math.random() * 600;
     // stands at the remote airports (gate letters B / C / D)
     this.remoteStands = {};
     for (const ap of REMOTES) this.remoteStands[ap.id] = ap.stands.map((dx, i) => ({ id: ap.gate + (i + 1), a2: true, ap, busy: null, cg: [ap.x + dx, 0, ap.z + ap.standCgZ] }));
@@ -1416,6 +1417,9 @@ export class Traffic {
       if (['LINEUP', 'WAIT_TKOF', 'TAKEOFF'].includes(ac.state) && ac.onRunwayArmed) return ac;
       if (ac.state === 'ROLLOUT' && !ac.vacated) return ac;
     }
+    // an AI emergency on final: the runway is kept free for it
+    const E = this.aiEmerg;
+    if (E && E.ac !== except && (E.ac.state === 'AIR' || (E.ac.state === 'ROLLOUT' && !E.ac.vacated))) return E.ac;
     const P = this.player;
     if (except !== P && P.active && P.alt < 50 && Math.abs(P.z) < 45 && Math.abs(P.x) < 1850) return P;
     if (except !== P && P.active && this.pc.runwayClaim()) return P;
@@ -1531,10 +1535,50 @@ export class Traffic {
           this._later(5, () => this.radio?.say(ac.callsign, `Cleared to land runway ${R.id}, ${ac.callsign}.`));
         }
       }
-      if (leg >= 4 && rem < 1500 && rem > 0) {
+      // now and then an arrival has a problem and declares PAN-PAN (never while the player's
+      // own emergency is running)
+      if (leg >= 3 && rem < 20000 && rem > 9000 && !ac.air.emRolled) {
+        ac.air.emRolled = true;
+        if (!this.aiEmerg && this.time > this.nextAIEmerg && !this.pc.s.mayday && this.rnd() < 0.35) this._aiDeclare(ac);
+      }
+      if (leg >= 4 && rem < 1500 && rem > 0 && !ac.emerg) {
         const b = this._runwayBusy(ac);
         if (!ac.air.cleared || (b && b.state !== 'TAKEOFF')) this._goAround(ac);
       }
+    }
+    this._aiEmergUpdate();
+  }
+
+  // an AI arrival declares an emergency: priority landing, departures hold, fire trucks
+  _aiDeclare(ac) {
+    const R = this._rw(), cs = ac.callsign, apt = aptName(1);
+    const what = ['engine failure', 'hydraulic failure', 'smoke in the cabin', 'bird strike, engine vibration', 'medical emergency on board'][Math.floor(this.rnd() * 5)];
+    ac.emerg = true; ac.air.cleared = true;
+    this.aiEmerg = { ac, t: this.time, what };
+    this.radio?.say(cs, `Pan-pan, pan-pan, pan-pan, ${apt} Tower, ${cs}, ${what}, request priority landing runway ${R.id}.`);
+    this._later(4, () => this.radio?.say('TWR', `${cs}, roger pan-pan. Runway ${R.id} cleared to land, wind ${hdg3(this.windDir)} at ${Math.round(this.windKt)} knots. Emergency services are standing by.`));
+    this._later(8, () => this.radio?.say(cs, `Cleared to land runway ${R.id}, ${cs}.`));
+    this._later(12, () => this.radio?.say('TWR', `All stations, ${apt} Tower, emergency in progress, departures hold position.`));
+    this.onAIEmergency?.(ac, R.r);
+  }
+
+  _aiEmergUpdate() {
+    const E = this.aiEmerg;
+    if (!E) return;
+    const ac = E.ac, R = this._rw();
+    if (ac.state === 'ROLLOUT' && !E.landed) { E.landed = true; this.onAIEmergencyLanded?.(ac); }
+    if (E.landed && ac.vacated && !E.vacT) {
+      E.vacT = this.time;
+      this.radio?.say('TWR', `${ac.callsign}, fire services will follow you to the stand. Contact Ground.`);
+    }
+    // over: the aircraft left the runway a while ago, or it went around / vanished
+    const gone = !this.aircraft.includes(ac) || (ac.state !== 'AIR' && !E.landed) || this.time - E.t > 600;
+    if ((E.vacT && this.time - E.vacT > 25) || gone) {
+      this.aiEmerg = null;
+      this.nextAIEmerg = this.time + 900 + this.rnd() * 900;
+      ac.emerg = false;
+      this.radio?.say('TWR', `All stations, ${aptName(1)} Tower, emergency terminated, runway ${R.id} open for traffic.`);
+      this.onAIEmergencyEnd?.();
     }
   }
 

@@ -218,6 +218,28 @@ export class FlightModel {
     }
   }
 
+  // a system failure without an impact (emergency practice / random): engine fire, engine
+  // failure, fuel leak.  Returns the damage text, or null when that failure is not possible
+  failure(kind, side = Math.random() < 0.5 ? 0 : 1) {
+    const D = this.dmg, now = this.time;
+    const L = side ? '右' : '左';
+    let text = null, part = 'engine';
+    if (kind === 'engineFire' || kind === 'engineFail') {
+      if (D.eng[side]) side = 1 - side;
+      if (D.eng[side]) return null;
+      D.eng[side] = 1;
+      D.engFire[side] = kind === 'engineFire';
+      this.engines[side].running = false;
+      text = `${side ? '右' : '左'}エンジン ${kind === 'engineFire' ? '火災' : '停止'}`;
+    } else if (kind === 'fuelLeak') {
+      D.leak += 6; part = 'leak';
+      text = `燃料漏れ ${L}主翼タンク`;
+    } else return null;
+    D.list.push(text);
+    this.events.push({ type: 'damage', part, side, text, sev: 0, time: now, quiet: true });
+    return text;
+  }
+
   // pull the fire handles: engine fires go out (fuel fires on a broken wing keep burning)
   extinguish() {
     const D = this.dmg;

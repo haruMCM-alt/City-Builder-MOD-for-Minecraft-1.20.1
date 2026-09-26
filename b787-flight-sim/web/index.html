@@ -488,6 +488,7 @@
         <div><b>Y</b> 管制と交信 Talk to ATC</div>
         <div><b>O</b> 機内食サービス Meal service</div>
         <div><b>Shift+X</b> エンジン消火 Fire handles</div>
+        <div><b>Shift+E</b> 故障発生 (訓練) Random failure</div>
         <div><b>Shift+D</b> 出発案内 Departures board</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
@@ -520,6 +521,13 @@
       <button id="restartBtn">↺ やり直し Restart</button>
       <button id="toMenuBtn">☰ メインメニュー Main menu</button>
     </div>
+    <h2 class="ph">緊急事態訓練 / Emergency practice</h2>
+    <div class="row" style="margin-top:4px">
+      <button class="failBtn" data-fail="engineFire">🔥 エンジン火災 Engine fire</button>
+      <button class="failBtn" data-fail="engineFail">⚙ エンジン停止 Engine failure</button>
+      <button class="failBtn" data-fail="fuelLeak">⛽ 燃料漏れ Fuel leak</button>
+    </div>
+    <p class="sub" style="margin:4px 0 0">発生後 <b>Y</b>（ATC）でメーデー / パンパンを宣言 → 優先着陸・消防車が出動</p>
     <h2 class="ph">操作方法 / Controls</h2>
       <div class="keys" style="margin-top:6px">
         <div><b>↑ ↓ / W S</b> ピッチ Pitch</div>
@@ -547,6 +555,7 @@
         <div><b>Y</b> 管制と交信 Talk to ATC</div>
         <div><b>O</b> 機内食サービス Meal service</div>
         <div><b>Shift+X</b> エンジン消火 Fire handles</div>
+        <div><b>Shift+E</b> 故障発生 (訓練) Random failure</div>
         <div><b>Shift+D</b> 出発案内 Departures board</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
