@@ -50,9 +50,17 @@ export class FIDS {
     return (A.clockBase ?? (A.world?.tod || 12) * 3600) + (A.traffic?.time || 0);
   }
 
-  // stable schedule per aircraft: rounded to 5 minutes, delayed when it slips
-  _sched(ac, estimate) {
-    const f = ac.fids || (ac.fids = { sched: Math.ceil(estimate / 300) * 300 });
+  // stable schedule per aircraft: on 5-minute slots, one departure per slot and board
+  // (like a real timetable); shown as delayed when the estimate slips past it
+  _sched(ac, estimate, which) {
+    let f = ac.fids;
+    // a new schedule for a new visit (other board, or an old slot long gone)
+    if (!f || f.board !== which || f.sched == null || f.sched < estimate - 3600) {
+      const last = (this._last ||= {})[which] ?? -1e9;
+      const slot = Math.max(Math.ceil(estimate / 300) * 300, last + 300);
+      this._last[which] = slot;
+      f = ac.fids = { ...(f || {}), sched: slot, board: which };
+    }
     f.est = estimate;
     return f;
   }
@@ -60,19 +68,16 @@ export class FIDS {
   _rows(which) {
     const T = this.app.traffic, now = this.clock();
     if (!T) return [];
-    const rows = [];
-    const add = (ac, gate, dest, state) => {
+    const rows = [], pending = [];
+    // schedule new flights in order of their estimated departure
+    const add = (ac, gate, dest, state) => pending.push([ac, gate, dest, state, this._estimate(ac, state, now, T)]);
+    const addNow = (ac, gate, dest, state, est) => {
       const num = (ac.callsign.match(/\d+/) || ['0'])[0];
       const code = CODE[ac.liv.logo] || 'CL';
-      let est;
-      if (state === 'departed') est = ac.fids?.sched ?? now;
-      else if (ac.readyAt != null) est = now + Math.max(0, ac.readyAt - T.time) + 240;
-      else if (ac.parkFor != null) est = now + Math.max(0, ac.parkFor - ac.timer) + 60;
-      else est = now + 1500;                                      // being turned round
-      const f = this._sched(ac, est);
+      const f = this._sched(ac, est, which);
       let rem = state;
       if (state === 'ontime') {
-        const left = f.est - now;
+        const left = f.sched - now;
         rem = left < 600 ? 'final' : left < 1800 ? 'boarding' : 'ontime';
         if (f.est > f.sched + 300) rem = 'delayed';
       }
@@ -96,8 +101,17 @@ export class FIDS {
         if (ac.a2) (ac.fids || (ac.fids = {})).gate = ac.a2.id;
       }
     }
+    pending.sort((a, b) => a[4] - b[4]);
+    for (const p of pending) addNow(...p);
     rows.sort((a, b) => a.t - b.t);
     return rows.slice(0, 12);
+  }
+
+  _estimate(ac, state, now, T) {
+    if (state === 'departed') return ac.fids?.sched ?? now;
+    if (ac.readyAt != null) return now + Math.max(0, ac.readyAt - T.time) + 240;
+    if (ac.parkFor != null) return now + Math.max(0, ac.parkFor - ac.timer) + 60;
+    return now + 1500;                                            // being turned round
   }
 
   update(dt) {
