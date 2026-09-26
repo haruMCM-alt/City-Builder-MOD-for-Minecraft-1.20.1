@@ -105,6 +105,15 @@ export class Radio {
     this.synth = typeof window !== 'undefined' && window.speechSynthesis ? window.speechSynthesis : null;
     this._voices = null;
     this.fx = new RadioFX();
+    this.tuned = 1;
+  }
+
+  // change to the other airport's frequencies: calls in progress there are no longer heard
+  tune(apt) {
+    if (apt === this.tuned) return false;
+    this.tuned = apt;
+    this.clear();
+    return true;
   }
 
   _pickVoices() {
@@ -118,11 +127,14 @@ export class Radio {
   }
 
   // who: 'GND' | 'TWR' (controller) or a pilot callsign; text: the transmission
-  say(who, text, { station = null, me = false } = {}) {
+  // apt: the airport whose frequencies carry the call (1 home, 2 second airport); only the
+  // airport the radio is tuned to (the one the player is at / flying to) is heard
+  say(who, text, { station = null, me = false, apt = null } = {}) {
     if (!this.enabled) return;
     // 'GND' / 'TWR': home airport; 'GND2' / 'TWR2': the second airport
     const atc = /^(GND|TWR)2?$/.test(who);
     const two = atc && who.endsWith('2');
+    if ((apt ?? (two ? 2 : 1)) !== this.tuned) return;
     const label = atc ? (two ? AIRPORT.name2.toUpperCase() + ' ' : '') + (who.startsWith('GND') ? 'GROUND' : 'TOWER') : who;
     this.lines.push({ label: me ? label + ' (YOU)' : label, text, atc, me, t: performance.now() });
     if (this.lines.length > 6) this.lines.shift();

@@ -675,10 +675,9 @@ export class Traffic {
   }
 
   // radio at the second airport: only heard near it
+  // second airport's frequencies (heard when the radio is tuned there)
   _a2Say(who, text, delay = 0) {
-    const cam = this.env?.camera?.position;
-    if (!cam || Math.hypot(cam.x - A2.x, cam.z - A2.z) > 60000) return;
-    if (delay) this._later(delay, () => this.radio?.say(who, text)); else this.radio?.say(who, text);
+    if (delay) this._later(delay, () => this.radio?.say(who, text, { apt: 2 })); else this.radio?.say(who, text, { apt: 2 });
   }
 
   // ------------------------------------------------------------------ second airport shuttle
@@ -860,6 +859,8 @@ export class Traffic {
           this._a2Say(ac.callsign, `${AIRPORT.name2} Ground, ${ac.callsign}, request taxi.`, 3);
           this._a2Say('GND2', `${ac.callsign}, taxi to holding point runway zero niner via Bravo.`, 7);
         } else {
+          // the player holds the second airport's runway (cleared to land / take off): wait
+          if (this.pc.runwayClaim(2)) { ac.v = 0; break; }
           ac.mover = new Mover(new Path([{ x: ac.x, z: A2.z }, { x: A2.x + A2.len / 2, z: A2.z }], 0, 3), { vmax: 999 });
           ac.state = 'R_TKOF'; ac.v = 0; ac.dirSign = 1;
           this._a2Say('TWR2', `${ac.callsign}, ${AIRPORT.name2} Tower, runway zero niner, cleared for takeoff.`);
@@ -1446,7 +1447,7 @@ export class Traffic {
     const eta = this._arrivalEta();
     const hold = this.aircraft.filter((a) => a.state === 'HOLDING').sort((a, b) => a.holdT - b.holdT)[0];
     const lined = this.aircraft.find((a) => a.state === 'WAIT_TKOF' || (a.state === 'LINEUP'));
-    const pw = this.pc.waiting;
+    const pw = this.pc.apt === 1 ? this.pc.waiting : null;
     const playerFirst = pw && (!hold || pw.t < hold.holdT);
     if (hold && !playerFirst && !lined && !busy && eta > 55 && this.time - this.lastTakeoff > 55) {
       hold.state = 'LINEUP';

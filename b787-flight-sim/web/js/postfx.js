@@ -58,7 +58,12 @@ const ClampShader = {
   uniforms: { tDiffuse: { value: null }, uMax: { value: 16 } },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: `uniform sampler2D tDiffuse; uniform float uMax; varying vec2 vUv;
-    void main() { vec4 c = texture2D(tDiffuse, vUv); float m = max(max(c.r, c.g), c.b);
+    void main() { vec4 c = texture2D(tDiffuse, vUv);
+      // NaN / infinite pixels (fireballs, lights right at the camera) would spread through the
+      // bloom blur and black out the screen: replace them before anything else
+      c.rgb = clamp(c.rgb, 0.0, 6.0e4);
+      if (!(c.r == c.r && c.g == c.g && c.b == c.b)) c.rgb = vec3(uMax);
+      float m = max(max(c.r, c.g), c.b);
       gl_FragColor = vec4(c.rgb * min(1.0, uMax / max(m, 1e-4)), c.a); }`,
 };
 

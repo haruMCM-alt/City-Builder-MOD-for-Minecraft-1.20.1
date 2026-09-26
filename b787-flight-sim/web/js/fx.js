@@ -148,9 +148,10 @@ export class FX {
       this.smokePuff({ x: p.x + d.x * R * 0.5, y: p.y + 4 + d.y * R * 0.4, z: p.z + d.z * R * 0.5 },
         { x: d.x * 8, y: 6 + Math.random() * 10, z: d.z * 8 }, 14 + Math.random() * 16, (10 + Math.random() * 12) * power, 2.2, 0.75, 1);
     }
+    // a warm glow that swells and fades over a couple of seconds (no strobe-like white flash)
     this.flash.position.set(p.x, p.y + 15, p.z);
-    this.flash.intensity = 8.0e4 * power;
-    this.flashT = 1;
+    this.flashPeak = 5.0e3 * Math.min(power, 2);
+    this.flashT = 0.001;
   }
 
   update(dt, camera) {
@@ -225,9 +226,16 @@ export class FX {
       const p = s && s.getPos();
       if (!p) { L.l.intensity = 0; return; }
       L.l.position.set(p.x, p.y + 2, p.z);
-      const fl = 0.75 + 0.25 * Math.sin(this.time * 17 + L.flick) * Math.sin(this.time * 7.3 + L.flick * 2);
-      L.l.intensity = 700 * s.size / 4 * fl * Math.min(1, (s.dur - s.t) / 10);
+      // gentle, slow flicker (a fast strobing light made the whole screen blink)
+      const fl = 0.92 + 0.08 * Math.sin(this.time * 3.1 + L.flick) * Math.sin(this.time * 1.7 + L.flick * 2);
+      const target = 450 * s.size / 4 * fl * Math.min(1, (s.dur - s.t) / 10);
+      L.l.intensity += (target - L.l.intensity) * Math.min(1, dt * 4);
     });
-    if (this.flashT > 0) { this.flashT -= dt * 1.4; this.flash.intensity *= Math.exp(-dt * 5); if (this.flashT <= 0) this.flash.intensity = 0; }
+    if (this.flashT > 0) {
+      this.flashT += dt;
+      const t = this.flashT;
+      this.flash.intensity = this.flashPeak * Math.min(1, t / 0.35) * Math.exp(-Math.max(0, t - 0.35) * 1.2);
+      if (t > 5) { this.flashT = 0; this.flash.intensity = 0; }
+    }
   }
 }

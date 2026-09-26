@@ -18,7 +18,7 @@ import { PostFX } from './postfx.js';
 import { Rain } from './weatherfx.js';
 import { Vapor } from './vapor.js';
 import { Traffic } from './traffic.js';
-import { Radio, setAirportNames } from './atc.js';
+import { Radio, setAirportNames, AIRPORT } from './atc.js';
 import { Airport2, A2, airport2Lights, airport2Obstacles, airport2Runways } from './airport2.js';
 import { AutoPush } from './pushback.js';
 import { FIDS } from './fids.js';
@@ -1063,6 +1063,12 @@ class App {
       if (n >= 48) this.acc = 0;
     }
     for (const e of events) this.onEvent(e);
+    // each airport has its own Tower / Ground: the radio follows the airport the player is at
+    // or flying to (the second airport east of the halfway line)
+    if (this.radio?.tune(fm.pos.x > A2.x / 2 ? 2 : 1) && $('menu').classList.contains('hidden')) {
+      const n = this.radio.tuned === 2 ? AIRPORT.name2 : AIRPORT.name;
+      this.toast(`📻 無線を ${n} Tower / Ground に切替`, 3500);
+    }
     if (this.traffic && !this.paused) {
       const o = fm.out;
       this.traffic.update(dt, {
@@ -1273,14 +1279,12 @@ class App {
       this.toast('⚠ 損傷 ' + e.text, 4500);
     } else if (e.type === 'crash' && !this.crashShown) {
       this.crashShown = true;
-      $('crashTitle').textContent = e.reason.includes('water') ? '着水 DITCHED' : '墜落 CRASH';
-      $('crashText').textContent = e.reason;
       this.mishap.crash(e.reason);
       // watch the wreckage from outside before the crash screen appears
       if (['cockpit', 'cabin', 'walk', 'wing', 'ife'].includes(this.rig.view)) this.rig.setView('orbit');
       this.rig.dist = 240; this.rig.orbitPitch = 0.35;
       ['ife', 'panel'].forEach((i) => $(i).classList.add('hidden'));
-      setTimeout(() => { if (this.crashShown) $('crash').classList.remove('hidden'); }, 7000);
+      // no crash screen / message: the wreck keeps burning; Esc opens the menu (restart / main menu)
     } else if (e.type === 'scrape') {
       this.toast('⚠ ' + (e.part === 'tail' ? 'テールストライク Tail strike!' : e.part + ' strike'), 3000);
     }

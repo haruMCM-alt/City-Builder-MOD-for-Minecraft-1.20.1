@@ -327,7 +327,7 @@ export class Mishap {
     for (const k of Object.keys(this.fireSrc)) if (this.fireSrc[k]) this.fireSrc[k].dur = 0;
     this.R0inv = R0.clone().invert();
     this.crashT = 0;
-    A.rig.impulse(1.5);
+    A.rig.impulse(0.7);
   }
 
   clearWreck() {
