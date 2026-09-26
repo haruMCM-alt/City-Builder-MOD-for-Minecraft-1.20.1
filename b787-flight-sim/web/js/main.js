@@ -762,6 +762,8 @@ class App {
     };
     let skipStand = null;
     fm.ctl.pushback = 0;
+    // on the ground by default: gear down and locked, flaps up (the air scenarios call setAir)
+    fm.ctl.gearPos = 0; fm.ctl.flapAngle = 0; fm.ctl.slat = 0; fm.ctl.steer = 0;
     this.pushPending = false; this.autoPush = null; if (this.sys) this.sys.autoSteer = null;
     if (this.traffic?.pTug) this.traffic.playerTug(false);
     this.cabin?.ifeSafety(false);
@@ -896,6 +898,12 @@ class App {
       this.clockBase = (this.world.tod || 12) * 3600 - (this.traffic.time || 0);
       this.radio.enabled = true;
       this.trafficFocus = null;
+      // auto flight: the crew already has its take-off clearance
+      if (id === 'auto' && this.autoFlight) {
+        const pc = this.traffic.pc;
+        pc.s.tkof = true;
+        pc.say('TWR', `${pc.cs}, runway ${this.autoFlight.dep.ident}, cleared for take-off.`);
+      }
     }
     this.crashShown = false;
     this.mishap?.reset();
@@ -1040,6 +1048,7 @@ class App {
         this.toast(t ? `⚠ 故障発生 ${t} — Y で${kind === 'engineFire' ? 'メーデー' : 'パンパン'}を宣言` : 'これ以上の故障は発生できません', 5000);
         break;
       }
+      case 'emergLand': this.emergencyAutoLand(); break;
       case 'service': {
         if (!this.cabin.available) break;
         if (!this.cabin.group) { this.cabin.ensure().then(() => this.cabin.startService()); this.toast('機内食サービスを開始します Meal service'); break; }
@@ -1071,7 +1080,9 @@ class App {
       // prefer the runway we are lined up with / approaching
       const dx = p.x - r.threshold[0], dz = p.z - r.threshold[2];
       const along = -(dx * d.x + dz * d.z);
-      const score = Math.hypot(dx, dz) - (along > 0 ? 5000 : 0);
+      // ... and the one we are pointing along (a long landing passes the far threshold)
+      const hd = Math.abs(((this.fm.out.hdg - r.heading) % 360 + 540) % 360 - 180);
+      const score = Math.hypot(dx, dz) - (along > 0 ? 5000 : 0) - (hd < 45 && Math.hypot(dx, dz) < r.length + 3000 ? 8000 : 0);
       if (score < bd) { bd = score; best = r; }
     }
     return best;
@@ -1105,14 +1116,50 @@ class App {
     T.onEmergencyLanded = () => this.arff.attend(pos, fire);
     T.onEmergencyEnd = () => { this.arff.stand(); this.toast('✅ 緊急事態解除 — 滑走路再開 Emergency closed out', 4000); };
     T.onBrace = () => this.toast('📢 客室「頭を下げて！」 Brace for impact!', 5000);
+    T.onAutoLand = () => this.emergencyAutoLand();
     // AI emergencies: the same trucks meet the aircraft
     T.onAIEmergency = (ac, runway) => this.arff.deploy(1, runway);
     T.onAIEmergencyLanded = (ac) => this.arff.attend(() => ({ x: ac.x, z: ac.z, a: ac.a, v: ac.v }), () => null);
     T.onAIEmergencyEnd = () => this.arff.stand();
   }
 
+  // emergency auto landing: the crew flies the aircraft to the runway in use at the nearest
+  // airport and lands it (AutoFlight.emergency); declares first when not done yet
+  emergencyAutoLand() {
+    const fm = this.fm, pc = this.traffic?.pc;
+    if (!pc || fm.crashed) return;
+    if (fm.out.wow) { this.toast('地上では使えません (airborne only)'); return; }
+    if (!pc.s.mayday) {
+      const k = pc.emergencyKind();
+      if (!k) { this.toast('緊急事態ではありません — 通常の自動操縦フライトはメニューから (no emergency)', 3500); return; }
+      pc.declare(k);
+    }
+    const C = pc.ctx(), dest = pc.worldRunway(C);
+    if (!dest) return;
+    pc.s.autoLand = true;
+    this.autoFlight = AutoFlight.emergency(fm, this.sys, { dest, name: C.name });
+    this.autoFlight.onMessage = (m) => this.toast('🛬 ' + m, 4000);
+    this.toast(`🛬 緊急自動着陸 ${C.name} RWY ${dest.ident} — 操縦桿を動かすと手動に戻ります`, 5000);
+  }
+
+  // accident on (or next to) an airport: crash alarm, the fire trucks go to the wreck
+  crashResponse() {
+    const fm = this.fm, apt = nearestAirport(fm.pos.x, fm.pos.z);
+    const ap = apt === 1 ? { x: 0, z: 0 } : remoteById(apt);
+    if (Math.hypot(fm.pos.x - ap.x, fm.pos.z - ap.z) > 5000) return;
+    const name = aptName(apt), tw = apt === 1 ? 'TWR' : 'TWR' + apt;
+    this.radio?.say(tw, `Crash alarm, crash alarm! Aircraft accident at ${name}. All stations hold position, the airport is closed. Fire services responding.`, { apt });
+    this.arff.crash(apt, { x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90) * DEG });
+  }
+
   updateEmergency(dt) {
     this.arff.update(dt);
+    // auto flight (menu): the crew declares and diverts to the nearest airport by itself
+    const af = this.autoFlight, pc = this.traffic?.pc;
+    if (af && !af.emerg && !af.done && pc && !this.fm.out.wow && this.fm.out.raFt > 400 && pc.emergencyKind() && !pc.s.mayday) {
+      this._afEm = (this._afEm || 0) + dt;
+      if (this._afEm > 5) { this._afEm = 0; this.emergencyAutoLand(); }
+    }
     // water on the fire for ~15 s puts it out (engine and wing fires)
     const D = this.fm.dmg;
     const burning = D.engFire[0] || D.engFire[1] || D.wingFire[0] || D.wingFire[1];
@@ -1170,7 +1217,8 @@ class App {
       // auto flight flies the aircraft; stick input hands control back to the pilot
       if (this.autoFlight && !this.autoFlight.done) {
         if (Math.abs(sys.pilot.pitch) > 0.6 || Math.abs(sys.pilot.roll) > 0.6) {
-          this.autoFlight = null;
+          if (this.autoFlight.emerg && this.traffic) this.traffic.pc.s.autoLand = false;
+          this.autoFlight = null; sys.bankMax = 0;
           this.toast('自動操縦フライト解除 — 手動操縦 Auto flight off', 3500);
         } else this.autoFlight.update(dt);
       }
@@ -1417,6 +1465,7 @@ class App {
     } else if (e.type === 'crash' && !this.crashShown) {
       this.crashShown = true;
       this.mishap.crash(e.reason);
+      this.crashResponse();
       // watch the wreckage from outside before the crash screen appears
       if (['cockpit', 'cabin', 'walk', 'wing', 'ife'].includes(this.rig.view)) this.rig.setView('orbit');
       this.rig.dist = 240; this.rig.orbitPitch = 0.35;

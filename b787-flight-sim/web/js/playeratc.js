@@ -117,7 +117,7 @@ export class PlayerATC {
     if (!D) return null;
     const fire = D.engFire[0] || D.engFire[1] || D.wingFire[0] || D.wingFire[1];
     if (fire || D.eng[0] >= 2 || D.eng[1] >= 2 || (D.eng[0] && D.eng[1]) || D.wing[0] > 0.2 || D.wing[1] > 0.2 || D.tail > 0.3) return 'MAYDAY';
-    if (D.eng[0] || D.eng[1] || D.leak > 0 || D.wing[0] || D.wing[1] || D.tail) return 'PAN';
+    if (D.eng[0] || D.eng[1] || D.leak > 0 || D.wing[0] || D.wing[1] || D.tail || D.struck) return 'PAN';
     return null;
   }
 
@@ -134,6 +134,7 @@ export class PlayerATC {
     else if (D.wing[0] || D.wing[1]) out.push('wing damage');
     if (D.tail) out.push('tail damage');
     if (D.leak && !out.length) out.push('fuel leak');
+    if (D.struck && out.length < 2) out.unshift('struck a building');
     return out.slice(0, 2).join(' and ') || 'technical problem';
   }
 
@@ -181,6 +182,7 @@ export class PlayerATC {
     const ph = this.phase(), s = this.s;
     const ek = this.emergencyKind();
     if (ek && !s.mayday) return ek === 'MAYDAY' ? '🆘 メーデー宣言 Declare MAYDAY' : '⚠ パンパン宣言 Declare PAN-PAN';
+    if (s.mayday && !s.autoLand && !this.P.onGround && !s.landed) return '🛬 緊急自動着陸 Auto emergency landing';
     if (ph === 'GATE' && !s.push && !s.pushPending) return 'プッシュバック要求 Request push back';
     if (ph === 'TAXI' && s.landed && !s.taxiIn) return 'スポットへ Request taxi to the gate';
     if ((ph === 'TAXI' || ph === 'GATE') && !s.taxi && !s.landed) return 'タキシー要求 Request taxi';
@@ -193,6 +195,7 @@ export class PlayerATC {
     const C = this.ctx(), ph = this.phase(C), s = this.s, cs = this.cs, R = C.R;
     const ek = this.emergencyKind();
     if (ek && !s.mayday && ph !== 'OFF') { this.declare(ek); return; }
+    if (s.mayday && !s.autoLand && !this.P.onGround && !s.landed) { this.T.onAutoLand?.(); return; }
     if (ph === 'OFF') return;
     const face = R.d < 0 ? 'east' : 'west';
     if (ph === 'GATE' && !s.push && !s.pushPending) {
@@ -292,10 +295,26 @@ export class PlayerATC {
     const s = this.s, P = this.P, T = this.T, cs = this.cs;
     const M = s.mayday;
     if (!M) {
-      // tower sees a problem the crew has not declared
+      const D = P.dmg;
+      // taxiing into a building: the aircraft stops, the fire trucks come to inspect it
+      if (D?.bump && P.onGround && !s.bumpCall) {
+        s.bumpCall = true;
+        s.mayday = { kind: 'PAN', apt: C.apt, t: T.time, ground: true };
+        this.later(2, () => {
+          this.say(P.v > 20 ? 'TWR' : 'GND', `${cs}, ${C.name} ${P.v > 20 ? 'Tower' : 'Ground'}, we observed you contact a building. Hold position, shut down the affected engine, fire services are on the way to inspect the aircraft.`);
+          this.later(4, () => this.say(cs, `Holding position, ${cs}.`));
+          T.onEmergency?.({ apt: C.apt, runway: this.worldRunway(C), onGround: true });
+        });
+        return;
+      }
+      // tower sees a problem the crew has not declared (a building strike right away)
       if (this.emergencyKind() && !P.onGround && !s.askedEmerg) {
         s._eT = (s._eT || 0) + dt;
-        if (s._eT > 20) { s.askedEmerg = true; this.say('TWR', `${cs}, ${C.name} Tower, are you declaring an emergency? Say intentions.`); }
+        if (s._eT > (D?.struck ? 4 : 20)) {
+          s.askedEmerg = true;
+          this.say('TWR', D?.struck ? `${cs}, ${C.name} Tower, we observed you strike a building! Say your condition. Are you declaring an emergency?`
+            : `${cs}, ${C.name} Tower, are you declaring an emergency? Say intentions.`);
+        }
       }
       return;
     }
@@ -314,15 +333,19 @@ export class PlayerATC {
     }
     if (s.rescue && P.v < 1.5 && !s.stoppedCall) {
       s.stoppedCall = true;
-      this.say('TWR', `${cs}, emergency services are with you. Runway ${C.R.id} closed. Report when ready to taxi, or advise if you require evacuation.`);
+      if (M.ground) this.say('GND', `${cs}, fire services are with you, inspecting the aircraft. Remain on this frequency.`);
+      else this.say('TWR', `${cs}, emergency services are with you. Runway ${C.R.id} closed. Report when ready to taxi, or advise if you require evacuation.`);
     }
     // no fire any more and stopped for a while: close out, the runway reopens
     if (s.stoppedCall && !s.closedOut) {
       const D = P.dmg, fire = D && (D.engFire[0] || D.engFire[1] || D.wingFire[0] || D.wingFire[1]);
       s._cT = fire ? 0 : (s._cT || 0) + dt;
-      if (s._cT > 45) {
+      if (s._cT > (M.ground ? 30 : 45)) {
         s.closedOut = true; s.squawk = null;
-        this.say('TWR', `${cs}, fire services report the aircraft safe. Runway ${C.R.id} reopened for traffic. Taxi when able, follow the fire vehicles.`);
+        if (M.ground) {
+          this.say('GND', `${cs}, inspection complete, no fire. Continue taxi when ready, keep clear of the building.`);
+          s.mayday = null; s.rescue = s.stoppedCall = s.closedOut = false; s._cT = 0;
+        } else this.say('TWR', `${cs}, fire services report the aircraft safe. Runway ${C.R.id} reopened for traffic. Taxi when able, follow the fire vehicles.`);
         T.onEmergencyEnd?.();
       }
     }

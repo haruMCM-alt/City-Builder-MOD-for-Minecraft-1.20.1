@@ -23,7 +23,7 @@ export class Systems {
     this.lawDirect = false;        // DIRECT law (no FBW augmentation)
     this.trimInput = 0;            // manual trim (direct law)
     // FBW state
-    this.gammaT = 0; this.phiT = 0; this.iq = 0; this.ip = 0; this.mode = 'ground';
+    this.gammaT = 0; this.phiT = 0; this.bankMax = 0; this.iq = 0; this.ip = 0; this.mode = 'ground';
     this.airTime = 0; this.groundTime = 10;
     this.elev = 0; this.ail = 0; this.rud = 0;
     // autopilot / autothrottle
@@ -267,15 +267,19 @@ export class Systems {
     }
     let phiT = this.phiT;
     if (ap.roll === 'HDG') {
+      this._locI = 0;
       const e = wrap180(mcp.hdg - o.hdg);
-      phiT = clamp(e * 1.6, -25, 25);
+      const bl = this.bankMax || 25;               // lower for a damaged wing (auto flight emergency)
+      phiT = clamp(e * 1.6, -bl, bl);
     } else if (ap.roll === 'LOC' || ap.roll === 'ROLLOUT') {
       const xt = d.locM;                                   // m right of course
       const vLat = this._prevLat !== undefined ? (xt - this._prevLat) / dt : 0;
       this._prevLat = xt;
-      const trackT = d.course + clamp(-xt * 0.055 - vLat * 1.6, -30, 30);
+      // integral term: no steady offset with a crosswind or an engine out
+      if (Math.abs(xt) < 150) this._locI = clamp((this._locI || 0) + xt * 0.0035 * dt, -4, 4);
+      const trackT = d.course + clamp(-xt * 0.055 - vLat * 1.6 - (this._locI || 0), -30, 30);
       const e = wrap180(trackT - o.track);
-      phiT = clamp(e * 1.8, -22, 22);
+      phiT = clamp(e * 1.8, -(this.bankMax || 22), this.bankMax || 22);
       if (o.raFt < 100) phiT = clamp(phiT, -6, 6);
     } else if (ap.roll === 'ATT') {
       phiT = this.phiT;

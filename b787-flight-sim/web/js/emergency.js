@@ -130,6 +130,15 @@ export class ARFF {
     this.job.phase = 'ATTEND'; this.job.getPos = getPos; this.job.getFire = getFire; this.job.t = 0;
   }
 
+  // an accident on the airport: all trucks straight to the wreck, water on the fires
+  crash(apt, p) {
+    const T = this._fleet(apt);
+    this.job = { apt, phase: 'ATTEND', t: 0, crash: true,
+      getPos: () => ({ x: p.x, z: p.z, a: p.a || 0, v: 0 }),
+      getFire: () => (this.job && this.job.t < 150 ? { x: p.x, y: 3, z: p.z } : null) };
+    for (const tr of T) { tr.active = true; tr.spray = null; tr.path = []; }
+  }
+
   // a truck is putting water on the aircraft right now
   get spraying() {
     const T = this.job && this.trucks[this.job.apt];

@@ -73,6 +73,7 @@ export class Input {
     if (e.shiftKey && k === 'f') return this.onCommand('idle');
     if (e.shiftKey && k === 'x') return this.onCommand('extinguish');
     if (e.shiftKey && k === 'e') return this.onCommand('failure');
+    if (e.shiftKey && k === 'l') return this.onCommand('emergLand');
     if (e.shiftKey && k === 'd') return this.onCommand('fids');
     if (map[k]) this.onCommand(map[k]);
   }

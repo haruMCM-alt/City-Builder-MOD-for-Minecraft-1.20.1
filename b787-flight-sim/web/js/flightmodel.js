@@ -264,6 +264,7 @@ export class FlightModel {
     this.w.set(0, 0, 0);
     this.crashed = false;
     this.events.length = 0;
+    this.alphaDot = 0;
     this.touchdownArmed = !onGround;
     for (const g of this.gear) g.onGround = onGround;
     this._alphaPrev = 0;
@@ -295,7 +296,9 @@ export class FlightModel {
     const p = this.w.x, qr = this.w.z, r = -this.w.y;
     const Vn = Math.max(V, 20);
     const pn = p * b / (2 * Vn), qn = qr * c / (2 * Vn), rn = r * b / (2 * Vn);
-    this.alphaDot = lerp(this.alphaDot, (alpha - this._alphaPrev) / Math.max(dt, 1e-4), 0.05);
+    // (meaningless when nearly stopped: the angle of attack flips with every gust)
+    const aDot = V > 25 && dt > 0 ? clamp((alpha - this._alphaPrev) / dt, -2, 2) : 0;
+    this.alphaDot = lerp(this.alphaDot, aDot, 0.05);
     this._alphaPrev = alpha;
     const adn = this.alphaDot * c / (2 * Vn);
 
@@ -461,6 +464,7 @@ export class FlightModel {
         const sp = this.vel.len();
         if (sp < 9 && wow) {
           // taxiing into a building: dented skin, the aircraft is stopped (not destroyed)
+          this.dmg.bump = (this.dmg.bump || 0) + 1;
           this.pos.addScaled(this.vel, -3 * dt);
           this.vel.scale(-0.15); this.w.scale(0);
           if (!this._hitT.bump || this.time - this._hitT.bump > 3) {
@@ -475,6 +479,7 @@ export class FlightModel {
           this.crash('collided with a building');
           return;
         }
+        this.dmg.struck = true;          // the tower sees it (playeratc.js)
         this.impact(h.name, sp, true);
         // the hit side is dragged back
         const side = h.p0.z < 0 ? 1 : -1;
