@@ -174,7 +174,7 @@ JavaScript（three.js 含む）を esbuild で 1 本にまとめ、モデル・�
 ```bash
 node tests/flight_test.mjs
 node tests/autoflight_test.mjs        # 自動操縦フライト 全経路
-node tests/emergency_land_test.mjs    # 緊急自動着陸 5 位置 × 3 故障（AC=b737-800 / b767-300er も可）
+node tests/emergency_land_test.mjs    # 緊急自動着陸 6 位置 × 3 故障（AC=b737-800 / b767-300er も可）
 ```
 離陸・A/P 高度/方位/速度保持・FL350 巡航・ILS オートランド、自動操縦フライト、緊急自動着陸をグラフィック無しで検証します。
 
