@@ -3,9 +3,9 @@
 // Japanese and English every few seconds, coloured remarks.  One board per airport (home /
 // second airport), built live from the AI traffic.
 import { logoById, drawLogoIcon } from './livery.js';
-import { AIRPORT } from './atc.js';
+import { AIRPORT, aptName } from './atc.js';
+import { REMOTES } from './airports.js';
 
-const CODE = { jal: 'JL', ana: 'NH', spark: 'CL', crane: 'TS', skyline: 'CB', wave: 'PW', fuji: 'FJ', globe: 'GL', plane: 'AS' };
 const REM = {
   ontime: ['定刻', 'On Time', 'rOk'], boarding: ['搭乗中', 'Now Boarding', 'rBoard'], final: ['最終案内', 'Final Call', 'rFinal'],
   closed: ['搭乗終了', 'Gate Closed', 'rClosed'], departed: ['出発済', 'Departed', 'rGone'], delayed: ['遅延', 'Delayed', 'rDelay'],
@@ -73,7 +73,7 @@ export class FIDS {
     const add = (ac, gate, dest, state) => pending.push([ac, gate, dest, state, this._estimate(ac, state, now, T)]);
     const addNow = (ac, gate, dest, state, est) => {
       const num = (ac.callsign.match(/\d+/) || ['0'])[0];
-      const code = CODE[ac.liv.logo] || 'CL';
+      const code = logoById(ac.liv.logo).code || 'JL';
       const f = this._sched(ac, est, which);
       let rem = state;
       if (state === 'ontime') {
@@ -84,10 +84,10 @@ export class FIDS {
       rows.push({ t: f.sched, newT: rem === 'delayed' ? Math.ceil(f.est / 300) * 300 : null, logo: ac.liv.logo, flight: `${code} ${num}`, dest, gate, rem });
     };
     if (which === 'home') {
-      const dest = AIRPORT.name2;
       for (const ac of T.aircraft) {
         if (ac.inbound && ac.state !== 'PARKED') continue;
         const st = ac.state;
+        const dest = aptName(T.destOf(ac).id);
         if (st === 'PARKED') add(ac, ac.stand.id, dest, 'ontime');
         else if (['TUG', 'REQ_PUSH', 'PUSH_WAIT'].includes(st)) add(ac, ac.stand.id, dest, 'closed');
         else if (['PUSH', 'TAXI_WAIT', 'TAXI_OUT', 'HOLDING', 'LINEUP', 'WAIT_TKOF', 'TAKEOFF'].includes(st)) add(ac, ac.stand?.id ?? '', dest, 'departed');
@@ -95,6 +95,7 @@ export class FIDS {
     } else {
       const dest = AIRPORT.name;
       for (const ac of T.remote || []) {
+        if (ac.rap?.id !== +which) continue;
         const st = ac.state;
         if (st === 'R_PARK') add(ac, ac.a2?.id ?? '', dest, 'ontime');
         else if (['R_PUSH', 'R_TAXIOUT', 'R_TKOF'].includes(st)) add(ac, ac.a2?.id ?? ac.fids?.gate ?? '', dest, 'departed');
@@ -123,7 +124,7 @@ export class FIDS {
 
   render() {
     const home = this.tab === 'home';
-    const name = home ? AIRPORT.name : AIRPORT.name2;
+    const name = home ? AIRPORT.name : aptName(+this.tab);
     const en = this._lang === 1;
     const rows = this._rows(this.tab);
     const H = en ? ['Time', 'Destination', 'Flight', 'Gate', 'Remarks'] : ['時刻', '行先', '便名', '搭乗口', '備考'];
@@ -141,7 +142,7 @@ export class FIDS {
         <span class="fClock">${hhmm(this.clock())}</span>
         <button class="fClose" title="Close">✕</button>
       </div>
-      <div class="fTabs"><button data-tab="home" class="${home ? 'sel' : ''}">${esc(AIRPORT.name)}</button><button data-tab="a2" class="${home ? '' : 'sel'}">${esc(AIRPORT.name2)}</button></div>
+      <div class="fTabs"><button data-tab="home" class="${home ? 'sel' : ''}">${esc(AIRPORT.name)}</button>${REMOTES.map((ap) => `<button data-tab="${ap.id}" class="${this.tab === String(ap.id) ? 'sel' : ''}">${esc(aptName(ap.id))}</button>`).join('')}</div>
       <table><thead><tr>${H.map((h, i) => `<th class="h${i}">${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
       <div class="fFoot">${en ? 'Shift+D: close · Please check the boarding gate on your ticket.' : 'Shift+D で閉じる ・ ご搭乗口は搭乗券でもご確認ください'}</div>`;
   }

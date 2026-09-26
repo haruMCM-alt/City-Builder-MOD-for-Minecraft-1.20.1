@@ -3,13 +3,13 @@
 // airfield / city lights and parked aircraft.
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { TERRAIN, TERRAIN_GLSL } from './terrain.js';
+import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL } from './terrain.js';
 import { patchFacade } from './shading.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
 import { clamp, smoothstep, lerp, mulberry32, DEG } from './util.js';
 
 const LIGHT_KIND = { steady: 0, directional: 1, papi: 2, sequenced: 3, blink: 4, night: 5 };
-const NIGHT_ONLY = new Set(['street', 'landmark', 'bridge', 'apron_flood', 'a2_apron_flood', 'a2_street']);
+const NIGHT_ONLY = { has: (n) => /^(a\d+_)?(street|landmark|bridge|apron_flood)$/.test(n) };
 
 // Display-referred custom shaders (clouds, light points, smoke) output sRGB-ish colours.
 // When the HDR post chain is active they are converted to linear radiance instead.
@@ -350,7 +350,7 @@ vTW = vec3(wxz.x, h0, wxz.y);`)
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
 uniform sampler2D uDetail; uniform vec4 uFlat;
-const vec4 cFlat2 = vec4(${TERRAIN.flat2.x0.toFixed(1)}, ${TERRAIN.flat2.x1.toFixed(1)}, ${TERRAIN.flat2.z0.toFixed(1)}, ${TERRAIN.flat2.z1.toFixed(1)});
+${FLATS_GLSL}
 float tfH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 varying vec3 vTW; varying float vSlope;`)
         .replace('#include <color_fragment>', `#include <color_fragment>
@@ -387,7 +387,7 @@ varying vec3 vTW; varying float vSlope;`)
     float hedge = 1.0 - smoothstep(1.5, 5.0 + px, edge);
     fc = mix(fc, vec3(0.05, 0.09, 0.035), hedge * 0.75);
     float outside = 1.0 - step(uFlat.x, vTW.x) * step(vTW.x, uFlat.y) * step(uFlat.z, vTW.z) * step(vTW.z, uFlat.w);
-    outside *= 1.0 - step(cFlat2.x - 400.0, vTW.x) * step(vTW.x, cFlat2.y + 400.0) * step(cFlat2.z - 400.0, vTW.z) * step(vTW.z, cFlat2.w + 400.0);
+    if (inFlats(vTW.xz, 400.0)) outside = 0.0;
     float farm = smoothstep(0.38, 0.5, d3.b * 0.8 + d2.r * 0.2) * (1.0 - fm) * (1.0 - smoothstep(60.0, 220.0, h))
                * smoothstep(0.5, 2.0, h) * (1.0 - smoothstep(0.06, 0.18, vSlope)) * outside;
     col = mix(col, fc, farm);

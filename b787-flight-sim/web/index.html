@@ -99,8 +99,8 @@
   @keyframes fBlink { 50% { opacity: .35; } }
   @media (max-width: 700px) { #fids td { font-size: 15px; padding: 7px 6px; } #fids .fTime, #fids .fGate { font-size: 16px; } #fids .fTitle { font-size: 20px; } }
   .apNames { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
-  .apNames label { flex: 1 1 200px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--bs-muted); }
-  .apNames input { padding: 7px 10px; font-size: 15px; border-radius: 8px; border: 1px solid rgba(214, 196, 160, .35); background: rgba(0, 0, 0, .35); color: inherit; }
+  .apNames label { flex: 1 1 170px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--bs-muted); }
+  .apNames input, .apNames select { padding: 7px 10px; font-size: 15px; border-radius: 8px; border: 1px solid rgba(214, 196, 160, .35); background: rgba(0, 0, 0, .35); color: inherit; }
   #airlineName { width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 16px; border-radius: 8px;
     border: 1px solid var(--line); background: rgba(255,255,255,0.06); color: inherit; }
   #liveryPreview { display: block; width: 100%; max-width: 520px; height: auto; margin-top: 10px; border-radius: 8px; }
@@ -347,8 +347,11 @@
             </label>
           </div>
           <div class="apNames">
-            <label>空港名 Airport name<input type="text" id="apName" maxlength="24" value="City Builder" autocomplete="off" spellcheck="false"></label>
-            <label>第2空港（東へ約200 km）Second airport<input type="text" id="apName2" maxlength="24" value="Minato" autocomplete="off" spellcheck="false"></label>
+            <label>出発空港 Home airport<input type="text" id="apName" maxlength="24" value="City Builder" autocomplete="off" spellcheck="false"></label>
+            <label>第2空港（東へ約200 km）<input type="text" id="apName2" maxlength="24" value="Minato" autocomplete="off" spellcheck="false"></label>
+            <label>第3空港（西へ約180 km）<input type="text" id="apName3" maxlength="24" value="Aoba" autocomplete="off" spellcheck="false"></label>
+            <label>第4空港（東へ約300 km）<input type="text" id="apName4" maxlength="24" value="Kaede" autocomplete="off" spellcheck="false"></label>
+            <label>目的地 Destination<select id="destApt"></select></label>
           </div>
         </section>
         <section class="slide" data-i="1">
@@ -366,10 +369,9 @@
             </fieldset>
             <fieldset id="liveryBox">
               <legend>機体塗装 / Livery</legend>
-              <label for="airlineName">エアライン名 Airline name</label>
-              <input type="text" id="airlineName" maxlength="28" value="Claude Air" autocomplete="off" spellcheck="false">
+              <input type="hidden" id="airlineName" value="Japan Airlines">
               <canvas id="liveryPreview" width="520" height="110"></canvas>
-              <label>ロゴ Logo（色も一緒に変わります）</label>
+              <label>航空会社 Airline（国内外 17 社・実在の塗装）</label>
               <div class="logos" id="logoPick"></div>
               <button type="button" id="liveryReset" class="small">既定に戻す Reset</button>
             </fieldset>

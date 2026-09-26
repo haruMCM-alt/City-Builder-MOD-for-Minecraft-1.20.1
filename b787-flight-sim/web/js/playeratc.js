@@ -8,15 +8,15 @@
 // occupancy, arrival sequence), hold the player when needed and clear them when the runway
 // is free.  Some calls are made by ATC on their own: departure hand-off, landing clearance on
 // final, go-around, runway vacated, and a reprimand for a take-off without clearance.
-import { hdg3, AIRPORT } from './atc.js';
-import { A2 } from './airport2.js';
+import { hdg3, AIRPORT, aptName } from './atc.js';
+import { remoteById, nearestAirport } from './airports.js';
 
 const NM = 1852;
 
 export class PlayerATC {
   constructor(traffic) {
     this.T = traffic;
-    this.reset('Claude 101');
+    this.reset('Japan Air 101');
   }
 
   reset(callsign) {
@@ -29,8 +29,8 @@ export class PlayerATC {
 
   get P() { return this.T.player; }
 
-  // 1: home airport, 2: second airport (the player is east of the halfway line)
-  get apt() { return this.P.x > A2.x / 2 ? 2 : 1; }
+  // the airport the player is at / nearest to: 1 home, 2-4 the remote airports
+  get apt() { return nearestAirport(this.P.x, this.P.z); }
 
   // the airport the player is working with: stations, runway, taxiways, stands
   ctx() {
@@ -40,15 +40,17 @@ export class PlayerATC {
       return { apt: 1, name: AIRPORT.name, twr: 'TWR', gnd: 'GND', ox: 0, oz: 0, half: 1850, R: T._rw(),
         conns: G.connectors, holdZ: G.holdZ, twy: 'Alpha', conn: 'A', stands: T.W.stands, gndFreq: 'one two one decimal niner' };
     }
-    return { apt: 2, name: AIRPORT.name2, twr: 'TWR2', gnd: 'GND2', ox: A2.x, oz: A2.z, half: A2.len / 2 + 50,
-      R: { id: '09', d: 1, tx: A2.x - A2.len / 2 }, conns: A2.conns.map((c) => A2.x + c), holdZ: A2.z - 66,
-      twy: 'Bravo', conn: 'B', stands: T.a2Stands, gndFreq: 'one two one decimal six' };
+    // a remote airport: the runway direction its traffic uses (towards home, see Traffic.rwSide)
+    const ap = remoteById(this.apt), sx = ap.x >= 0 ? 1 : -1;
+    return { apt: ap.id, ap, name: aptName(ap.id), ox: ap.x, oz: ap.z, half: ap.len / 2 + 50,
+      R: { id: sx > 0 ? '09' : '27', d: sx, tx: ap.x - sx * ap.len / 2 }, conns: ap.conns.map((c) => ap.x + c), holdZ: ap.z + ap.holdZ,
+      twy: 'Bravo', conn: 'B', stands: T.remoteStands?.[ap.id] || [], gndFreq: 'one two one decimal six' };
   }
 
   // transmissions on the frequencies of the airport the player is working with
   say(who, text) {
     const me = who === this.cs;
-    if (who === 'TWR' || who === 'GND') who += this.apt === 2 ? '2' : '';
+    if ((who === 'TWR' || who === 'GND') && this.apt > 1) who += this.apt;
     this.T.radio?.say(who, text, { me, apt: this.apt });
   }
 
@@ -80,7 +82,7 @@ export class PlayerATC {
   _busy(C) {
     const T = this.T;
     if (C.apt === 1) return T._runwayBusy(this.P);
-    return (T.remote || []).find((a) => a.state === 'R_TKOF' || (a.state === 'R_TAXI' && a.v > 15 && Math.abs(a.z - A2.z) < 45)) || null;
+    return (T.remote || []).find((a) => a.rap === C.ap && (a.state === 'R_TKOF' || (a.state === 'R_TAXI' && a.v > 15 && Math.abs(a.z - C.oz) < 45))) || null;
   }
 
   // seconds until the next AI arrival touches down
@@ -89,7 +91,7 @@ export class PlayerATC {
     if (C.apt === 1) return T._arrivalEta(true);
     let eta = Infinity;
     for (const a of T.remote || []) {
-      if (a.state !== 'R_OUT' || !a.route) continue;
+      if (a.state !== 'R_OUT' || !a.route || a.rap !== C.ap) continue;
       const rem = a.route.path.length - a.route.s;
       if (rem < 25000) eta = Math.min(eta, rem / Math.max(a.v, 50));
     }
@@ -100,12 +102,12 @@ export class PlayerATC {
   _ahead(C, along) {
     const T = this.T;
     if (C.apt === 1) return T.aircraft.find((a) => a.state === 'AIR' && a.air && T._leg(a) >= 4 && (a.air.tdS - a.air.s) < along);
-    return (T.remote || []).find((a) => a.state === 'R_OUT' && a.route && a.route.path.length - a.route.s < along);
+    return (T.remote || []).find((a) => a.state === 'R_OUT' && a.rap === C.ap && a.route && a.route.path.length - a.route.s < along);
   }
 
   _lined(C) {
     if (C.apt === 1) return this.T.aircraft.some((a) => ['LINEUP', 'WAIT_TKOF', 'TAKEOFF'].includes(a.state));
-    return (this.T.remote || []).some((a) => a.state === 'R_TKOF');
+    return (this.T.remote || []).some((a) => a.state === 'R_TKOF' && a.rap === C.ap);
   }
 
   hint() {
@@ -182,15 +184,18 @@ export class PlayerATC {
   // no AI aircraft moving on the apron near the player
   apronClear() {
     const P = this.P;
-    if (this.apt === 2) return !(this.T.remote || []).some((a) => ['R_TAXI', 'R_PUSH', 'R_TAXIOUT'].includes(a.state) && a.z < A2.z - 180 && Math.abs(a.x - P.x) < 300);
+    if (this.apt > 1) {
+      const ap = remoteById(this.apt);
+      return !(this.T.remote || []).some((a) => a.rap === ap && ['R_TAXI', 'R_PUSH', 'R_TAXIOUT'].includes(a.state) && a.z < ap.z - 180 && Math.abs(a.x - P.x) < 300);
+    }
     for (const u of this.T.apron) if (Math.abs((u.x ?? 0) - P.x) < 300) return false;
     return true;
   }
 
   pickGate(C = this.ctx()) {
     const T = this.T, P = this.P;
-    if (C.apt === 2) {
-      const free = T.a2Stands.filter((st) => !st.busy);
+    if (C.apt > 1) {
+      const free = C.stands.filter((st) => !st.busy);
       if (!free.length) return null;
       free.sort((a, b) => Math.abs(a.cg[0] - P.x) - Math.abs(b.cg[0] - P.x));
       free[0].busy = 'player';                       // kept free of AI arrivals

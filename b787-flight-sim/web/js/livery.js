@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { weatherMaterial } from './shading.js';
 import { JAL_ICON, JAL_WORDMARK, ANA_LOGO, ANA_ASPECT, JAL_WORD_ASPECT } from './airlinelogos.js';
+import { AIRLINE_SVG } from './airlinelogos2.js';
 
 // ------------------------------------------------------------------ real airline marks (SVG images)
 const IMG = {};
@@ -21,13 +22,36 @@ function svgImage(key, svg) {
   });
 }
 // the menu, the aircraft and the AI fleet are drawn once these have loaded
+// a single-colour copy of a mark (white on a dark fin, red title for a mono logo ...)
+function tinted(key, color) {
+  const k = key + '@' + color;
+  if (!IMG[k] && imgOk(key)) {
+    const src = IMG[key], cv = document.createElement('canvas');
+    cv.width = Math.min(2048, src.naturalWidth * 2); cv.height = Math.round(cv.width * src.naturalHeight / src.naturalWidth);
+    const c = cv.getContext('2d');
+    c.drawImage(src, 0, 0, cv.width, cv.height);
+    c.globalCompositeOperation = 'source-in'; c.fillStyle = color; c.fillRect(0, 0, cv.width, cv.height);
+    IMG[k] = cv;
+  }
+  return k;
+}
 export const liveryImagesReady = typeof Image === 'undefined' ? Promise.resolve() : Promise.all([
   svgImage('jalIcon', JAL_ICON),
   svgImage('jalWord', JAL_WORDMARK),
   svgImage('ana', ANA_LOGO),
   svgImage('anaWhite', ANA_LOGO.replace(/#223f9a/gi, '#ffffff')),
-]);
-const imgOk = (k) => IMG[k] && IMG[k].complete && IMG[k].naturalWidth > 0;
+  ...Object.entries(AIRLINE_SVG).flatMap(([k, v]) => [svgImage(k + 'Icon', v.icon), svgImage(k + 'Word', v.word)]),
+]).then(() => {
+  // single-colour variants used by the liveries
+  for (const l of LOGOS) {
+    if (l.markTint) tinted(l.id + 'Icon', l.markTint);
+    if (l.titleTint) l.title.img = tinted(l.id + 'Word', l.titleTint);
+  }
+});
+function imgOk(k) {
+  const im = IMG[k];
+  return !!im && (im.getContext ? im.width > 0 : im.complete && im.naturalWidth > 0);
+}
 function drawImg(ctx, key, x, y, w, h) { if (imgOk(key)) ctx.drawImage(IMG[key], x, y, w, h); }
 // menu preview: the real wordmark at (x, y centre) with height h px; false for text liveries
 export function drawLogoTitle(ctx, logo, x, y, h, maxW) {
@@ -39,17 +63,59 @@ export function drawLogoTitle(ctx, logo, x, y, h, maxW) {
   return true;
 }
 
-export const DEFAULT_LIVERY = { name: 'Claude Air', logo: 'spark' };
+export const DEFAULT_LIVERY = { name: 'Japan Airlines', logo: 'jal' };
 
 // ------------------------------------------------------------------ logo designs
 // Each draw() works in a unit circle (radius 1, y down) centred at the origin.
 function disc(ctx, r, fill) { ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill(); }
 function ring(ctx, r, w, stroke) { ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.lineWidth = w; ctx.strokeStyle = stroke; ctx.stroke(); }
 
+// ------------------------------------------------------------------ major airlines (Japan + world)
+// The scheme is painted from these parameters: belly colour below the cheat line (primary /
+// primary2; plain = all-white fuselage), two pin-stripes (accent1 / accent2), the fin colours
+// (tailTop / tailBottom, optional ribbons in the accent colours), the fin mark (the airline's
+// icon, in its own colours or tinted) and the wordmark as the fuselage title.
+const AIRLINE_SPEC = [
+  // id, label, name, telephony, IATA, colours, options
+  ['peach', 'Peach ピーチ', 'Peach Aviation', 'Air Peach', 'MM', { tailTop: '#c4007a', tailBottom: '#e0258f', nacelle: '#eef0f3' }, { plain: true, markTint: '#ffffff', titleH: 1.9 }],
+  ['jetstar', 'Jetstar ジェットスター', 'Jetstar Japan', 'Orange Liner', 'GK', { tailTop: '#141414', tailBottom: '#262626', nacelle: '#eef0f3' }, { plain: true, titleH: 1.9 }],
+  ['aa', 'American アメリカン航空', 'American Airlines', 'American', 'AA', { primary: '#b9bec5', primary2: '#cbd0d5', accent1: '#aeb4bb', accent2: '#cbd0d5', tailTop: '#eceef1', tailBottom: '#dadee3', nacelle: '#c3c8ce' }, { titleH: 1.25, tailScale: 1.35 }],
+  ['delta', 'Delta デルタ航空', 'Delta Air Lines', 'Delta', 'DL', { primary: '#0b2b5c', primary2: '#123a73', accent1: '#123a73', accent2: '#123a73', tailTop: '#0b2b5c', tailBottom: '#123f7c', nacelle: '#0e3166' }, { titleH: 1.25 }],
+  ['united', 'United ユナイテッド航空', 'United Airlines', 'United', 'UA', { primary: '#1c3f94', primary2: '#2449a3', accent1: '#2449a3', accent2: '#2449a3', tailTop: '#122f72', tailBottom: '#1c3f94', nacelle: '#1c3f94' }, { titleH: 1.3 }],
+  ['ba', 'British Airways 英国航空', 'British Airways', 'Speedbird', 'BA', { primary: '#1f2f5f', primary2: '#26386e', accent1: '#d71921', accent2: '#f5f7f9', tailTop: '#1f2f5f', tailBottom: '#2c4687', nacelle: '#1f2f5f' }, { ribbons: true, markTint: '#ffffff', titleH: 1.3, tailScale: 1.3 }],
+  ['lh', 'Lufthansa ルフトハンザ', 'Lufthansa', 'Lufthansa', 'LH', { tailTop: '#05164d', tailBottom: '#0a2066', nacelle: '#05164d' }, { plain: true, markTint: '#ffffff', titleH: 1.3 }],
+  ['af', 'Air France エールフランス', 'Air France', 'Airfrans', 'AF', { accent1: '#002157', accent2: '#e3001b', tailTop: '#f7f8fa', tailBottom: '#eef0f3', nacelle: '#eef0f3' }, { plain: true, ribbons: true, titleH: 0.95 }],
+  ['klm', 'KLM オランダ航空', 'KLM', 'KLM', 'KL', { primary: '#00a1de', primary2: '#0093cf', accent1: '#003e7e', accent2: '#f5f7f9', tailTop: '#009ad8', tailBottom: '#1ab0ea', nacelle: '#00a1de' }, { markTint: '#ffffff', titleH: 1.25 }],
+  ['ek', 'Emirates エミレーツ', 'Emirates', 'Emirates', 'EK', { accent1: '#d71a21', accent2: '#00843d', tailTop: '#f7f8fa', tailBottom: '#eef0f3', nacelle: '#eef0f3' }, { plain: true, ribbons: true, titleH: 3.2, tailScale: 1.3 }],
+  ['qr', 'Qatar カタール航空', 'Qatar Airways', 'Qatari', 'QR', { primary: '#c3c5c8', primary2: '#d3d5d8', accent1: '#c3c5c8', accent2: '#d3d5d8', tailTop: '#5c0632', tailBottom: '#72103f', nacelle: '#5c0632' }, { markTint: '#ffffff', titleH: 2.0, tailScale: 1.3 }],
+  ['sq', 'Singapore シンガポール航空', 'Singapore Airlines', 'Singapore', 'SQ', { accent1: '#1d2c68', accent2: '#f99f1c', tailTop: '#1d2c68', tailBottom: '#28397f', nacelle: '#1d2c68' }, { plain: true, titleH: 2.4, tailScale: 1.3 }],
+  ['cx', 'Cathay キャセイ', 'Cathay Pacific', 'Cathay', 'CX', { primary: '#a9b1b4', primary2: '#bcc3c6', accent1: '#006564', accent2: '#bcc3c6', tailTop: '#006564', tailBottom: '#00807c', nacelle: '#bcc3c6' }, { markTint: '#ffffff', titleH: 1.7, tailScale: 1.3 }],
+  ['ke', 'Korean Air 大韓航空', 'Korean Air', 'Korean Air', 'KE', { primary: '#8cc4ea', primary2: '#a3d0f0', accent1: '#b8bec5', accent2: '#a3d0f0', tailTop: '#f7f8fa', tailBottom: '#eef0f3', nacelle: '#8cc4ea' }, { titleH: 1.25, tailScale: 1.3 }],
+  ['qf', 'Qantas カンタス', 'Qantas', 'Qantas', 'QF', { tailTop: '#e40000', tailBottom: '#c60c30', nacelle: '#eef0f3' }, { plain: true, markTint: '#ffffff', titleTint: '#e40000', titleH: 1.5, tailScale: 1.35 }],
+];
+function REAL_AIRLINES() {
+  const white = '#f5f7f9';
+  return AIRLINE_SPEC.map(([id, label, name, tel, code, col, o]) => {
+    const A = AIRLINE_SVG[id], ia = A.iconAspect;
+    const colors = { primary: white, primary2: white, accent1: white, accent2: white, brand: col.tailTop, ...col };
+    return {
+      id, label, name, tel, code, real: true, colors,
+      plain: !!o.plain, ribbons: !!o.ribbons, noSweep: true, tailScale: o.tailScale || 1.45, boxAspect: ia,
+      markTint: o.markTint || null, titleTint: o.titleTint || null,
+      title: { img: id + 'Word', aspect: A.wordAspect, h: o.titleH || 1.3 },
+      // fin mark in a unit box (width 2 for wide marks, height 2 for tall ones)
+      draw(ctx) {
+        const w = ia >= 1 ? 2 : 2 * ia, h = w / ia;
+        drawImg(ctx, o.markTint ? id + 'Icon@' + o.markTint : id + 'Icon', -w / 2, -h / 2, w, h);
+      },
+    };
+  });
+}
+
 export const LOGOS = [
   {
     // Japan Airlines, 2011 "Tsurumaru" livery: all-white aircraft, red crane on the fin
-    id: 'jal', label: 'JAL 日本航空', name: 'Japan Airlines', real: true,
+    id: 'jal', label: 'JAL 日本航空', name: 'Japan Airlines', real: true, tel: 'Japan Air', code: 'JL',
     colors: { primary: '#f5f7f9', primary2: '#f5f7f9', accent1: '#f5f7f9', accent2: '#f5f7f9', tailTop: '#f7f8fa', tailBottom: '#f3f4f6', nacelle: '#eceef1', brand: '#e50012' },
     plain: true, noSweep: true, tailScale: 1.45, boxAspect: 1,
     title: { img: 'jalWord', aspect: JAL_WORD_ASPECT, h: 0.62 },
@@ -58,152 +124,13 @@ export const LOGOS = [
   {
     // ANA "Triton Blue": white upper fuselage, Triton-blue belly with a Mohican-blue line,
     // Triton-blue fin with the white ANA mark
-    id: 'ana', label: 'ANA 全日空', name: 'ANA', real: true,
+    id: 'ana', label: 'ANA 全日空', name: 'ANA', real: true, tel: 'All Nippon', code: 'NH',
     colors: { primary: '#1d3a91', primary2: '#223f9a', accent1: '#00b3f0', accent2: '#f5f7f9', tailTop: '#1a3688', tailBottom: '#223f9a', nacelle: '#eef0f3', brand: '#223f9a' },
     tailScale: 1.6, boxAspect: ANA_ASPECT,
     title: { img: 'ana', aspect: ANA_ASPECT, h: 1.9 },
     draw(ctx, onDark = true) { const w = 2, h = w / ANA_ASPECT; drawImg(ctx, onDark ? 'anaWhite' : 'ana', -w / 2, -h / 2, w, h); },
   },
-  {
-    id: 'spark', label: 'スパーク Spark', name: 'Claude Air',
-    colors: { primary: '#b8583a', primary2: '#d9774f', accent1: '#2a211d', accent2: '#e9b98f', tailTop: '#c7623f', tailBottom: '#8f3f27' },
-    ribbons: false,
-    draw(ctx) {
-      // hand-drawn radiant burst: 12 tapered rays of alternating length
-      ctx.fillStyle = '#f7efe6';
-      for (let i = 0; i < 12; i++) {
-        const a = i / 12 * Math.PI * 2 + 0.13, len = i % 2 ? 0.72 : 1.0, w = i % 2 ? 0.09 : 0.12;
-        ctx.save(); ctx.rotate(a);
-        ctx.beginPath();
-        ctx.moveTo(0.08, -w * 0.55);
-        ctx.quadraticCurveTo(len * 0.6, -w * 0.7, len, 0);
-        ctx.quadraticCurveTo(len * 0.6, w * 0.7, 0.08, w * 0.55);
-        ctx.closePath(); ctx.fill();
-        ctx.restore();
-      }
-      disc(ctx, 0.2, '#f7efe6');
-    },
-  },
-  {
-    id: 'crane', label: '鶴 Crane', name: 'Tsuru Airlines',
-    colors: { primary: '#b3122e', primary2: '#d42a45', accent1: '#1d1d1f', accent2: '#c9a24a', tailTop: '#ffffff', tailBottom: '#eef0f3' },
-    ribbons: false,
-    draw(ctx) {
-      disc(ctx, 1.0, '#c8102e');
-      // stylised crane: two sweeping wings, neck and head crest
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.moveTo(-0.05, 0.15);
-      ctx.bezierCurveTo(-0.45, -0.05, -0.75, -0.45, -0.8, -0.1);
-      ctx.bezierCurveTo(-0.6, 0.05, -0.35, 0.2, -0.05, 0.32);
-      ctx.closePath(); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(0.05, 0.15);
-      ctx.bezierCurveTo(0.45, -0.05, 0.75, -0.45, 0.8, -0.1);
-      ctx.bezierCurveTo(0.6, 0.05, 0.35, 0.2, 0.05, 0.32);
-      ctx.closePath(); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-0.07, 0.34); ctx.quadraticCurveTo(0, 0.1, 0.02, -0.45);
-      ctx.lineTo(0.09, -0.47); ctx.quadraticCurveTo(0.08, 0.1, 0.07, 0.34); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(0.02, -0.46); ctx.lineTo(0.26, -0.5); ctx.lineTo(0.08, -0.4); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(-0.08, 0.3); ctx.lineTo(0, 0.62); ctx.lineTo(0.08, 0.3); ctx.closePath(); ctx.fill();
-      disc(ctx, 0, '#fff');
-      ctx.save(); ctx.translate(0.05, -0.5); disc(ctx, 0.06, '#1d1d1f'); ctx.restore();
-    },
-  },
-  {
-    id: 'skyline', label: 'スカイライン Skyline', name: 'City Builder Airways',
-    colors: { primary: '#0b2a5c', primary2: '#123f86', accent1: '#1fb4e6', accent2: '#f2b233', tailTop: '#08204a', tailBottom: '#0b2a5c' },
-    ribbons: true,
-    draw(ctx) {
-      ring(ctx, 1.06, 0.05, '#f6f8fb');
-      disc(ctx, 0.97, '#f6f8fb');
-      disc(ctx, 0.9, '#f2b233');
-      ctx.save(); ctx.beginPath(); ctx.arc(0, 0, 0.9, 0, Math.PI * 2); ctx.clip();
-      ctx.fillStyle = '#0b2a5c';
-      const hs = [0.4, 0.62, 0.3, 0.75, 0.5, 0.95, 1.25, 1.02, 0.58, 0.8, 0.45, 0.66, 0.35];
-      const n = hs.length, w = 1.8 / n;
-      for (let i = 0; i < n; i++) ctx.fillRect(-0.9 + i * w + w * 0.12, 0.35 - hs[i], w * 0.76, hs[i]);
-      ctx.fillRect(-0.9 + 6 * w + w * 0.44, 0.35 - 1.45, w * 0.12, 0.3);
-      ctx.fillRect(-1, 0.34, 2, 1);
-      ctx.restore();
-    },
-  },
-  {
-    id: 'wave', label: '波 Wave', name: 'Pacific Wave',
-    colors: { primary: '#0d5f7a', primary2: '#16809f', accent1: '#35c3d9', accent2: '#ffffff', tailTop: '#0b4d66', tailBottom: '#0d6c8a' },
-    ribbons: true,
-    draw(ctx) {
-      disc(ctx, 1.0, '#f4fbfd');
-      ctx.save(); ctx.beginPath(); ctx.arc(0, 0, 0.92, 0, Math.PI * 2); ctx.clip();
-      const cols = ['#35c3d9', '#1c93b3', '#0d5f7a'];
-      for (let k = 0; k < 3; k++) {
-        const y0 = -0.2 + k * 0.32;
-        ctx.beginPath(); ctx.moveTo(-1.1, 1.2); ctx.lineTo(-1.1, y0 + 0.2);
-        for (let x = -1.1; x <= 1.1; x += 0.05) {
-          const ph = (x + 1.1) * 3.1 + k * 1.3;
-          ctx.lineTo(x, y0 + 0.13 * Math.sin(ph) - 0.07 * Math.max(0, Math.sin(ph * 0.5 + 1)) ** 6);
-        }
-        ctx.lineTo(1.1, 1.2); ctx.closePath(); ctx.fillStyle = cols[k]; ctx.fill();
-      }
-      ctx.restore();
-      ring(ctx, 0.96, 0.08, '#0d5f7a');
-    },
-  },
-  {
-    id: 'fuji', label: '富士 Fuji', name: 'Fuji Sky',
-    colors: { primary: '#3b2d7a', primary2: '#5241a0', accent1: '#e85d8a', accent2: '#f5c542', tailTop: '#2f2463', tailBottom: '#4a3a93' },
-    ribbons: true,
-    draw(ctx) {
-      disc(ctx, 1.0, '#fdf2f6');
-      ctx.save(); ctx.beginPath(); ctx.arc(0, 0, 0.94, 0, Math.PI * 2); ctx.clip();
-      ctx.save(); ctx.translate(0.35, -0.35); disc(ctx, 0.3, '#e85d8a'); ctx.restore();
-      ctx.beginPath(); ctx.moveTo(-1.1, 0.75); ctx.lineTo(-0.22, -0.3); ctx.lineTo(0.22, -0.3); ctx.lineTo(1.1, 0.75);
-      ctx.lineTo(1.1, 1.2); ctx.lineTo(-1.1, 1.2); ctx.closePath(); ctx.fillStyle = '#3b2d7a'; ctx.fill();
-      ctx.beginPath(); ctx.moveTo(-0.22, -0.3); ctx.lineTo(0.22, -0.3); ctx.lineTo(0.43, -0.05);
-      ctx.lineTo(0.25, 0.02); ctx.lineTo(0.12, -0.08); ctx.lineTo(0, 0.04); ctx.lineTo(-0.14, -0.07); ctx.lineTo(-0.28, 0.03);
-      ctx.lineTo(-0.43, -0.05); ctx.closePath(); ctx.fillStyle = '#ffffff'; ctx.fill();
-      ctx.restore();
-      ring(ctx, 0.97, 0.06, '#e85d8a');
-    },
-  },
-  {
-    id: 'globe', label: '地球 Globe', name: 'Globe Link',
-    colors: { primary: '#0e6b47', primary2: '#16875b', accent1: '#9bd34a', accent2: '#f2c94c', tailTop: '#0b5a3b', tailBottom: '#0f7a51' },
-    ribbons: false,
-    draw(ctx) {
-      disc(ctx, 0.8, '#ffffff');
-      ctx.save(); ctx.beginPath(); ctx.arc(0, 0, 0.8, 0, Math.PI * 2); ctx.clip();
-      ctx.strokeStyle = '#0e6b47'; ctx.lineWidth = 0.07;
-      for (const k of [-0.5, 0, 0.5]) { ctx.beginPath(); ctx.moveTo(-1, k * 0.8); ctx.lineTo(1, k * 0.8); ctx.stroke(); }
-      for (const k of [0.35, 0.72]) { ctx.beginPath(); ctx.ellipse(0, 0, 0.8 * k, 0.8, 0, 0, Math.PI * 2); ctx.stroke(); }
-      ctx.beginPath(); ctx.moveTo(0, -1); ctx.lineTo(0, 1); ctx.stroke();
-      ctx.restore();
-      ring(ctx, 0.8, 0.08, '#0e6b47');
-      // orbit swoosh
-      ctx.save(); ctx.rotate(-0.4);
-      ctx.beginPath(); ctx.ellipse(0, 0, 1.0, 0.36, 0, Math.PI * 0.95, Math.PI * 2.25);
-      ctx.lineWidth = 0.1; ctx.strokeStyle = '#9bd34a'; ctx.lineCap = 'round'; ctx.stroke();
-      ctx.translate(1.0 * Math.cos(Math.PI * 2.25), 0.36 * Math.sin(Math.PI * 2.25)); disc(ctx, 0.1, '#f2c94c');
-      ctx.restore();
-    },
-  },
-  {
-    id: 'plane', label: '紙飛行機 Arrow', name: 'Aero Swift',
-    colors: { primary: '#c8102e', primary2: '#e0303f', accent1: '#1d2a5c', accent2: '#f2b233', tailTop: '#1d2a5c', tailBottom: '#2a3b7a' },
-    ribbons: true,
-    draw(ctx) {
-      disc(ctx, 1.0, '#c8102e');
-      ctx.save(); ctx.rotate(-0.35);
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.moveTo(0.75, 0); ctx.lineTo(-0.65, -0.42); ctx.lineTo(-0.3, 0.02); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#d9dde6';
-      ctx.beginPath(); ctx.moveTo(0.75, 0); ctx.lineTo(-0.3, 0.02); ctx.lineTo(-0.5, 0.42); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#f2b233';
-      ctx.fillRect(-0.95, 0.08, 0.5, 0.06); ctx.fillRect(-0.85, 0.22, 0.32, 0.06);
-      ctx.restore();
-    },
-  },
+  ...REAL_AIRLINES(),
 ];
 
 export const logoById = (id) => LOGOS.find((l) => l.id === id) || LOGOS[0];

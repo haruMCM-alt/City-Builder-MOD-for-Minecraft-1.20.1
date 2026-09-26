@@ -18,9 +18,10 @@ import { PostFX } from './postfx.js';
 import { Rain } from './weatherfx.js';
 import { Vapor } from './vapor.js';
 import { Traffic } from './traffic.js';
-import { Radio, setAirportNames, AIRPORT } from './atc.js';
-import { Airport2, A2, airport2Lights, airport2Obstacles, airport2Runways } from './airport2.js';
+import { Radio, setAirportNames, AIRPORT, aptName } from './atc.js';
+import { RemoteAirport, REMOTES, remoteById, nearestAirport, remoteLights, remoteObstacles, remoteRunways } from './airport2.js';
 import { AutoPush } from './pushback.js';
+import { AutoFlight } from './autoflight.js';
 import { FIDS } from './fids.js';
 import { MCP3D } from './mcp3d.js';
 import { FX } from './fx.js';
@@ -100,12 +101,13 @@ async function loadEmbeddedGLTF(loader, url, onProgress) {
 
 // --------------------------------------------------------------------- scenarios
 const SCENARIOS = [
+  { id: 'auto', name: '自動操縦フライト / Auto flight', note: '出発空港の滑走路から目的地まで全自動（離陸・巡航・降下・ILS 自動着陸）。操縦桿を動かすと手動に切替' },
   { id: 'rwy27', name: '滑走路27 離陸 / Takeoff RWY 27', note: 'Flaps 5 · Shift+R で TOGA、VR で ↓ で機首上げ' },
   { id: 'rwy09', name: '滑走路09 離陸 / Takeoff RWY 09', note: '市街地方向へ離陸 (towards the port)' },
   { id: 'gate', name: 'ゲート7 プッシュバック / Gate 7', note: 'J でプッシュバック、P でパーキングブレーキ解除' },
   { id: 'ils27', name: 'ILS 27 進入 12nm / ILS approach', note: 'AP が LOC/GS を捕捉。ギア・フラップを出して着陸' },
   { id: 'final', name: 'ショートファイナル 4nm / Short final', note: '手動着陸。PAPI を見て 3° パスを維持' },
-  { id: 'apt2', name: '第2空港 ファイナル 5nm / Second airport', note: '東へ約200 km の第2空港 RWY 09 へ進入（ILS あり）' },
+  { id: 'apt2', name: '目的地ファイナル 5nm / Destination final', note: 'フライト設定で選んだ目的地空港への最終進入（ILS あり）' },
   { id: 'city', name: '都市上空 遊覧 / City sightseeing', note: '高度 2,000 ft で市街地とランドマークタワーへ' },
   { id: 'cruise', name: '巡航 FL350 M0.85 / Cruise', note: 'オートパイロット巡航。降下して空港へ戻る' },
 ];
@@ -127,8 +129,8 @@ class App {
     this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 250000);
 
     setLoad(0.02, 'loading data…');
-    const [world, apt2Data, livery, ...metas] = await Promise.all([fetchJSON(ASSET + 'world.json'),
-      fetchJSON(ASSET + 'airport2.json').catch(() => null),
+    const [world, aptData, livery, ...metas] = await Promise.all([fetchJSON(ASSET + 'world.json'),
+      Promise.all(REMOTES.map((ap) => fetchJSON(ASSET + ap.asset + '.json').catch(() => null))),
       fetchJSON(ASSET + 'livery.json').catch(() => null),
       ...TYPES.map((t) => fetchJSON(ASSET + t.asset + '.json').catch(() => null))]);
     this.types = {};
@@ -146,9 +148,13 @@ class App {
     const meta = this.types[sel].meta;
     this.meta = meta; this.worldData = world;
     configureTerrain(world);
-    world.obstacles = (world.obstacles || []).concat(airport2Obstacles(apt2Data));
-    Object.assign(world.lights, airport2Lights(apt2Data));
-    world.runways = (world.runways || []).concat(airport2Runways());
+    // the remote airports: collision boxes, lights and runways from their data files
+    this.aptData = aptData;
+    REMOTES.forEach((ap, i) => {
+      world.obstacles = (world.obstacles || []).concat(remoteObstacles(ap, aptData[i]));
+      Object.assign(world.lights, remoteLights(ap, aptData[i]));
+    });
+    world.runways = (world.runways || []).concat(remoteRunways());
     configureObstacles(world);
     this.world = new World(renderer, this.scene, this.quality);
 
@@ -168,10 +174,9 @@ class App {
     const lodP = () => typeIds.reduce((a, k) => a + (prog.lod[k] || 0), 0) / typeIds.length;
     const upd = () => setLoad(0.05 + 0.85 * (prog.ac * 0.3 + prog.world * 0.45 + lodP() * 0.18 + prog.gse * 0.07),
       `${this.types[sel].short} ${Math.round(prog.ac * 100)}% · airport/city ${Math.round(prog.world * 100)}% · AI fleet ${Math.round(lodP() * 100)}% · GSE ${Math.round(prog.gse * 100)}%`);
-    const [acGltf, worldGltf, apt2Gltf, gseGltf, gseInfo, ...lods] = await Promise.all([
+    const [acGltf, worldGltf, gseGltf, gseInfo, ...lods] = await Promise.all([
       loadGLB(loader, ASSET + this.types[sel].asset + MODEL_EXT, (p) => { prog.ac = p; upd(); }),
       loadGLB(loader, ASSET + 'world' + MODEL_EXT, (p) => { prog.world = p; upd(); }),
-      apt2Data ? loadGLB(loader, ASSET + 'airport2' + MODEL_EXT, () => {}).catch(() => null) : null,
       loadGLB(loader, ASSET + 'gse' + MODEL_EXT, (p) => { prog.gse = p; upd(); }).catch(() => null),
       fetchJSON(ASSET + 'gse.json').catch(() => null),
       ...typeIds.map((k) => loadGLB(loader, ASSET + this.types[k].asset + '-lod' + MODEL_EXT, (p) => { prog.lod[k] = p; upd(); })
@@ -186,13 +191,9 @@ class App {
     this.airports = loadAirportNames();
     setAirportNames(this.airports);
     this.world.setAirportName(this.airports.name);
-    this.airport2 = new Airport2(this.scene, this.world, this.airports.name2, apt2Gltf, apt2Data);
+    // remote airports: signs now, the Blender models when the camera comes near (updateAirports)
+    this.remoteAirports = REMOTES.map((ap, i) => new RemoteAirport(this.scene, this.world, ap, this.airports['name' + ap.id], aptData[i]));
     this.world.buildTrees(world.trees);
-    if (apt2Gltf && apt2Data?.trees) {
-      const t = apt2Data.trees.slice();
-      for (let i = 0; i < t.length; i += 4) { t[i] += A2.x; t[i + 2] += A2.z; }
-      this.world.buildTrees(t);
-    }
     this.world.buildLights(world.lights);
     this.world.setWeather('scattered');
     this.lodTemplate = lodGltf ? lodGltf.scene : null;
@@ -536,7 +537,7 @@ class App {
 
   applyLivery() {
     this.visual.setLivery(this.livery);
-    this.cabin.setAirline(this.livery?.name || 'Claude Air');
+    this.cabin.setAirline(this.livery?.name || 'Japan Airlines');
     if (this.meta.livery) this.cabin.setLivery(liveryAssets(this.livery, this.meta.livery, true));
   }
 
@@ -569,21 +570,38 @@ class App {
 
   // airport names: terminal / hangar signs, radio phrases and the second airport
   buildAirportNames() {
-    const a = $('apName'), b = $('apName2');
-    if (!a || !b) return;
-    a.value = this.airports.name; b.value = this.airports.name2;
+    const ids = ['', '2', '3', '4'], els = ids.map((k) => $('apName' + k));
+    if (els.some((e) => !e)) return;
+    els.forEach((e, i) => { e.value = this.airports['name' + ids[i]]; });
+    // destination (moving map, auto flight, second-airport scenario): a remote airport
+    const dsel = $('destApt');
+    try { this.dest = +(localStorage.getItem('b787.dest') || 2); } catch (e) { this.dest = 2; }
+    if (!remoteById(this.dest)) this.dest = 2;
+    const fillDest = () => {
+      dsel.innerHTML = REMOTES.map((ap) => `<option value="${ap.id}">${aptName(ap.id)}（${ap.where}）</option>`).join('');
+      dsel.value = String(this.dest);
+    };
+    fillDest();
+    dsel.addEventListener('change', () => {
+      this.dest = +dsel.value;
+      try { localStorage.setItem('b787.dest', String(this.dest)); } catch (e) { /* ignore */ }
+    });
     let tmr = 0;
     const upd = () => {
       clearTimeout(tmr);
       tmr = setTimeout(() => {
-        this.airports = { name: a.value.trim() || DEFAULT_AIRPORTS.name, name2: b.value.trim() || DEFAULT_AIRPORTS.name2 };
+        const a = {};
+        els.forEach((e, i) => { a['name' + ids[i]] = e.value.trim() || DEFAULT_AIRPORTS['name' + ids[i]]; });
+        this.airports = a;
         saveAirportNames(this.airports);
         setAirportNames(this.airports);
         this.world.setAirportName(this.airports.name);
-        this.airport2?.setName(this.airports.name2);
+        for (const ra of this.remoteAirports || []) ra.setName(this.airports['name' + ra.ap.id]);
+        this.traffic?.renameGSE?.();
+        fillDest();
       }, 300);
     };
-    a.addEventListener('input', upd); b.addEventListener('input', upd);
+    els.forEach((e) => e.addEventListener('input', upd));
   }
 
   buildLiveryMenu() {
@@ -606,7 +624,7 @@ class App {
         // fin colours behind the mark, then the real wordmark
         c.fillStyle = lg.colors.tailBottom; c.fillRect(H * 0.08, H * 0.06, H * 0.68, H * 0.62);
         c.save(); c.translate(H * 0.42, H * 0.37); c.scale(H * 0.27, H * 0.27); lg.draw(c); c.restore();
-        drawLogoTitle(c, lg, H * 0.95, H * 0.4, lg.id === 'ana' ? H * 0.3 : H * 0.1, W - H * 1.05);
+        drawLogoTitle(c, lg, H * 0.95, H * 0.4, lg.id === 'jal' ? H * 0.1 : H * 0.3, W - H * 1.05);
         return;
       }
       c.save(); c.translate(H * 0.42, H * 0.4); c.scale(H * 0.32, H * 0.32); lg.draw(c); c.restore();
@@ -723,8 +741,11 @@ class App {
     if (this.traffic?.pTug) this.traffic.playerTug(false);
     this.cabin?.ifeSafety(false);
     const spd = (kt, altM) => kt * KT * Math.sqrt(1.225 / (1.225 * Math.pow(1 - 2.2558e-5 * altM, 4.256)));
-    if (id === 'rwy27' || id === 'rwy09') {
-      const r = id === 'rwy27' ? r27 : r09;
+    this.autoFlight = null;
+    if (id === 'rwy27' || id === 'rwy09' || id === 'auto') {
+      // auto flight: from the runway in use (headwind) to the destination chosen in the menu
+      const wd = +$('windDir').value, wk = +$('windSpd').value;
+      const r = id === 'auto' ? (Math.cos((wd - 270) * DEG) * wk < -3 ? r09 : r27) : id === 'rwy27' ? r27 : r09;
       const d = headingVec(r.heading);
       fm.reset(new V3(r.threshold[0] + d.x * 75, gy, r.threshold[2] + d.z * 75), r.heading, 0, 0, true);
       sys.flapLever = 2; fm.ctl.flapAngle = 5; fm.ctl.slat = 1;
@@ -733,6 +754,12 @@ class App {
       sys.autobrake = 6; sys.speedbrakeArmed = true;
       Object.assign(L, { strobe: true, landing: true, taxi: true });
       this.rig.setView('chase');
+      if (id === 'auto') {
+        const dap = remoteById(this.dest) || REMOTES[0];
+        const dest = W.runways.find((x) => x.apt === dap.id && x.ident === (dap.x >= 0 ? '09' : '27'));
+        this.autoFlight = new AutoFlight(fm, sys, { dep: r, dest, name: aptName(dap.id) });
+        this.autoFlight.onMessage = (m) => this.toast('🛫 ' + m, 4000);
+      }
     } else if (id === 'gate') {
       const st = W.stands[6];
       skipStand = st.id;
@@ -779,15 +806,16 @@ class App {
       }
       Object.assign(L, { strobe: true, landing: true, taxi: id === 'final' });
     } else if (id === 'apt2') {
-      // short final to runway 09 of the second airport (ILS tuned to it)
-      const r = W.runways.find((x) => x.apt === 2 && x.ident === '09');
-      const dist = 5 * 1852;
+      // short final at the destination airport (the runway its traffic uses, ILS tuned to it)
+      const dap = remoteById(this.dest) || REMOTES[0];
+      const r = W.runways.find((x) => x.apt === dap.id && x.ident === (dap.x >= 0 ? '09' : '27'));
+      const dist = 5 * 1852, dv = headingVec(r.heading);
       const h = Math.tan(3 * DEG) * (dist + 300) + 1.5 - this.meta.groundY;
       setAir(6, true);
       const vref = sys.vspeeds().vref30;
-      fm.reset(new V3(r.threshold[0] - dist, h, r.threshold[2]), 90, spd(vref + 5, h), 2.2, false);
+      fm.reset(new V3(r.threshold[0] - dv.x * dist, h, r.threshold[2] - dv.z * dist), r.heading, spd(vref + 5, h), 2.2, false);
       fm.vel.y = -Math.tan(3 * DEG) * (vref + 5) * KT;
-      sys.mcp = { spd: Math.round(vref + 5), hdg: 90, alt: 3000, vs: -700 };
+      sys.mcp = { spd: Math.round(vref + 5), hdg: r.heading, alt: 3000, vs: -700 };
       sys.selectRunway(r);
       sys.at.on = true; sys.at.mode = 'SPD';
       sys.gammaT = -3; sys.phiT = 0;
@@ -835,7 +863,7 @@ class App {
       this.radio.voice = $('atcVoice') ? $('atcVoice').checked : true;
       this.radio.noise = $('atcNoise') ? $('atcNoise').checked : true;
       this.radio.enabled = run;
-      const tel = (this.livery?.name || 'Claude').split(/\s+/)[0];
+      const tel = logoById(this.livery?.logo).tel || 'Japan Air';
       this.playerCallsign = `${tel} ${100 + Math.floor(Math.random() * 800)}`;
       this.traffic.reset({ stands: W.stands, skipStand, randomLivery, runway: head27 < -3 ? '09' : '27', windDir: wdir, windKt: wkt,
         playerCallsign: this.playerCallsign });
@@ -865,7 +893,7 @@ class App {
     const sys = this.sys, fm = this.fm, o = fm.out;
     if (c === 'fids') {
       // the board of the airport you are nearest to
-      this.fids.toggle(!this.fids.open, this.fm.pos.x > 100000 ? 'a2' : 'home');
+      { const na = nearestAirport(this.fm.pos.x, this.fm.pos.z); this.fids.toggle(!this.fids.open, na > 1 ? String(na) : 'home'); }
       return;
     }
     if (c === 'menu') {
@@ -988,6 +1016,18 @@ class App {
     this.updateMCP(true);
   }
 
+  // remote airports: load a Blender model when the camera comes within 70 km; night signs
+  updateAirports() {
+    const cam = this.camera.position;
+    for (const ra of this.remoteAirports || []) {
+      ra.update(this.world.night);
+      if (ra.loaded || ra.loading || !ra.data) continue;
+      if (Math.hypot(cam.x - ra.ap.x, cam.z - ra.ap.z) > 70000) continue;
+      ra.loading = true;
+      loadGLB(this.loader, ASSET + ra.ap.asset + MODEL_EXT, () => {}).then((g) => ra.attach(g)).catch(() => { ra.loading = false; });
+    }
+  }
+
   nearestRunway() {
     const W = this.worldData, p = this.fm.pos;
     let best = W.runways[0], bd = 1e12;
@@ -1040,6 +1080,13 @@ class App {
     const events = [];
     if (!this.paused && !fm.crashed) {
       this.input.update(dt, sys.pilot, sys);
+      // auto flight flies the aircraft; stick input hands control back to the pilot
+      if (this.autoFlight && !this.autoFlight.done) {
+        if (Math.abs(sys.pilot.pitch) > 0.6 || Math.abs(sys.pilot.roll) > 0.6) {
+          this.autoFlight = null;
+          this.toast('自動操縦フライト解除 — 手動操縦 Auto flight off', 3500);
+        } else this.autoFlight.update(dt);
+      }
       if (sys.ap.on && (Math.abs(sys.pilot.pitch) > 0.6 || Math.abs(sys.pilot.roll) > 0.6)) { sys.apDisconnect(true); this.toast('A/P DISCONNECT (操縦入力)'); }
       // turbulence (filtered noise, stronger low and in clouds)
       this._gt = (this._gt || 0) + dt;
@@ -1065,8 +1112,8 @@ class App {
     for (const e of events) this.onEvent(e);
     // each airport has its own Tower / Ground: the radio follows the airport the player is at
     // or flying to (the second airport east of the halfway line)
-    if (this.radio?.tune(fm.pos.x > A2.x / 2 ? 2 : 1) && $('menu').classList.contains('hidden')) {
-      const n = this.radio.tuned === 2 ? AIRPORT.name2 : AIRPORT.name;
+    if (this.radio?.tune(nearestAirport(fm.pos.x, fm.pos.z)) && $('menu').classList.contains('hidden')) {
+      const n = aptName(this.radio.tuned);
       this.toast(`📻 無線を ${n} Tower / Ground に切替`, 3500);
     }
     if (this.traffic && !this.paused) {
@@ -1104,9 +1151,11 @@ class App {
       const v = this.rig.view, o = fm.out;
       const inside = v === 'cabin' || v === 'walk' || v === 'wing' || v === 'ife';
       const tod = this.world.tod || 0;
-      const dist = Math.hypot(fm.pos.x, fm.pos.z) / 1000;
+      const dap = remoteById(this.dest) || REMOTES[0];
+      const dist = Math.hypot(fm.pos.x - dap.x, fm.pos.z - dap.z) / 1000;
       this.cabin.update(inside, this.world.night, this.paused ? 0 : dt, {
         altFt: o.altFt || 0, gs: o.gs || 0, hdg: o.hdg || 0, oat: 15 - 1.98 * (o.altFt || 0) / 1000, x: fm.pos.x, z: fm.pos.z, dist,
+        destX: dap.x, destZ: dap.z, destName: aptName(dap.id),
         clock: `${String(Math.floor(tod)).padStart(2, '0')}:${String(Math.floor((tod % 1) * 60)).padStart(2, '0')}`,
         callsign: this.playerCallsign || '', type: 'Boeing ' + (this.cur?.short || ''),
       }, v === 'ife');
@@ -1135,7 +1184,7 @@ class App {
     this.rig.walkInput = this.input.walk && !this.paused ? this.input.walkAxes() : null;
     this.rig.update(dt, fm, this.visual.root);
     this.world.update(dt, this.camera, new THREE.Vector3(fm.pos.x, fm.pos.y, fm.pos.z));
-    this.airport2?.update(this.world.night);
+    this.updateAirports();
     this.fids?.update(dt);
     this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit });
     if (this.mcp3d && this.visual.cockpitVisible && (this._mcpT3 = (this._mcpT3 || 0) + dt) > 0.12) { this._mcpT3 = 0; this.mcp3d.update(sys, this.world.night); }

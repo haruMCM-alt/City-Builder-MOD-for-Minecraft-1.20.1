@@ -31,6 +31,15 @@ import build_world as W  # noqa: E402  (materials, geometry helpers, light / obs
 import airport_kit as K  # noqa: E402
 from airport_kit import mi  # noqa: E402
 
+# which remote airport to build: python3 build_airport2.py [--id 3]
+#   id 2 (default), 3, 4 -> airportN.glb / airportN.json, gates B1.., C1.., D1..; the airfield and
+#   terminal are the same design, the town around each airport differs (seed, centre, density)
+AID = int(sys.argv[sys.argv.index("--id") + 1]) if "--id" in sys.argv else 2
+VARIANT = {2: dict(letter="B", seed=20250925, centre=(-1300.0, 1900.0), dens=1.0),
+           3: dict(letter="C", seed=20260103, centre=(1600.0, 2300.0), dens=0.85),
+           4: dict(letter="D", seed=20260417, centre=(-600.0, -2100.0), dens=1.15)}[AID]
+GL = VARIANT["letter"]
+
 RWY_LEN, RWY_W = 3000.0, 45.0
 TWY_Y, TWY_W = 170.0, 23.0
 CONNS = [-1480.0, 0.0, 1480.0]
@@ -116,7 +125,7 @@ def build_airfield(M, col):
             rect(mk, xs, nose_y + dy - 1.0, wbar, 0.5, 0, Z_MK, 1)
         for sx in (-1, 1):
             rect(mk, xs + sx * 38, (LANE_Y + 18 + y1) / 2, 0.25, y1 - LANE_Y - 18, 0, Z_MK, 0)
-        W.text_mesh(mk, "B" + str(k + 1), xs + 12, LANE_Y + 40, Z_MK, 6.0, 0.0, 1)
+        W.text_mesh(mk, GL + str(k + 1), xs + 12, LANE_Y + 40, Z_MK, 6.0, 0.0, 1)
     # GSE parking boxes at the east end of the apron
     for k in range(9):
         rect(mk, 400 + k * 6, 368, 0.15, 48, 0, Z_MK, 0)
@@ -229,8 +238,8 @@ def build_terminal(M, col):
         K.jet_bridge(tb, (rot[0], py0), (0, -1), rot, door, 5.25 - 0.93, door_out=(-1.0, 0.0))
         K.stair_tower(tb, xs + 26.0, py0 - 2.3, 6.0, (0, -1))
         K.vdgs(tb, xs, py0 - 0.4, 8.2, (0, -1))
-        K.vtext(tb, "B" + str(k + 1), xs + 9.0, py0 - 0.35, 10.6, 2.2, -math.pi / 2, mi("sign_yellow"), extrude=0.15)
-        stands.append(dict(id="B" + str(k + 1), x=xs, noseY=nose_y, heading=0.0, cg=[xs, 0.0, -STAND_CG_Y]))
+        K.vtext(tb, GL + str(k + 1), xs + 9.0, py0 - 0.35, 10.6, 2.2, -math.pi / 2, mi("sign_yellow"), extrude=0.15)
+        stands.append(dict(id=GL + str(k + 1), x=xs, noseY=nose_y, heading=0.0, cg=[xs, 0.0, -STAND_CG_Y]))
     tb.build("A2_Terminal", K.kit_materials(M), col=col)
     return stands, signs
 
@@ -373,13 +382,13 @@ def build_landside(M, col):
 # town
 # ---------------------------------------------------------------------------
 def build_town(M, col):
-    rng = np.random.default_rng(20250925)
+    rng = np.random.default_rng(VARIANT["seed"])
     ch = W.Chunks(1500.0)
     mats = [M[s] for s in W.STYLE_ORDER] + [M["roof"], M["paint_grey"], M["steel"], M["road"], M["concrete"],
                                             M["grass"], M["leaf"], M["leaf2"], M["trunk"], M["glass_tower"]]
     I_ROOF, I_GREY, I_STEEL, I_ROAD, I_CONC, I_GRASS, I_LEAF, I_LEAF2, I_TRUNK, I_GT = range(6, 16)
     B, ROAD = 120.0, 18.0
-    centre = (-1300.0, 1900.0)
+    centre = VARIANT["centre"]
     n_bld = 0
     in_airport = lambda x, y: -2100 < x < 2100 and -380 < y < 760
     in_corridor = lambda x, y: abs(y) < 700 and abs(x) > 1500
@@ -391,7 +400,7 @@ def build_town(M, col):
                 continue
             d = math.hypot(cx - centre[0], cy - centre[1])
             dens = math.exp(-d / 1700.0)
-            if rng.random() > 0.25 + 0.75 * dens + (0.2 if d < 3200 else 0.0):
+            if rng.random() > (0.25 + 0.75 * dens + (0.2 if d < 3200 else 0.0)) * VARIANT["dens"]:
                 continue
             mb = ch.get(gx, gy)
             # streets (both sides of the block corner) and the block pavement
@@ -464,7 +473,7 @@ def main():
     build_landside(M, col)
     build_town(M, col)
     data = dict(
-        name="second airport",
+        name="remote airport %d" % AID,
         frame="three.js local frame (+x east, +y up, +z south), origin = runway centre; placed at A2",
         runway=dict(length=RWY_LEN, width=RWY_W, idents=["09", "27"]),
         stands=stands, signs=signs,
@@ -472,11 +481,11 @@ def main():
         trees=[v for t in W.TREES for v in (t[0], t[2], -t[1], t[3])],
         obstacles=[round(v, 1) for (x0, y0, x1, y1, h) in W.OBST for v in (x0, -y1, x1, -y0, h)],
     )
-    with open(os.path.join(C.WEB_ASSETS, "airport2.json"), "w") as fh:
+    with open(os.path.join(C.WEB_ASSETS, "airport%d.json" % AID), "w") as fh:
         json.dump(data, fh, separators=(",", ":"), default=lambda o: o.item() if hasattr(o, "item") else str(o))
-    C.export_glb(os.path.join(C.WEB_ASSETS, "airport2.glb"), draco=True)
-    C.save_blend(os.path.join(C.OUT_DIR, "airport2.blend"))
-    print("airport2: obstacles", len(W.OBST), "light groups", len(W.LIGHTS))
+    C.export_glb(os.path.join(C.WEB_ASSETS, "airport%d.glb" % AID), draco=True)
+    C.save_blend(os.path.join(C.OUT_DIR, "airport%d.blend" % AID))
+    print("airport%d: obstacles" % AID, len(W.OBST), "light groups", len(W.LIGHTS))
 
 
 if __name__ == "__main__":

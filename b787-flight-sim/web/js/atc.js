@@ -4,7 +4,9 @@
 
 export const FREQ = { GND: 'City Builder Ground 121.9', TWR: 'City Builder Tower 118.1' };
 // airport names chosen in the menu (radio phrases, frequencies, signs)
-export const AIRPORT = { name: 'City Builder', name2: 'Minato' };
+// (name: home airport, name2 / name3 / name4: the remote airports, see airports.js)
+export const AIRPORT = { name: 'City Builder', name2: 'Minato', name3: 'Aoba', name4: 'Kaede' };
+export const aptName = (id) => (id > 1 ? AIRPORT['name' + id] : AIRPORT.name) || '';
 export function setAirportNames(a) {
   Object.assign(AIRPORT, a);
   FREQ.GND = `${AIRPORT.name} Ground 121.9`; FREQ.TWR = `${AIRPORT.name} Tower 118.1`;
@@ -131,11 +133,11 @@ export class Radio {
   // airport the radio is tuned to (the one the player is at / flying to) is heard
   say(who, text, { station = null, me = false, apt = null } = {}) {
     if (!this.enabled) return;
-    // 'GND' / 'TWR': home airport; 'GND2' / 'TWR2': the second airport
-    const atc = /^(GND|TWR)2?$/.test(who);
-    const two = atc && who.endsWith('2');
-    if ((apt ?? (two ? 2 : 1)) !== this.tuned) return;
-    const label = atc ? (two ? AIRPORT.name2.toUpperCase() + ' ' : '') + (who.startsWith('GND') ? 'GROUND' : 'TOWER') : who;
+    // 'GND' / 'TWR': home airport; 'GND2' / 'TWR3' ...: the remote airport with that id
+    const atc = /^(GND|TWR)\d?$/.test(who);
+    const sid = atc ? +(who.slice(3) || 1) : 1;
+    if ((apt ?? sid) !== this.tuned) return;
+    const label = atc ? (sid > 1 ? aptName(sid).toUpperCase() + ' ' : '') + (who.startsWith('GND') ? 'GROUND' : 'TOWER') : who;
     this.lines.push({ label: me ? label + ' (YOU)' : label, text, atc, me, t: performance.now() });
     if (this.lines.length > 6) this.lines.shift();
     this.render();

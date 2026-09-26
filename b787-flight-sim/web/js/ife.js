@@ -60,14 +60,32 @@ const DRAW = {
     if (img) c.drawImage(img, 0, 0, 320, 200);
     else { c.fillStyle = '#1d4e7a'; c.fillRect(0, 0, 320, 200); }
     const X = (x) => 160 + (x - d.cx) / R.w * 320, Yp = (z) => 100 + (z - d.cz) / R.h * 200;
-    // route line to the airport and the flown track
-    c.strokeStyle = 'rgba(255,255,255,0.5)'; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(X(d.x), Yp(d.z)); c.lineTo(X(0), Yp(0)); c.stroke(); c.setLineDash([]);
+    // route: origin -> destination (chosen in the flight settings), the remaining leg dashed,
+    // and the flown track
+    const dx = d.destX ?? 0, dz = d.destZ ?? 0;
+    c.strokeStyle = 'rgba(255,255,255,0.25)'; c.beginPath(); c.moveTo(X(0), Yp(0)); c.lineTo(X(dx), Yp(dz)); c.stroke();
+    c.strokeStyle = 'rgba(255,255,255,0.6)'; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(X(d.x), Yp(d.z)); c.lineTo(X(dx), Yp(dz)); c.stroke(); c.setLineDash([]);
     if (S.trail.length > 1) {
       c.strokeStyle = '#ffd24a'; c.lineWidth = 2; c.beginPath();
       S.trail.forEach(([x, z], i) => (i ? c.lineTo(X(x), Yp(z)) : c.moveTo(X(x), Yp(z)))); c.stroke(); c.lineWidth = 1;
     }
-    c.fillStyle = '#fff'; c.beginPath(); c.arc(X(0), Yp(0), 3, 0, 7); c.fill();
-    c.font = 'bold 9px sans-serif'; c.fillText('RJCB ' + AIRPORT.name, X(0) + 5, Yp(0) - 4);
+    c.font = 'bold 9px sans-serif';
+    const pin = (x, z, label, col) => { c.fillStyle = col; c.beginPath(); c.arc(X(x), Yp(z), 3, 0, 7); c.fill(); c.fillStyle = '#fff'; c.fillText(label, X(x) + 5, Yp(z) - 4); };
+    pin(0, 0, AIRPORT.name, '#fff');
+    if (d.destName) {
+      const px = X(dx), pz = Yp(dz);
+      if (px > 8 && px < 312 && pz > 22 && pz < 164) pin(dx, dz, '✈ ' + d.destName, '#ffd24a');
+      else {
+        // off the map: a marker on the edge in the destination's direction
+        const ax = X(d.x), az = Yp(d.z), vx = px - ax, vz = pz - az;
+        const k = Math.min(Math.abs((vx > 0 ? 300 - ax : 20 - ax) / (vx || 1e-6)), Math.abs((vz > 0 ? 156 - az : 30 - az) / (vz || 1e-6)));
+        const ex = ax + vx * k, ez = az + vz * k, an = Math.atan2(vz, vx);
+        c.save(); c.translate(ex, ez); c.rotate(an); c.fillStyle = '#ffd24a';
+        c.beginPath(); c.moveTo(8, 0); c.lineTo(-4, -5); c.lineTo(-4, 5); c.closePath(); c.fill(); c.restore();
+        c.fillStyle = '#ffd24a'; c.textAlign = ex > 200 ? 'right' : 'left';
+        c.fillText(`${d.destName} ${Math.round(d.dist)} km`, ex + (ex > 200 ? -10 : 10), ez + 16); c.textAlign = 'left';
+      }
+    }
     // aircraft symbol
     c.save(); c.translate(X(d.x), Yp(d.z)); c.rotate(d.hdg * Math.PI / 180);
     c.fillStyle = '#fff'; c.strokeStyle = '#000';
@@ -76,7 +94,7 @@ const DRAW = {
     header(c, 'マップ Moving map', d);
     c.fillStyle = 'rgba(0,0,0,0.55)'; c.fillRect(0, 168, 320, 32);
     c.fillStyle = '#fff'; c.font = '10px sans-serif';
-    const items = [['高度', `${Math.round(d.altFt).toLocaleString()} ft`], ['対地速度', `${Math.round(d.gs * 1.852)} km/h`], ['外気温', `${Math.round(d.oat)} °C`], ['目的地まで', `${Math.round(d.dist)} km`]];
+    const items = [['高度', `${Math.round(d.altFt).toLocaleString()} ft`], ['対地速度', `${Math.round(d.gs * 1.852)} km/h`], ['外気温', `${Math.round(d.oat)} °C`], [`${d.destName || '目的地'}まで`, `${Math.round(d.dist)} km`]];
     items.forEach(([k, v], i) => { c.fillStyle = '#9fc4e8'; c.fillText(k, 8 + i * 78, 178); c.fillStyle = '#fff'; c.font = 'bold 11px sans-serif'; c.fillText(v, 8 + i * 78, 192); c.font = '10px sans-serif'; });
   },
   info(c, t, d) {
@@ -85,7 +103,7 @@ const DRAW = {
     header(c, 'フライト情報 Flight information', d);
     const rows = [['便名 Flight', d.callsign], ['機材 Aircraft', d.type], ['高度 Altitude', `${Math.round(d.altFt).toLocaleString()} ft / ${Math.round(d.altFt * 0.3048).toLocaleString()} m`],
       ['対地速度 Ground speed', `${Math.round(d.gs)} kt / ${Math.round(d.gs * 1.852)} km/h`], ['外気温 Outside air', `${Math.round(d.oat)} °C`],
-      ['機首方位 Heading', `${String(Math.round(d.hdg) % 360).padStart(3, '0')}°`], ['目的地まで To RJCB', `${Math.round(d.dist)} km`], ['現地時刻 Local time', d.clock]];
+      ['機首方位 Heading', `${String(Math.round(d.hdg) % 360).padStart(3, '0')}°`], [`目的地 ${d.destName || ''}`, `${Math.round(d.dist)} km`], ['現地時刻 Local time', d.clock]];
     rows.forEach(([k, v], i) => {
       c.fillStyle = '#86a9cf'; c.font = '10px sans-serif'; c.fillText(k, 14, 36 + i * 20);
       c.fillStyle = '#fff'; c.font = 'bold 12px sans-serif'; c.fillText(v, 150, 36 + i * 20);
@@ -274,11 +292,11 @@ export class IFE {
     this.ptex = new THREE.CanvasTexture(this.player);
     this.ptex.colorSpace = THREE.SRGBColorSpace;
     this.ptex.anisotropy = 8;
-    this.S = { trail: [], demoGame: newGame(), logo: null, mapImg: null, mapR: { w: 240000, h: 150000 } };
+    this.S = { trail: [], demoGame: newGame(), logo: null, mapImg: null, mapR: { w: 420000, h: 262500 } };
     this.game = newGame();
     this.channel = 'menu';
     this.t = 0; this._acc = 0; this._pacc = 0;
-    this.d = { clock: '12:00', altFt: 0, gs: 0, oat: 15, dist: 0, hdg: 0, x: 0, z: 0, cx: 0, cz: 0, airline: 'Claude Air', callsign: '', type: '' };
+    this.d = { clock: '12:00', altFt: 0, gs: 0, oat: 15, dist: 0, hdg: 0, x: 0, z: 0, cx: 0, cz: 0, airline: 'Japan Airlines', callsign: '', type: '' };
     this.uFull = U_FULL;                // 1: every seat-back screen shows the whole atlas (one source)
     this.safety = false;
     this._buildMap();

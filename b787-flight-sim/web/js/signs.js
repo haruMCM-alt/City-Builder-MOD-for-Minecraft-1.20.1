@@ -50,7 +50,7 @@ export function textSign(text, { h, maxW = 1e9, color = '#20242a', font = '800 1
   return m;
 }
 
-export const DEFAULT_AIRPORTS = { name: 'City Builder', name2: 'Minato' };
+export const DEFAULT_AIRPORTS = { name: 'City Builder', name2: 'Minato', name3: 'Aoba', name4: 'Kaede' };
 export function loadAirportNames() {
   try { return { ...DEFAULT_AIRPORTS, ...(JSON.parse(localStorage.getItem('b787.airports') || 'null') || {}) }; } catch (e) { return { ...DEFAULT_AIRPORTS }; }
 }
