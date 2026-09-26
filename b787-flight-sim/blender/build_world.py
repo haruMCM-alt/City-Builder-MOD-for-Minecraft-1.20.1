@@ -539,78 +539,69 @@ def wave_roof(mb, x0, x1, y0, y1, z_base, amp, mat, n=40, waves=3.0):
 
 
 def build_terminal(M, col):
+    """Pier + main hall + boarding bridges from the detailed kit (airport_kit).  The airport
+    name is not modelled: the simulator draws it at the sign anchors returned here."""
+    import airport_kit as K
+    mi = K.mi
     tb = C.MeshBuilder()
-    mats = [M["facade_terminal"], M["roof"], M["paint_white"], M["steel"], M["dark"], M["concrete"],
-            M["glass_dark"], M["sign"], M["facade_office"]]
-    tile = FACADES["facade_terminal"]
-    # pier (airside)
-    box(tb, -640, 505, 640, 548, 0, 17, 0, 1, tile)
-    wave_roof(tb, -660, 660, 498, 556, 17.2, 3.5, 2, n=90, waves=7)
-    # main hall
-    box(tb, -260, 548, 260, 690, 0, 28, 0, 1, tile)
-    wave_roof(tb, -285, 285, 540, 710, 28.2, 9.0, 2, n=60, waves=2)
-    # departures curb / canopy on the landside
-    box(tb, -300, 700, 300, 712, 9.0, 10.0, 2)
-    for xc in range(-280, 281, 40):
-        beam(tb, (xc, 706, 0), (xc, 706, 9.0), 0.6, 0.6, 3)
-    # elevated departure road
-    box(tb, -330, 712, 330, 735, 8.2, 9.0, 5)
-    for xc in range(-320, 321, 40):
-        beam(tb, (xc, 723, 0), (xc, 723, 8.2), 1.6, 1.6, 5)
-    # airport name on the pier roof fascia (facing the runway) and landside
-    vertical_text(tb, "CITY BUILDER INTERNATIONAL AIRPORT", 0, 504.5, 13.0, 4.2, -math.pi / 2, 7, extrude=0.4)
-    vertical_text(tb, "シティビルダー国際空港", 0, 690.5, 20.0, 5.0, math.pi / 2, 7, extrude=0.4)
-    # jet bridges (one per stand, to door L1 of a nose-in 787)
+    rng = np.random.default_rng(7)
+    # --- gate pier: apron-level service floor with roller doors, glazed gate lounges, wave roof on columns
+    px0, px1, py0, py1 = -640.0, 640.0, 505.0, 548.0
+    K.box(tb, px0, px1, py0, py1, 0, 0.6, mi("concrete"))
+    K.solid_wall_with_doors(tb, (px0, py0), (px1, py0), 0.6, 5.6, (0, -1))
+    K.curtain_wall(tb, (px0, py0), (px1, py0), 5.6, 16.0, (0, -1), floor=5.2)
+    for (a, b, o) in (((px0, py1), (px0, py0), (-1, 0)), ((px1, py0), (px1, py1), (1, 0))):
+        K.curtain_wall(tb, a, b, 0.6, 16.0, o, floor=5.2)
+    K.box(tb, px0 + 0.4, px1 - 0.4, py0 + 0.4, py1 - 0.4, 0.6, 15.9, mi("dark"), uv=0.1)
+    wave_roof(tb, px0 - 14, px1 + 14, py0 - 10, py1 + 2, 16.2, 3.5, mi("roof"), n=140, waves=7)
+    K.eave_columns(tb, np.arange(px0 + 20, px1 - 10, 40.0), py0 - 8.0, 16.4)
+    obstacle(px0, py0, px1, py1, 19.0)
+    # --- main hall: five levels of glazing, deep landside canopy over the departures curb
+    hx0, hx1, hy0, hy1 = -260.0, 260.0, py1, 690.0
+    hh = K.terminal_block(tb, hx0, hx1, hy0, hy1, levels=5, floor=5.6, airside="S", eave=(6, 6, 0, 18), rng=rng, doors=False)
+    K.eave_columns(tb, np.arange(hx0 + 10, hx1, 40.0), hy1 + 15.0, hh)
+    obstacle(hx0, hy0, hx1, hy1, hh + 1.4)
+    # skylight ridge + roof plant
+    K.box(tb, -200, 200, 610, 628, hh + 1.2, hh + 3.2, mi("glass_tower"))
+    # departures curb (upper) and elevated road on columns
+    K.box(tb, hx0 - 40, hx1 + 40, hy1 + 2, hy1 + 22, 8.2, 9.0, mi("concrete"))
+    K.box(tb, hx0 - 70, hx1 + 70, hy1 + 22, hy1 + 45, 8.2, 9.0, mi("concrete"))
+    for xc in np.arange(hx0 - 60, hx1 + 61, 40.0):
+        for yc in (hy1 + 12, hy1 + 33):
+            K.cyl(tb, (xc, yc, 0), (xc, yc, 8.2), 0.8, mi("concrete"), n=12)
+    K.box(tb, hx0 - 70, hx1 + 70, hy1 + 44.6, hy1 + 45, 9.0, 10.1, mi("paint_white"))
+    for xg in np.arange(hx0 + 30, hx1 - 20, 60.0):
+        K.box(tb, xg - 6, xg + 6, hy1 - 0.2, hy1 + 1.8, 9.0, 13.2, mi("glass_dark"))
+        K.box(tb, xg - 5, xg + 5, hy1 - 0.2, hy1 + 1.8, 0.6, 4.2, mi("glass_dark"))
+    # sign frames (the name itself is drawn by the simulator at the anchors below)
+    K.box(tb, -120, 120, py0 - 0.8, py0 - 0.3, 11.2, 15.4, mi("dark"))
+    K.box(tb, -130, 130, hy1 + 18.2, hy1 + 18.8, hh + 1.6, hh + 7.4, mi("dark"))
+    signs = [dict(kind="airside", pos=[0.0, 13.3, -(py0 - 1.0)], ry=0.0, h=2.8, maxW=230.0),
+             dict(kind="landside", pos=[0.0, hh + 4.5, -(hy1 + 19.1)], ry=math.pi, h=3.6, maxW=250.0)]
+    # --- boarding bridges (to door L1 of a nose-in 787), stair towers, docking boards, gate numbers
     stands = []
     for k, xs in enumerate(STAND_XS):
         door = (xs - 2.95, STAND_NOSE_Y - 6.95)
-        rot = (xs - 14.0, 520.0)
-        # rotunda + column
-        cylinder(tb, rot[0], rot[1], 2.4, 2.4, 3.2, 7.4, 0, n=16, tile=(8, 9), top_mat=1)
-        cylinder(tb, rot[0], rot[1], 0.7, 0.7, 0, 3.2, 3, n=10)
-        # tunnel (two telescopic sections)
-        cab = (door[0] - 2.6, door[1])
-        dx, dy = cab[0] - rot[0], cab[1] - rot[1]
-        L = math.hypot(dx, dy)
-        ang = math.atan2(dy, dx)
-        z_door = 5.25 - 0.93
-        z0 = 5.3
-        for (t0, t1, w, h) in ((0.0, 0.55, 3.4, 3.2), (0.5, 1.0, 3.1, 2.9)):
-            cx = rot[0] + dx * (t0 + t1) / 2
-            cy = rot[1] + dy * (t0 + t1) / 2
-            zz = z0 + (z_door - 0.3 - z0) * (t0 + t1) / 2
-            obox(tb, cx, cy, L * (t1 - t0), w, ang, zz, zz + h, 0, 1, tile=(12, 9))
-        # cab + drive column
-        obox(tb, cab[0], cab[1], 4.0, 4.4, ang, z_door - 0.4, z_door + 2.6, 2, 1)
-        col_x = rot[0] + dx * 0.72
-        col_y = rot[1] + dy * 0.72
-        beam(tb, (col_x, col_y, 0.6), (col_x, col_y, z0 + 0.4), 0.5, 0.5, 3)
-        box(tb, col_x - 1.6, col_y - 0.6, col_x + 1.6, col_y + 0.6, 0, 0.9, 4)
-        # gate number sign on the pier
-        vertical_text(tb, str(k + 1), xs, 504.6, 7.5, 3.2, -math.pi / 2, 7, extrude=0.2)
+        rot = (xs - 14.0, py0 - 7.0)
+        K.jet_bridge(tb, (rot[0], py0), (0, -1), rot, door, 5.25 - 0.93, door_out=(-1.0, 0.0))
+        K.stair_tower(tb, xs + 22.0, py0 - 2.3, 6.0, (0, -1))
+        K.vdgs(tb, xs, py0 - 0.4, 9.2, (0, -1))
+        K.vtext(tb, str(k + 1), xs + 8.0, py0 - 0.35, 11.6, 3.0, -math.pi / 2, mi("sign_yellow"), extrude=0.15)
         stands.append(dict(id=k + 1, x=xs, noseY=STAND_NOSE_Y, heading=0.0,
                            cg=[xs, 0.0, -(STAND_NOSE_Y - S_CG_FROM_NOSE)]))
-    tb.build("Terminal", mats, col=col)
-    return stands
+    tb.build("Terminal", K.kit_materials(M), col=col)
+    return stands, signs
 
 
 def build_tower(M, col):
+    import airport_kit as K
     tb = C.MeshBuilder()
     x, y = 830.0, 640.0
-    box(tb, x - 25, y - 15, x + 25, y + 15, 0, 12, 0, 1, FACADES["facade_office"])
-    cylinder(tb, x, y, 7.5, 5.5, 12, 82, 2, n=32, tile=(6, 6))
-    obstacle(x - 11, y - 11, x + 11, y + 11, 99.0)
-    for zz in range(20, 80, 12):
-        cylinder(tb, x, y, 7.3, 7.3, zz, zz + 0.6, 3, n=32)
-    cylinder(tb, x, y, 6.5, 11.5, 82, 88, 2, n=8)
-    # cab glass (octagonal, outward-leaning)
-    cylinder(tb, x, y, 11.5, 12.5, 88, 94, 4, n=8)
-    cylinder(tb, x, y, 12.5, 12.8, 94, 95.5, 2, n=8, top_mat=1)
-    cylinder(tb, x, y, 6.0, 5.5, 95.5, 99, 2, n=8, top_mat=1)
-    beam(tb, (x, y, 99), (x, y, 112), 0.5, 0.5, 3)
-    tb.build("ControlTower", [M["facade_office"], M["roof"], M["paint_white"], M["steel"], M["glass_tower"]], col=col)
-    add_light("obstruction", (x, y, 112.5), "#ff1a1a", 3.0, kind="blink")
-    return dict(x=x, y=y, h=91.0)
+    top = K.control_tower(tb, x, y, cab_z=88.0, lights=add_light)
+    obstacle(x - 26, y - 16, x + 26, y + 16, 12.5)
+    obstacle(x - 12, y - 12, x + 12, y + 12, top)
+    tb.build("ControlTower", K.kit_materials(M), col=col)
+    return dict(x=x, y=y, h=91.0)          # controllers' eye height in the cab
 
 
 def barrel_hangar(mb, x0, x1, y0, y1, h_wall, h_top, wall, roof, door):
@@ -637,10 +628,12 @@ def build_airport_buildings(M, col):
     mats = [M["metal"], M["roof"], M["hangar_door"], M["paint_white"], M["tank"], M["facade_office"],
             M["facade_concrete"], M["facade_glass"], M["red_white"], M["dark"], M["steel"]]
     # maintenance hangars
+    import airport_kit as K
+    hb = C.MeshBuilder()
     for (x0, x1) in ((880, 1060), (1080, 1260)):
-        barrel_hangar(b, x0, x1, 330, 470, 26, 38, 0, 1, 2)
-        obstacle(x0, 330, x1, 470, 38.0)
-        vertical_text(b, "CITY BUILDER", (x0 + x1) / 2, 329.4, 31, 7, -math.pi / 2, 8, extrude=0.3)
+        K.hangar(hb, x0, x1, 330, 470, 26, 38, door_side="S")
+        obstacle(x0, 330, x1 + 14, 470, 38.0)
+    hb.build("Hangars", K.kit_materials(M), col=col)
     box(b, 1280, 360, 1420, 460, 0, 14, 5, 1, FACADES["facade_office"])        # engineering office
     # cargo terminal
     box(b, -1420, 330, -900, 450, 0, 16, 0, 1, (12, 12))
@@ -656,6 +649,12 @@ def build_airport_buildings(M, col):
     box(b, 245, -265, 260, -250, 0, 22, 8, 1)
     # car park + hotel + offices (landside)
     box(b, -240, 760, 240, 850, 0, 18, 6, 1, FACADES["facade_concrete"])
+    import airport_kit as K
+    crng = np.random.default_rng(760)
+    for xst in np.arange(-235, 235, 2.7):
+        for yr in (768.0, 784.0, 826.0, 842.0):
+            if crng.random() < 0.6:
+                K.car(b, xst, yr, math.pi / 2, crng, (3, 8, 9, 4, 10), 9, 9, z0=18.0)
     box(b, 330, 760, 400, 830, 0, 72, 7, 1, FACADES["facade_glass"])
     box(b, -420, 760, -320, 840, 0, 36, 5, 1, FACADES["facade_office"])
     add_light("obstruction", (365, 795, 72.5), "#ff1a1a", 2.0, kind="blink")
@@ -1006,7 +1005,8 @@ def main():
     M = materials()
     conns = build_airfield(M, col)
     build_airfield_lights(M, col, conns)
-    stands = build_terminal(M, col)
+    stands, signs = build_terminal(M, col)
+    signs += [dict(kind="hangar", pos=[xc, 31.0, -329.2], ry=0.0, h=7.0, maxW=150.0) for xc in (970.0, 1170.0)]
     tower = build_tower(M, col)
     build_airport_buildings(M, col)
     build_airport_trees(M, col)
@@ -1023,6 +1023,7 @@ def main():
         frame="three.js: +x east, +y up, +z south; metres",
         runways=[rwy("27", RWY_X1, 270.0), rwy("09", RWY_X0, 90.0)],
         stands=stands,
+        signs=signs,
         tower=dict(pos=[tower["x"], tower["h"], -tower["y"]]),
         landmarkTower=[lm["tower"][0], lm["tower"][2], -lm["tower"][1]],
         flatZone=dict(x0=FLAT["x0"], x1=FLAT["x1"], z0=-FLAT["y1"], z1=-FLAT["y0"]),

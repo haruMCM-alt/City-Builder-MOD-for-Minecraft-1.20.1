@@ -438,13 +438,14 @@ varying vec3 vTW; varying float vSlope;`)
   }
 
   // ---------------------------------------------------------------------- world.glb
-  attachWorldGLB(gltf) {
-    const root = gltf.scene;
+  // material tuning + shadows shared by world.glb and airport2.glb
+  prepareGLB(root) {
     root.traverse((o) => {
       if (!o.isMesh) return;
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       for (const m of mats) {
-        if (!m) continue;
+        if (!m || m.userData.prepared) continue;
+        m.userData.prepared = true;
         m.envMapIntensity = 0.6;
         if (m.emissiveMap) {
           m.emissive = new THREE.Color(1, 1, 1);
@@ -454,16 +455,21 @@ varying vec3 vTW; varying float vSlope;`)
         if (m.map) m.map.anisotropy = 8;
         if (m.name === 'W_Asphalt' || m.name === 'W_TaxiAsphalt') m.color.setScalar(0.62);
         if (['W_Asphalt', 'W_TaxiAsphalt', 'W_MarkWhite', 'W_MarkYellow', 'W_Concrete'].includes(m.name)) patchPavement(m);
-        if (m.name.startsWith('W_facade_') || m.name === 'W_GlassTower') patchFacade(m);
+        if (m.name.startsWith('W_facade_') || m.name === 'W_GlassTower' || m.name === 'W_Curtain') patchFacade(m);
         if (m.name === 'W_Shoulder') m.color.setScalar(0.75);
         if (m.name === 'W_Concrete') m.color.setScalar(0.66);
         if (m.name === 'W_Roof' || m.name === 'W_PaintWhite') m.color.multiplyScalar(0.72);
       }
       o.receiveShadow = true;
       const n = o.name;
-      o.castShadow = this.quality === 'high' && !n.startsWith('Airfield_Markings') && !n.startsWith('Airfield_Pavement');
+      o.castShadow = this.quality === 'high' && !/Markings|Pavement/.test(n);
       if (n.startsWith('TreeProto')) o.visible = false;
     });
+  }
+
+  attachWorldGLB(gltf) {
+    const root = gltf.scene;
+    this.prepareGLB(root);
     this.scene.add(root);
     this.worldRoot = root;
     // baked airport-name letters are replaced by signs drawn from the chosen name
@@ -493,6 +499,11 @@ varying vec3 vTW; varying float vSlope;`)
       m.position.set(x, y, z); m.rotation.y = ry;
       this.signs.add(m);
     };
+    if (this.signAnchors?.length) {
+      // anchors exported by the Blender build (light letters on dark fascia panels)
+      for (const g of this.signAnchors) add(T[g.kind] || T.airside, g.h, g.maxW, g.pos[0], g.pos[1], g.pos[2], g.ry, g.kind === 'hangar' ? '#c8401f' : '#eef3f7');
+      return;
+    }
     add(T.airside, 4.2, 150, 0, 13.0, -504.1, 0);                 // pier fascia, facing the runway
     add(T.landside, 5.0, 200, 0, 20.0, -691.0, Math.PI);          // landside, facing the city
     for (const xc of [970, 1170]) add(T.hangar, 7.0, 150, xc, 31.0, -329.0, 0, '#c8401f');

@@ -56,8 +56,25 @@ export function townLayout() {
 }
 
 // collision boxes (three.js x0, z0, x1, z1, top) for obstacles.js
-export function airport2Obstacles() {
+// runways 09 / 27 of the second airport, in world.json's runway format (appended after the home
+// runways, so lookups by ident still find the home airport first)
+export function airport2Runways() {
+  const rw = (ident, sx, hdg, freq) => ({ ident, apt: 2, threshold: [A2.x + sx * A2.len / 2, 0, A2.z], heading: hdg, length: A2.len,
+    width: A2.wid, elevation: 0, ils: { course: hdg, glideslope: 3, gsAntennaFromThr: 300, freq } });
+  return [rw('09', -1, 90, '111.10'), rw('27', 1, 270, '111.70')];
+}
+
+// data: airport2.json from the Blender build (local three.js frame around A2); without it the
+// simple procedural airport + town below is used
+export function airport2Obstacles(data) {
   const b = (x0, z0, x1, z1, h) => [A2.x + x0, A2.z + z0, A2.x + x1, A2.z + z1, h];
+  if (data?.obstacles) {
+    const o = data.obstacles, out = new Array(o.length);
+    for (let i = 0; i < o.length; i += 5) {
+      out[i] = o[i] + A2.x; out[i + 1] = o[i + 1] + A2.z; out[i + 2] = o[i + 2] + A2.x; out[i + 3] = o[i + 3] + A2.z; out[i + 4] = o[i + 4];
+    }
+    return out;
+  }
   return [...townLayout().bld.flatMap((t) => b(t.x0, t.z0, t.x1, t.z1, t.h)),
     b(A2.term.x[0], A2.term.z[0], A2.term.x[1], A2.term.z[1], A2.term.h),
     b(A2.tower.x - 8, A2.tower.z - 8, A2.tower.x + 8, A2.tower.z + 8, A2.tower.h + 8),
@@ -65,8 +82,16 @@ export function airport2Obstacles() {
 }
 
 // light groups in the world.json format (World.buildLights), absolute coordinates
-export function airport2Lights() {
+export function airport2Lights(data) {
   const L = {};
+  if (data?.lights) {
+    for (const [name, g] of Object.entries(data.lights)) {
+      const pos = g.pos.slice();
+      for (let i = 0; i < pos.length; i += 3) { pos[i] += A2.x; pos[i + 2] += A2.z; }
+      L[name.startsWith('a2_') ? name : 'a2_' + name] = { ...g, pos };
+    }
+    return L;
+  }
   const g = (name, color, size, kind, pts) => { L[name] = { color, size, kind, pos: pts.flat() }; };
   const X = (dx) => A2.x + dx, Z = (dz) => A2.z + dz, h = A2.len / 2;
   const edge = [], cl = [], thr = [], end = [], als = [], twy = [], flood = [], obst = [];
@@ -138,13 +163,20 @@ function findMaterials(root) {
 }
 
 export class Airport2 {
-  constructor(scene, worldRoot, name) {
+  // world: the World (material set-up); gltf/data: airport2.glb + airport2.json when available
+  constructor(scene, world, name, gltf = null, data = null) {
     this.group = new THREE.Group();
     this.group.position.set(A2.x, 0, A2.z);
     this.group.name = 'Airport2';
     scene.add(this.group);
-    this.M = findMaterials(worldRoot);
-    this._build();
+    this.data = gltf && data ? data : null;
+    if (this.data) {
+      world.prepareGLB(gltf.scene);
+      this.group.add(gltf.scene);
+    } else {
+      this.M = findMaterials(world.worldRoot);
+      this._build();
+    }
     this.signs = new THREE.Group();
     this.group.add(this.signs);
     this.setName(name);
@@ -249,6 +281,10 @@ export class Airport2 {
       m.position.set(x, y, z); m.rotation.y = ry;
       this.signs.add(m);
     };
+    if (this.data?.signs) {
+      for (const g of this.data.signs) add(T[g.kind] || T.airside, g.h, g.maxW, g.pos[0], g.pos[1], g.pos[2], g.ry, '#eef3f7');   // on dark fascia panels
+      return;
+    }
     add(T.airside, 3.6, 600, 0, 13.5, A2.term.z[1] + 0.4, 0);
     add(T.landside, 4.0, 600, 0, 13.5, A2.term.z[0] - 0.4, Math.PI);
     add(T.hangar, 5.0, 170, (A2.hangar.x[0] + A2.hangar.x[1]) / 2, A2.hangar.h - 2.5, A2.hangar.z[1] + 0.5, 0, '#c8401f');

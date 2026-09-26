@@ -19,7 +19,7 @@ import { Rain } from './weatherfx.js';
 import { Vapor } from './vapor.js';
 import { Traffic } from './traffic.js';
 import { Radio, setAirportNames } from './atc.js';
-import { Airport2, A2, airport2Lights, airport2Obstacles } from './airport2.js';
+import { Airport2, A2, airport2Lights, airport2Obstacles, airport2Runways } from './airport2.js';
 import { AutoPush } from './pushback.js';
 import { FIDS } from './fids.js';
 import { MCP3D } from './mcp3d.js';
@@ -127,7 +127,8 @@ class App {
     this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 250000);
 
     setLoad(0.02, 'loading data…');
-    const [world, livery, ...metas] = await Promise.all([fetchJSON(ASSET + 'world.json'),
+    const [world, apt2Data, livery, ...metas] = await Promise.all([fetchJSON(ASSET + 'world.json'),
+      fetchJSON(ASSET + 'airport2.json').catch(() => null),
       fetchJSON(ASSET + 'livery.json').catch(() => null),
       ...TYPES.map((t) => fetchJSON(ASSET + t.asset + '.json').catch(() => null))]);
     this.types = {};
@@ -145,8 +146,9 @@ class App {
     const meta = this.types[sel].meta;
     this.meta = meta; this.worldData = world;
     configureTerrain(world);
-    world.obstacles = (world.obstacles || []).concat(airport2Obstacles());
-    Object.assign(world.lights, airport2Lights());
+    world.obstacles = (world.obstacles || []).concat(airport2Obstacles(apt2Data));
+    Object.assign(world.lights, airport2Lights(apt2Data));
+    world.runways = (world.runways || []).concat(airport2Runways());
     configureObstacles(world);
     this.world = new World(renderer, this.scene, this.quality);
 
@@ -166,9 +168,10 @@ class App {
     const lodP = () => typeIds.reduce((a, k) => a + (prog.lod[k] || 0), 0) / typeIds.length;
     const upd = () => setLoad(0.05 + 0.85 * (prog.ac * 0.3 + prog.world * 0.45 + lodP() * 0.18 + prog.gse * 0.07),
       `${this.types[sel].short} ${Math.round(prog.ac * 100)}% · airport/city ${Math.round(prog.world * 100)}% · AI fleet ${Math.round(lodP() * 100)}% · GSE ${Math.round(prog.gse * 100)}%`);
-    const [acGltf, worldGltf, gseGltf, gseInfo, ...lods] = await Promise.all([
+    const [acGltf, worldGltf, apt2Gltf, gseGltf, gseInfo, ...lods] = await Promise.all([
       loadGLB(loader, ASSET + this.types[sel].asset + MODEL_EXT, (p) => { prog.ac = p; upd(); }),
       loadGLB(loader, ASSET + 'world' + MODEL_EXT, (p) => { prog.world = p; upd(); }),
+      apt2Data ? loadGLB(loader, ASSET + 'airport2' + MODEL_EXT, () => {}).catch(() => null) : null,
       loadGLB(loader, ASSET + 'gse' + MODEL_EXT, (p) => { prog.gse = p; upd(); }).catch(() => null),
       fetchJSON(ASSET + 'gse.json').catch(() => null),
       ...typeIds.map((k) => loadGLB(loader, ASSET + this.types[k].asset + '-lod' + MODEL_EXT, (p) => { prog.lod[k] = p; upd(); })
@@ -179,11 +182,17 @@ class App {
     const lodGltf = this.types.b789.lod ? { scene: this.types.b789.lod } : null;
     setLoad(0.92, 'building scene…');
     this.world.attachWorldGLB(worldGltf);
+    this.world.signAnchors = world.signs || null;
     this.airports = loadAirportNames();
     setAirportNames(this.airports);
     this.world.setAirportName(this.airports.name);
-    this.airport2 = new Airport2(this.scene, this.world.worldRoot, this.airports.name2);
+    this.airport2 = new Airport2(this.scene, this.world, this.airports.name2, apt2Gltf, apt2Data);
     this.world.buildTrees(world.trees);
+    if (apt2Gltf && apt2Data?.trees) {
+      const t = apt2Data.trees.slice();
+      for (let i = 0; i < t.length; i += 4) { t[i] += A2.x; t[i + 2] += A2.z; }
+      this.world.buildTrees(t);
+    }
     this.world.buildLights(world.lights);
     this.world.setWeather('scattered');
     this.lodTemplate = lodGltf ? lodGltf.scene : null;
@@ -771,8 +780,7 @@ class App {
       Object.assign(L, { strobe: true, landing: true, taxi: id === 'final' });
     } else if (id === 'apt2') {
       // short final to runway 09 of the second airport (ILS tuned to it)
-      const r = { ident: '09', threshold: [A2.x - A2.len / 2, 0, A2.z], heading: 90, length: A2.len, width: A2.wid, elevation: 0,
-        ils: { course: 90, glideslope: 3, gsAntennaFromThr: 300, freq: '111.10' } };
+      const r = W.runways.find((x) => x.apt === 2 && x.ident === '09');
       const dist = 5 * 1852;
       const h = Math.tan(3 * DEG) * (dist + 300) + 1.5 - this.meta.groundY;
       setAir(6, true);
