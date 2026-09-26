@@ -146,6 +146,25 @@ class Walker {
   }
 }
 
+// ------------------------------------------------------------------ driving
+// steer a ground vehicle (x, z, a, v, path [{x, z, face?, done?}], vmax) along its path
+function driveStep(u, dt) {
+  if (u.path.length) {
+    const p = u.path[0], dx = p.x - u.x, dz = p.z - u.z, d = Math.hypot(dx, dz);
+    const last = u.path.length === 1;
+    if (d < (last ? 2 : 10)) { u.path.shift(); if (!u.path.length) { u.v = 0; if (p.face != null) u.a = p.face; p.done?.(); } return; }
+    const want = Math.atan2(dz, dx);
+    const da = wrapPi(want - u.a);
+    const yawMax = Math.min(0.9, u.v / (u.turnR || 12) + 0.25);
+    u.a += Math.max(-yawMax * dt, Math.min(yawMax * dt, da * 2 * dt));
+    let vT = last ? Math.min(u.vmax, Math.sqrt(2 * 4.5 * Math.max(d - 1, 0)) + 1) : u.vmax;
+    // off heading: slow right down near the point (tight turn), so it is never orbited
+    if (Math.abs(da) > 0.4) vT = Math.min(vT, Math.max(2.5, Math.min(12, d * 0.35)));
+    u.v += Math.max(-6 * dt, Math.min(2.8 * dt, vT - u.v));
+    u.x += Math.cos(u.a) * u.v * dt; u.z += Math.sin(u.a) * u.v * dt;
+  } else u.v = Math.max(0, u.v - 6 * dt);
+}
+
 // ------------------------------------------------------------------ crash tender
 const DOORS = [[4.4, -1.6], [4.4, 1.6]];           // cab doors (truck frame: x fwd, z right)
 const MON_TIP = new THREE.Vector3(1.95, 0.51, 0);  // roof monitor nozzle (monitor frame)
@@ -191,23 +210,7 @@ class Truck {
   local(f, r) { const c = Math.cos(this.a), s = Math.sin(this.a); return { x: this.x + c * f - s * r, z: this.z + s * f + c * r }; }
 
   update(dt, t, fx) {
-    if (this.path.length) {
-      const p = this.path[0], dx = p.x - this.x, dz = p.z - this.z, d = Math.hypot(dx, dz);
-      const last = this.path.length === 1;
-      if (d < (last ? 2 : 10)) { this.path.shift(); if (!this.path.length) { this.v = 0; if (p.face != null) this.a = p.face; p.done?.(); } }
-      else {
-        const want = Math.atan2(dz, dx);
-        const da = wrapPi(want - this.a);
-        const yawMax = Math.min(0.9, this.v / 12 + 0.25);            // turning circle ~ 12 m
-        this.a += Math.max(-yawMax * dt, Math.min(yawMax * dt, da * 2 * dt));
-        // brake for the stop / slow for sharp turns
-        let vT = last ? Math.min(this.vmax, Math.sqrt(2 * 4.5 * Math.max(d - 1, 0)) + 1) : this.vmax;
-        // off heading: slow right down near the point (tight turn), so it is never orbited
-        if (Math.abs(da) > 0.4) vT = Math.min(vT, Math.max(2.5, Math.min(12, d * 0.35)));
-        this.v += Math.max(-6 * dt, Math.min(2.8 * dt, vT - this.v));
-        this.x += Math.cos(this.a) * this.v * dt; this.z += Math.sin(this.a) * this.v * dt;
-      }
-    } else this.v = Math.max(0, this.v - 6 * dt);
+    driveStep(this, dt);
     for (const w of this.wheels) w.rotation.z -= this.v * dt / 0.62;
     // roof monitor: aim, then a ballistic water / foam jet at the target
     const mon = this.monitor;
@@ -376,8 +379,11 @@ export class ARFF {
       const p = J.getPos();
       const T = this.trucks[J.apt];
       const M = this._metaOf(J.meta);
-      if (p && T) {
-        const moving = p.v > 2;
+      // not beyond the airfield (a crash in the city is not theirs to reach)
+      const st0 = fireStation(J.apt);
+      if (p && Math.hypot(p.x - st0.x, p.z - st0.z) > 6000) { /* hold where they are */ }
+      else if (p && T) {
+        const moving = p.v > 6;                  // (down to taxi speed: close in)
         J.stopT = moving ? 0 : J.stopT + dt;
         if (J.t - J.lastPlan > (moving ? 0.7 : 2)) {
           J.lastPlan = J.t;
@@ -391,7 +397,7 @@ export class ARFF {
               tr.goTo([tgt], 34);
             } else if (!tr.onScene) {
               // attack positions: front quarters (left / right) and the nose
-              const slots = [[M.noseF * 0.5, -(M.fusW / 2 + 16)], [M.noseF * 0.5, M.fusW / 2 + 16], [M.noseF + 24, 0]];
+              const slots = [[M.noseF * 0.55, -(M.fusW / 2 + 23)], [M.noseF * 0.55, M.fusW / 2 + 23], [M.noseF + 24, 0]];   // (clear of the slides)
               const [f, r] = slots[k];
               const w = this._toWorld(p, f, r);
               const face = Math.atan2(p.z - w.z, p.x - w.x);
@@ -449,6 +455,37 @@ export class ARFF {
   }
 }
 
+// ------------------------------------------------------------------ passenger bus
+class Bus {
+  constructor(evac, tpl, x, z, a) {
+    this.evac = evac;
+    this.obj = tpl ? tpl.clone(true) : procTruck();
+    this.wheels = [];
+    this.obj.traverse((o) => { if (/_W_/.test(o.name)) { o.rotation.order = 'YZX'; this.wheels.push(o); } if (o.isMesh) o.castShadow = true; });
+    evac.app.scene.add(this.obj);
+    this.x = x; this.z = z; this.a = a; this.v = 0; this.path = []; this.vmax = 13; this.turnR = 14;
+    this.load = 0; this.cap = 60; this.state = 'drive'; this.assigned = 0;
+    this.place();
+  }
+
+  place() {
+    this.obj.position.set(this.x, ground(this.x, this.z) + 0.02, this.z);
+    this.obj.rotation.set(0, -this.a, 0);
+  }
+
+  // the passenger door (front, on the side facing the aircraft)
+  door() {
+    const c = Math.cos(this.a), s = Math.sin(this.a), r = this.doorSide * 2.1;
+    return { x: this.x + c * 3.5 - s * r, z: this.z + s * 3.5 + c * r };
+  }
+
+  update(dt) {
+    driveStep(this, dt);
+    for (const w of this.wheels) w.rotation.z -= this.v * dt / 0.45;
+    this.place();
+  }
+}
+
 // ------------------------------------------------------------------ evacuation
 export class Evacuation {
   constructor(app) {
@@ -478,9 +515,11 @@ export class Evacuation {
         const H = Math.max(1.2, sill.y - ground(sill.x, sill.z));
         const L = H * 2.3 + 1, W = 1.7;
         const obj = kit?.ok ? kit.slide.clone(true) : procSlide();
-        obj.position.copy(sill);
+        // (the slide model runs from the ground (y 0) up to the sill (y 1): its origin is on the
+        // ground below the door)
+        obj.position.set(sill.x, ground(sill.x, sill.z), sill.z);
         obj.rotation.set(0, -Math.atan2(out.z, out.x), 0);
-        obj.scale.set(0.01, 0.01, W);
+        obj.scale.set(0.05, H, W * 0.3);
         A.scene.add(obj);
         const toe = sill.clone().addScaledVector(out, L); toe.y = ground(toe.x, toe.z);
         this.exits.push({ sill, out, fwd: fwd.clone(), H, L, W, obj, toe, queue: 0, timer: 1 + Math.random(), lane: 0, side, dx });
@@ -490,7 +529,9 @@ export class Evacuation {
     // passengers (a representative number: every one of them is animated)
     const n = Math.min(90, Math.max(20, Math.round((A.cabin?.paxCount || 200) * 0.35)));
     for (let i = 0; i < n; i++) this.exits[i % this.exits.length].queue++;
-    this.total = n; this.out = 0;
+    this.total = n; this.out = 0; this.left = 0;
+    this.buses = []; this.boarded = 0; this.busT = 0;
+    this.finished = false;
     return this.exits.length;
   }
 
@@ -519,12 +560,13 @@ export class Evacuation {
     const inflate = Math.min(1, this.t / 4);
     const e3 = 1 - (1 - inflate) ** 3;
     for (const e of this.exits) {
-      e.obj.scale.set(Math.max(0.01, e.L * e3), Math.max(0.01, e.H * Math.min(1, e3 * 1.3)), e.W);
+      // unrolls from the door down and out (the top stays at the sill)
+      e.obj.scale.set(Math.max(0.05, e.L * e3), e.H, e.W * Math.min(1, 0.3 + e3));
       if (this.t < 5 || e.queue <= 0) continue;
       e.timer -= dt;
       if (e.timer <= 0) {
         e.timer = 0.55 + Math.random() * 0.35;              // two lanes
-        e.queue--;
+        e.queue--; this.left++;
         const w = this._person();
         w.mode = 'slide'; w.u = 0; w.exit = e; w.lane = (e.lane++ % 2) ? 1 : -1;
         w.a = Math.atan2(e.out.z, e.out.x);
@@ -549,8 +591,83 @@ export class Evacuation {
           const dist = 70 + (k % 5) * 3 + Math.random() * 4, spread = ((k * 7) % 11 - 5) * 2.2;
           w.target = { x: e.toe.x + e.out.x * dist + e.fwd.x * spread, z: e.toe.z + e.out.z * dist + e.fwd.z * spread };
           w.faceTo = e.sill; w.vmax = 3 + Math.random() * 1.5;
+          w.side = e.side; w.onArrive = () => { w.mode = 'wait'; };
         }
-      } else w.update(dt);
+      } else if (w.mode !== 'gone') w.update(dt);
+    }
+    this._buses(dt);
+  }
+
+  // where the evacuees of one side gather (centre of their assembly area)
+  _assembly(side) {
+    const es = this.exits.filter((e) => e.side === side);
+    if (!es.length) return null;
+    const e = es[Math.floor(es.length / 2)];
+    return { x: e.toe.x + e.out.x * 72, z: e.toe.z + e.out.z * 72, out: e.out, fwd: e.fwd };
+  }
+
+  _depot() {
+    const T = this.app.traffic, e = this.exits[0];
+    const apt = nearestAirport(e.sill.x, e.sill.z);
+    if (apt === 1 && T?.depots?.length) { const d = T.depots[1] || T.depots[0]; return { x: d.x, z: d.z }; }
+    const st = fireStation(apt);
+    return { x: st.x + 60, z: st.z };
+  }
+
+  // apron buses come out, stop beside each assembly area, the passengers walk over and board,
+  // full (or everybody on board) buses drive back to the terminal
+  _buses(dt) {
+    this.busT += dt;
+    const tpl = this.app.traffic?.gse?.getObjectByName('GSE_Bus');
+    if (this.busT > 12 && !this._sent) {
+      this._sent = true;
+      const dep = this._depot();
+      for (const side of [-1, 1]) {
+        const A = this._assembly(side);
+        if (!A) continue;
+        const nSide = this.exits.filter((e) => e.side === side).reduce((k, e) => k + e.queue, 0) + this.people.filter((w) => w.side === side || w.exit?.side === side).length;
+        const count = Math.max(1, Math.ceil(nSide / 60));
+        for (let i = 0; i < count; i++) {
+          const b = new Bus(this, tpl, dep.x + i * 16, dep.z, Math.atan2(A.z - dep.z, A.x - dep.x));
+          b.side = side; b.doorSide = -1;                     // door towards the aircraft
+          const stop = { x: A.x + A.out.x * 16 + A.fwd.x * (i * 20 - (count - 1) * 10), z: A.z + A.out.z * 16 + A.fwd.z * (i * 20 - (count - 1) * 10) };
+          const wide = { x: stop.x + A.out.x * 50, z: stop.z + A.out.z * 50 };
+          // (parked along the aircraft: the door side faces the evacuees)
+          const face = Math.atan2(A.fwd.z, A.fwd.x);
+          const c = Math.cos(face), s2 = Math.sin(face);
+          b.doorSide = ((-A.out.x) * -s2 + (-A.out.z) * c) >= 0 ? 1 : -1;
+          b.goTo = true;
+          b.path = [wide, { ...stop, face, done: () => { b.state = 'board'; } }];
+          b.dep = dep;
+          this.buses.push(b);
+        }
+        this.app.toast?.('🚌 救援バスが避難した乗客の収容に向かいます Buses on the way', 4000);
+      }
+    }
+    for (const b of this.buses) {
+      b.update(dt);
+      if (b.state === 'board') {
+        // call waiting passengers of this side over to the door
+        for (const w of this.people) {
+          if (b.assigned >= b.cap) break;
+          if (w.mode !== 'wait' || w.side !== b.side) continue;
+          w.mode = 'board'; b.assigned++;
+          const d = b.door();
+          w.target = d; w.faceTo = null; w.vmax = 1.6 + Math.random() * 0.6;
+          w.onArrive = () => { this.app.scene.remove(w.obj); w.mode = 'gone'; b.load++; this.boarded++; };
+        }
+        const pending = this.exits.some((e) => e.side === b.side && e.queue > 0) || this.people.some((w) => w.side === b.side && (w.mode === 'wait' || w.mode === 'run') || (w.mode === 'slide' && w.exit.side === b.side));
+        const waiting = this.people.some((w) => w.mode === 'wait' && w.side === b.side);
+        if (b.load >= b.cap || (!pending && !waiting && b.load === b.assigned)) {
+          b.state = 'leave';
+          b.path = [{ x: b.x - Math.sin(b.a) * 0 + Math.cos(b.a) * 40, z: b.z + Math.sin(b.a) * 40 }, { x: b.dep.x, z: b.dep.z, done: () => { b.state = 'home'; } }];
+        }
+      }
+    }
+    for (let i = this.buses.length - 1; i >= 0; i--) if (this.buses[i].state === 'home') { this.app.scene.remove(this.buses[i].obj); this.buses.splice(i, 1); }
+    if (this._sent && !this.buses.length && this.boarded >= this.total && !this.finished) {
+      this.finished = true;
+      this.app.toast?.(`🚌 乗客 ${this.total} 名をターミナルへ輸送しました All passengers taken to the terminal`, 4500);
     }
   }
 
@@ -559,6 +676,7 @@ export class Evacuation {
   reset() {
     for (const e of this.exits) this.app.scene.remove(e.obj);
     for (const w of this.people) this.app.scene.remove(w.obj);
-    this.exits = []; this.people = []; this.active = false;
+    for (const b of this.buses || []) this.app.scene.remove(b.obj);
+    this.exits = []; this.people = []; this.buses = []; this.active = false; this.finished = false;
   }
 }

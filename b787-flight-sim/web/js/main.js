@@ -770,7 +770,7 @@ class App {
     this.cabin?.ifeSafety(false);
     const spd = (kt, altM) => kt * KT * Math.sqrt(1.225 / (1.225 * Math.pow(1 - 2.2558e-5 * altM, 4.256)));
     this.autoFlight = null;
-    this.arff?.reset(); this.evac?.reset(); this._sprayT = 0; this._stopT = 0; this._evacDone = false;
+    this.arff?.reset(); this.evac?.reset(); this.cabin?.setAboard(null); this._sprayT = 0; this._stopT = 0; this._evacDone = false; this._arffBack = false;
     if (id === 'rwy27' || id === 'rwy09' || id === 'auto') {
       // auto flight: from the runway in use (headwind) to the destination chosen in the menu
       const wd = +$('windDir').value, wk = +$('windSpd').value;
@@ -1109,6 +1109,7 @@ class App {
       return p ? new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(root.matrixWorld) : null;
     };
     this._sprayT = 0;
+    this._arffFire = fire;
     T.onEmergency = ({ apt, runway, onGround }) => {
       if (!runway) return;
       this.arff.deploy(apt, runway);
@@ -1161,13 +1162,23 @@ class App {
   updateEmergency(dt) {
     this.arff.update(dt);
     this.evac.update(dt);
+    // the cabin empties as the passengers leave through the doors
+    if (this.evac.active && this.cabin) {
+      const left = this.evac.total ? this.evac.left / this.evac.total : 0;
+      const n = Math.round((this.cabin.paxCount || 0) * (1 - left));
+      if (n !== this.cabin.aboard) this.cabin.setAboard(n);
+    }
+    // everybody gone by bus and the runway closed out: the fire trucks return
+    if (this.evac.finished && this.traffic?.pc?.s?.closedOut && this.arff.job && !this._arffBack) { this._arffBack = true; this.arff.stand(); }
     // stopped after an emergency landing: the captain orders the evacuation (slides on the side
     // away from the fire)
     {
       const fm = this.fm, o = fm.out, M = this.traffic?.pc?.s?.mayday;
-      this._stopT = o.wow && o.gs < 1 && !fm.crashed ? (this._stopT || 0) + dt : 0;
+      this._stopT = o.wow && o.gs < 3 && !fm.crashed ? (this._stopT || 0) + dt : 0;   // (an autoland rollout may still creep along)
       if (M && !M.ground && !this.evac.active && this._stopT > 4 && !this._evacDone) {
         const D = fm.dmg, L = D.engFire[0] || D.wingFire[0], R = D.engFire[1] || D.wingFire[1];
+        // parking brake set, engines off, then the doors
+        fm.ctl.parkingBrake = true; this.sys.pilot.throttle = 0; this.sys.pilot.brakes = 1;
         const n = this.evac.start(L && !R ? -1 : R && !L ? 1 : 0);
         if (n) {
           this._evacDone = true;
@@ -1471,6 +1482,11 @@ class App {
 
   onEvent(e) {
     if (e.type === 'touchdown') {
+      // an emergency aircraft touched down: the fire trucks go after it straight away
+      if (this.traffic?.pc?.s?.mayday && this.arff.job?.phase !== 'ATTEND') {
+        const fm = this.fm;
+        this.arff.attend(() => ({ x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90) * DEG, v: (fm.out.gs || 0) * KT }), this._arffFire, this.meta);
+      }
       const fpm = e.vs / FPM;
       this.rig.impulse(Math.min(1, Math.abs(fpm) / 600));
       const r = this.nearestRunway();

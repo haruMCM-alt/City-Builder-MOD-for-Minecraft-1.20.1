@@ -233,6 +233,17 @@ export class Cabin {
     this.service.stop();
     this.life.reset(entries, rnd);
     this.ife.assign(this.screens, this.occupied);
+    if (this.aboard != null) this.setAboard(this.aboard);
+  }
+
+  // evacuation: only this many passengers are still on board (seats empty from the end of the
+  // boarding order); null = everybody
+  setAboard(n) {
+    this.aboard = n == null ? null : Math.max(0, Math.min(this.paxCount, Math.round(n)));
+    if (!this.group) return;
+    const k = this.aboard ?? this.paxCount;
+    for (const im of this.inst.pax) im.count = k;
+    this.life?.setAboard?.(k);
   }
 
   // data: live flight values for the IFE (altitude, speed, position ...); ifeView: your monitor in view
