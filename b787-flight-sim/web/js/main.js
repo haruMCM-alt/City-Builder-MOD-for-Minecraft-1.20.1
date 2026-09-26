@@ -1,4 +1,4 @@
-// Boeing 787-9 / 767-300ER / 737-800 flight simulator - application entry point.
+// Micomsoft Fright Simulator: Boeing 787-9 / 767-300ER / 737-800 flight simulator - application entry point.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
@@ -232,7 +232,18 @@ class App {
     this.startScenario('rwy27', false);
     setLoad(1, 'ready');
     $('loading').classList.add('hidden');
-    $('menu').classList.remove('hidden');
+    // title screen first; click / Enter / Space opens the menu
+    const title = $('title');
+    const go = () => {
+      if (title.classList.contains('hidden')) return;
+      title.classList.add('hidden');
+      $('menu').classList.remove('hidden');
+      window.removeEventListener('keydown', key, true);
+    };
+    const key = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); go(); } };
+    title.classList.remove('hidden');
+    title.addEventListener('click', go);
+    window.addEventListener('keydown', key, true);
     this.last = performance.now();
     this.fps = 60;
     renderer.setAnimationLoop((t) => this.frame(t));
@@ -278,8 +289,8 @@ class App {
     this.updateWeights();
     try { localStorage.setItem('b787.actype', id); } catch (e) { /* ignore */ }
     const t = $('menuTitle');
-    if (t) t.innerHTML = `B${T.short} <span>Flight Simulator</span>`;
-    document.title = `B${T.short} Flight Simulator`;
+    if (t) t.innerHTML = `Micomsoft <span>Fright Simulator</span>`;
+    document.title = `Micomsoft Fright Simulator — B${T.short}`;
   }
 
   // menu: pick a type (loads its model the first time)
