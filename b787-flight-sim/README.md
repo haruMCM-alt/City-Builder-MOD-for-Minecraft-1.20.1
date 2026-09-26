@@ -162,9 +162,9 @@ Blender アプリから使う場合：`blender --background --python build_b787.
 
 ```bash
 npm i esbuild                       # 初回のみ
-python3 tools/build_single_html.py  # → dist/MicomsoftFrightSimulator.html（約 80 MB）
+python3 tools/build_single_html.py --video-kbps 56   # → dist/MicomsoftFrightSimulator.html（約 31 MB）
 ```
-JavaScript（three.js 含む）を esbuild で 1 本にまとめ、モデル・データ・テクスチャ・安全ビデオ・Draco デコーダーをすべて base64 で埋め込んだ 1 ファイル。サーバー不要で、ダブルクリックでブラウザ（Chrome / Edge / Firefox）で開けます。起動時に埋め込みデータをメモリ上の blob URL に展開し（`window.B787_ASSETS`）、`main.js` が fetch と three.js のローダーをそこへ振り向けます。
+JavaScript（three.js 含む）を esbuild で 1 本にまとめ、モデル・データ・テクスチャ・安全ビデオ・Draco デコーダーをすべて base64 で埋め込んだ 1 ファイル。サイズを抑えるため、圧縮の効くものは gzip、地方空港モデルのテクスチャは world.glb と同じ画像なので除いて実行時に共有、4096 px を超える機体テクスチャは半分に縮小・JPEG 再圧縮、安全ビデオは `--video-kbps` で再エンコード（imageio-ffmpeg または ffmpeg）、`--no-video` で省略。サーバー不要で、ダブルクリックでブラウザ（Chrome / Edge / Firefox）で開けます。起動時に埋め込みデータをメモリ上の blob URL に展開し（`window.B787_ASSETS`）、`main.js` が fetch と three.js のローダーをそこへ振り向けます。
 
 ## テスト / Tests
 

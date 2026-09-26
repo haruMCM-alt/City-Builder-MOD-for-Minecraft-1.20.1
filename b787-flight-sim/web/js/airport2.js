@@ -67,6 +67,16 @@ export class RemoteAirport {
   attach(gltf) {
     if (!gltf || this.loaded) return;
     this.loaded = true;
+    // the single-file build strips the textures from the airport models (they are the same
+    // images as in world.glb): take the maps from the world material of the same name
+    const W = {};
+    this.world.worldRoot?.traverse((o) => { if (o.isMesh && o.material && !W[o.material.name]) W[o.material.name] = o.material; });
+    gltf.scene.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      const m = o.material, w = W[m.name];
+      if (!w) return;
+      for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) if (!m[k] && w[k]) { m[k] = w[k]; m.needsUpdate = true; }
+    });
     this.world.prepareGLB(gltf.scene);
     this.group.add(gltf.scene);
     const t = remoteTrees(this.ap, this.data);

@@ -1045,7 +1045,7 @@ class App {
       if (ra.loaded || ra.loading || !ra.data) continue;
       if (Math.hypot(cam.x - ra.ap.x, cam.z - ra.ap.z) > 70000) continue;
       ra.loading = true;
-      loadGLB(this.loader, ASSET + ra.ap.asset + MODEL_EXT, () => {}).then((g) => ra.attach(g)).catch(() => { ra.loading = false; });
+      loadGLB(this.loader, ASSET + ra.ap.asset + MODEL_EXT, () => {}).then((g) => ra.attach(g)).catch(() => { ra.data = null; });   // no retry
     }
   }
 
