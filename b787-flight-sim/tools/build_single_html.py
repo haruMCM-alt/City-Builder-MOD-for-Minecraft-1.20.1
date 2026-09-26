@@ -30,7 +30,7 @@ WEB = os.path.join(ROOT, "web")
 
 MIME = {".glb": "model/gltf-binary", ".json": "application/json", ".jpg": "image/jpeg", ".png": "image/png",
         ".mp4": "video/mp4", ".js": "text/javascript", ".wasm": "application/wasm"}
-SKIP = {"jal_safety.webm", "title.jpg", "draco_decoder.js"}   # title.jpg: inlined in the CSS; JS decoder: wasm is used          # mp4 is enough (the embedded build always uses it)
+SKIP = {"jal_safety.webm", "title.jpg", "draco_decoder.js", "arff.json"}   # title.jpg: inlined in the CSS; JS decoder: wasm is used          # mp4 is enough (the embedded build always uses it)
 STRIP_TEX = re.compile(r"airport\d+\.glb$")   # same images as world.glb: the game reuses those
 MAX_TEX = 4096                        # aircraft textures above this are halved
 DRACO = "vendor/three/examples/jsm/libs/draco/gltf"
