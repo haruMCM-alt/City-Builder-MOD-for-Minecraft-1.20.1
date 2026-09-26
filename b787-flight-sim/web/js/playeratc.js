@@ -307,6 +307,16 @@ export class PlayerATC {
         });
         return;
       }
+      // landed with damage but never declared: the tower sends the fire services anyway
+      if (!P.onGround && P.alt > 30) s.wasAir = true;
+      const ek = this.emergencyKind();
+      if (ek && P.onGround && s.wasAir && !s.autoDispatch) {
+        s.autoDispatch = true;
+        s.mayday = { kind: ek, apt: C.apt, t: T.time, auto: true };
+        this.later(2, () => this.say('TWR', `${cs}, ${C.name} Tower, we observed your aircraft is damaged. Emergency services dispatched, stop on the runway.`));
+        T.onEmergency?.({ apt: C.apt, runway: this.worldRunway(C), onGround: true });
+        return;
+      }
       // tower sees a problem the crew has not declared (a building strike right away)
       if (this.emergencyKind() && !P.onGround && !s.askedEmerg) {
         s._eT = (s._eT || 0) + dt;

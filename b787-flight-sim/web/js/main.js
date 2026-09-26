@@ -26,7 +26,7 @@ import { FIDS } from './fids.js';
 import { MCP3D } from './mcp3d.js';
 import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
-import { ARFF } from './emergency.js';
+import { ARFF, Evacuation } from './emergency.js';
 import { configureObstacles } from './obstacles.js';
 import { V3, DEG, KT, FT, FPM, clamp, smoothstep, headingVec, wrap360, mulberry32 } from './util.js';
 
@@ -228,7 +228,8 @@ class App {
     this.rig = new CameraRig(this.camera, canvas, meta, world);
     this.installType(sel);
     this.mishap = new Mishap(this);
-    this.arff = new ARFF(this);
+    this.arff = new ARFF(this, () => loadGLB(this.loader, ASSET + 'arff' + MODEL_EXT, () => {}));
+    this.evac = new Evacuation(this);
     this.setupEmergency();
     this.input = new Input((c) => this.command(c));
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -769,7 +770,7 @@ class App {
     this.cabin?.ifeSafety(false);
     const spd = (kt, altM) => kt * KT * Math.sqrt(1.225 / (1.225 * Math.pow(1 - 2.2558e-5 * altM, 4.256)));
     this.autoFlight = null;
-    this.arff?.reset(); this._sprayT = 0;
+    this.arff?.reset(); this.evac?.reset(); this._sprayT = 0; this._stopT = 0; this._evacDone = false;
     if (id === 'rwy27' || id === 'rwy09' || id === 'auto') {
       // auto flight: from the runway in use (headwind) to the destination chosen in the menu
       const wd = +$('windDir').value, wk = +$('windSpd').value;
@@ -1039,13 +1040,14 @@ class App {
         this.toast(n ? '🧯 消火装置作動 Fire handles pulled — engine fire extinguished' : '消火できる火災はありません (燃料火災は消えません)', 3500);
         break;
       }
-      case 'failure': case 'failure:engineFire': case 'failure:engineFail': case 'failure:fuelLeak': {
+      case 'failure': case 'failure:engineFire': case 'failure:engineFail': case 'failure:fuelLeak': case 'failure:wingOff': case 'failure:dualEngine': {
         // emergency practice: a failure (random kind unless chosen in the pause menu)
         if (fm.crashed) break;
-        const kinds = ['engineFire', 'engineFail', 'fuelLeak'];
+        const kinds = ['engineFire', 'engineFail', 'fuelLeak', 'wingOff', 'dualEngine'];
         const kind = c.includes(':') ? c.split(':')[1] : kinds[Math.floor(Math.random() * kinds.length)];
         const t = fm.failure(kind);
-        this.toast(t ? `⚠ 故障発生 ${t} — Y で${kind === 'engineFire' ? 'メーデー' : 'パンパン'}を宣言` : 'これ以上の故障は発生できません', 5000);
+        const may = kind === 'engineFire' || kind === 'wingOff' || kind === 'dualEngine';
+        this.toast(t ? `⚠ 故障発生 ${t} — Y で${may ? 'メーデー' : 'パンパン'}を宣言、もう一度 Y で全自動着陸` : 'これ以上の故障は発生できません', 5000);
         break;
       }
       case 'emergLand': this.emergencyAutoLand(); break;
@@ -1110,16 +1112,16 @@ class App {
     T.onEmergency = ({ apt, runway, onGround }) => {
       if (!runway) return;
       this.arff.deploy(apt, runway);
-      if (onGround) this.arff.attend(pos, fire);
+      if (onGround) this.arff.attend(pos, fire, this.meta);
       this.toast(onGround ? '🚒 消防車が出動しました Fire trucks on their way' : '🚒 消防車が滑走路脇で待機します Emergency services standing by', 4500);
     };
-    T.onEmergencyLanded = () => this.arff.attend(pos, fire);
-    T.onEmergencyEnd = () => { this.arff.stand(); this.toast('✅ 緊急事態解除 — 滑走路再開 Emergency closed out', 4000); };
+    T.onEmergencyLanded = () => this.arff.attend(pos, fire, this.meta);
+    T.onEmergencyEnd = () => { if (!this.evac.active) this.arff.stand(); this.toast('✅ 緊急事態解除 — 滑走路再開 Emergency closed out', 4000); };
     T.onBrace = () => this.toast('📢 客室「頭を下げて！」 Brace for impact!', 5000);
     T.onAutoLand = () => this.emergencyAutoLand();
     // AI emergencies: the same trucks meet the aircraft
     T.onAIEmergency = (ac, runway) => this.arff.deploy(1, runway);
-    T.onAIEmergencyLanded = (ac) => this.arff.attend(() => ({ x: ac.x, z: ac.z, a: ac.a, v: ac.v }), () => null);
+    T.onAIEmergencyLanded = (ac) => this.arff.attend(() => ({ x: ac.x, z: ac.z, a: ac.a, v: ac.v }), () => null, ac.tm?.meta || null);
     T.onAIEmergencyEnd = () => this.arff.stand();
   }
 
@@ -1137,7 +1139,11 @@ class App {
     const C = pc.ctx(), dest = pc.worldRunway(C);
     if (!dest) return;
     pc.s.autoLand = true;
-    this.autoFlight = AutoFlight.emergency(fm, this.sys, { dest, name: C.name });
+    const D = fm.dmg, dead = D.eng[0] && D.eng[1] && !fm.engines.some((e) => e.running);
+    const runways = this.traffic.W.runways.filter((r) => (C.apt === 1 ? !r.apt : r.apt === C.apt));
+    this.autoFlight = dead ? AutoFlight.deadstick(fm, this.sys, { runways, name: C.name }) : AutoFlight.emergency(fm, this.sys, { dest, name: C.name });
+    this.autoFlight.runways = runways;
+    this.autoFlight.allowRelight = true;
     this.autoFlight.onMessage = (m) => this.toast('🛬 ' + m, 4000);
     this.toast(`🛬 緊急自動着陸 ${C.name} RWY ${dest.ident} — 操縦桿を動かすと手動に戻ります`, 5000);
   }
@@ -1154,6 +1160,24 @@ class App {
 
   updateEmergency(dt) {
     this.arff.update(dt);
+    this.evac.update(dt);
+    // stopped after an emergency landing: the captain orders the evacuation (slides on the side
+    // away from the fire)
+    {
+      const fm = this.fm, o = fm.out, M = this.traffic?.pc?.s?.mayday;
+      this._stopT = o.wow && o.gs < 1 && !fm.crashed ? (this._stopT || 0) + dt : 0;
+      if (M && !M.ground && !this.evac.active && this._stopT > 4 && !this._evacDone) {
+        const D = fm.dmg, L = D.engFire[0] || D.wingFire[0], R = D.engFire[1] || D.wingFire[1];
+        const n = this.evac.start(L && !R ? -1 : R && !L ? 1 : 0);
+        if (n) {
+          this._evacDone = true;
+          const pc = this.traffic.pc;
+          this.toast('📢 機長「脱出！脱出！ベルトを外して脱出してください！」 Evacuate! Evacuate!', 6000);
+          pc.say(pc.cs, `${pc.cs}, we are evacuating on the runway${L || R ? ', fire on the ' + (L ? 'left' : 'right') + ' side' : ''}.`);
+          pc.later?.(4, () => pc.say('TWR', `${pc.cs}, roger, fire services are at the aircraft and will assist the passengers.`));
+        }
+      }
+    }
     // auto flight (menu): the crew declares and diverts to the nearest airport by itself
     const af = this.autoFlight, pc = this.traffic?.pc;
     if (af && !af.emerg && !af.done && pc && !this.fm.out.wow && this.fm.out.raFt > 400 && pc.emergencyKind() && !pc.s.mayday) {

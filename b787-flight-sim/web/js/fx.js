@@ -114,6 +114,8 @@ export class FX {
     this._add(this.smoke, p, v, life, size, grow, alpha, 'smoke', [g, g * 0.97, g * 0.95]);
   }
   steam(p, v, life = 3, size = 5, grow = 2.5, alpha = 0.5) { this._add(this.smoke, p, v, life, size, grow, alpha, 'smoke', [0.92, 0.94, 0.96]); }
+  // water / foam from a fire monitor: a ballistic jet that spreads out
+  water(p, v, life = 2, size = 0.8, alpha = 0.65) { this._add(this.smoke, p, v, life, size, 2.2, alpha, 'water', [0.95, 0.97, 1.0]); }
 
   // persistent emitter: getPos() -> world position (or null when gone), rate 0..1, duration (s)
   addSource(getPos, { kind = 'fire', rate = 1, size = 4, dur = 60, getVel = null, light = true } = {}) {
@@ -197,6 +199,7 @@ export class FX {
         const v = m.v;
         if (m.kind === 'spark') { v[1] -= G * dt; v[0] *= 1 - dt * 0.3; v[2] *= 1 - dt * 0.3; }
         else if (m.kind === 'flame') { v[0] *= 1 - dt * 1.6; v[2] *= 1 - dt * 1.6; v[1] = v[1] * (1 - dt * 1.2) + 5 * dt; }
+        else if (m.kind === 'water') { v[1] -= G * dt; v[0] *= 1 - dt * 0.25; v[2] *= 1 - dt * 0.25; if (C.P[i * 3 + 1] < 0.3 && v[1] < 0) { v[1] = 0; v[0] *= 0.9; v[2] *= 0.9; } }
         else { v[0] *= 1 - dt * 0.5; v[2] *= 1 - dt * 0.5; v[1] = v[1] * (1 - dt * 0.4) + 1.2 * dt; }
         C.P[i * 3] += v[0] * dt; C.P[i * 3 + 1] += v[1] * dt; C.P[i * 3 + 2] += v[2] * dt;
         C.R[i] += m.spin * dt;

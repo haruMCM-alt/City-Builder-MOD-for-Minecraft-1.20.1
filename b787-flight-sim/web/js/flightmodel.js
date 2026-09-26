@@ -231,6 +231,20 @@ export class FlightModel {
       D.engFire[side] = kind === 'engineFire';
       this.engines[side].running = false;
       text = `${side ? '右' : '左'}エンジン ${kind === 'engineFire' ? '火災' : '停止'}`;
+    } else if (kind === 'dualEngine') {
+      // both engines flame out (fuel contamination / bird strike): a glider
+      if (D.eng[0] && D.eng[1]) return null;
+      for (const i of [0, 1]) { if (!D.eng[i]) D.eng[i] = 1; this.engines[i].running = false; }
+      text = '両エンジン停止 Dual engine failure';
+    } else if (kind === 'wingOff') {
+      // the outer wing tears off (structural failure): the same as a hard wing-tip strike,
+      // burning fuel from the torn tank
+      if (D.wing[side] > 0.3) side = 1 - side;
+      if (D.wing[side] > 0.3) return null;
+      this._hitT[side ? 'wingtipR' : 'wingtipL'] = -9;
+      this.impact(side ? 'wingtipR' : 'wingtipL', 40, true);      // outer 30 % of the half span
+      if (!D.wingFire[side]) { D.wingFire[side] = true; this.events.push({ type: 'damage', part: 'wing', side, text: '主翼 炎上', sev: 0, time: now, quiet: true }); }
+      return `${L}主翼 外側脱落・炎上`;
     } else if (kind === 'fuelLeak') {
       D.leak += 6; part = 'leak';
       text = `燃料漏れ ${L}主翼タンク`;
@@ -238,6 +252,15 @@ export class FlightModel {
     D.list.push(text);
     this.events.push({ type: 'damage', part, side, text, sev: 0, time: now, quiet: true });
     return text;
+  }
+
+  // windmill relight of a flamed-out engine (not burning, not separated, fuel left)
+  relight(side) {
+    const D = this.dmg;
+    if (D.eng[side] !== 1 || D.engFire[side] || this.fuel <= 200) return false;
+    D.eng[side] = 0; this.engines[side].running = true;
+    D.list.push(`${side ? '右' : '左'}エンジン 再始動`);
+    return true;
   }
 
   // pull the fire handles: engine fires go out (fuel fires on a broken wing keep burning)

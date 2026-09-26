@@ -307,6 +307,15 @@ export class Systems {
         this._flchG = clamp((this._flchG ?? o.gammaAir) + clamp(eS * 0.02, -0.4, 0.4) * dt * 10, -8, 12);
         this.gammaT = err > 0 ? Math.max(this._flchG, 0.5) : Math.min(this._flchG, -0.5);
       }
+    } else if (ap.pitch === 'GLIDE') {
+      // engines out: hold the selected speed with the pitch, no altitude capture (auto flight)
+      // PID on the speed error with the speed trend as damping (1 deg of path ~ 0.33 kt/s)
+      const eS = o.ias - mcp.spd;
+      const acc = dt > 0 ? (o.ias - (this._gIas ?? o.ias)) / dt : 0;
+      this._gIas = o.ias;
+      this._gAcc = (this._gAcc ?? 0) + (clamp(acc, -10, 10) - (this._gAcc ?? 0)) * Math.min(1, dt * 3);
+      this._flchG = clamp((this._flchG ?? o.gammaAir) + clamp(eS, -20, 20) * 0.02 * dt, -12, 2);
+      this.gammaT = clamp(this._flchG + clamp(eS, -20, 20) * 0.3 + this._gAcc * 1.5, -14, 4);
     } else if (ap.pitch === 'GS' || ap.pitch === 'FLARE') {
       const hGs = d.gsAltAtDist;
       const hAc = fm.pos.y + fm.cgOffset.y - 1.5;
@@ -322,7 +331,8 @@ export class Systems {
       if (mainWow && this.groundTime > 0.3) { ap.roll = 'ROLLOUT'; ap.pitch = 'ROLLOUT'; }
     }
     if (vsT !== null) this.gammaT = Math.asin(clamp(vsT * FPM / V, -0.5, 0.5)) * RAD;
-    this._flchG = ap.pitch === 'FLCH' ? this._flchG : undefined;
+    this._flchG = ap.pitch === 'FLCH' || ap.pitch === 'GLIDE' ? this._flchG : undefined;
+    if (ap.pitch !== 'GLIDE') { this._gIas = undefined; this._gAcc = 0; }
     this.fd = { pitch: this.gammaT - o.gammaAir, roll: this.phiT - o.bank };
     if (ap.roll === 'ROLLOUT') {
       // PD steering to the centreline: lateral offset, heading error and yaw rate
