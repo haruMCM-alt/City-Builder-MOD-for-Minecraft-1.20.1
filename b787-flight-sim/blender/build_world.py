@@ -1007,6 +1007,13 @@ def main():
     tower = build_tower(M, col)
     build_airport_buildings(M, col)
     build_airport_trees(M, col)
+    # the instanced cities (web/js/cityscape.js) take their facade materials from world.glb:
+    # keep one small hidden quad per facade style so the materials and textures are exported
+    fm = C.MeshBuilder()
+    for k, st in enumerate(STYLE_ORDER):
+        fm.add_poly([(k * 2.0, 0, -40), (k * 2.0 + 1, 0, -40), (k * 2.0 + 1, 1, -40), (k * 2.0, 1, -40)],
+                    [(0, 0), (1, 0), (1, 1), (0, 1)], mat=k, normal=(0, 0, 1))
+    fm.build("FacadeMaterials", [M[st] for st in STYLE_ORDER], col=col)
     import real_kit as R
     placed = R.build_landmarks(1, M, col)
     sky = next(p for p in placed if p[0] == "skytree")
