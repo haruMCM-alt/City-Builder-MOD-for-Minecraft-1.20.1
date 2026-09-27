@@ -299,11 +299,13 @@ export class CloudPass extends Pass {
   }
 
   render(renderer, writeBuffer, readBuffer) {
-    this.uniforms.tDepth.value = readBuffer.depthTexture;
+    // scene depth: shared by the pass chain when effects before this one swapped the buffers
+    const depth = this.shared?.depth || readBuffer.depthTexture;
+    this.uniforms.tDepth.value = depth;
     renderer.setRenderTarget(this.rt);
     this.quad.render(renderer);
     this.compU.tDiffuse.value = readBuffer.texture;
-    this.compU.tDepth.value = readBuffer.depthTexture;
+    this.compU.tDepth.value = depth;
     renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
     this.comp.render(renderer);
   }

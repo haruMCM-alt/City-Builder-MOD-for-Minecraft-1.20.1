@@ -9,6 +9,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CloudPass } from './clouds.js';
+import { DepthGrabPass, SSAOPass, GodRayPass, FlarePass } from './ultrafx.js';
 
 const HazeShader = {
   uniforms: {
@@ -72,10 +73,11 @@ const LensShader = {
     tDiffuse: { value: null }, uTime: { value: 0 }, uVignette: { value: 0.28 }, uCA: { value: 0.0016 },
     uGrain: { value: 0.025 }, uRes: { value: new THREE.Vector2(1, 1) },
     uRainWS: { value: 0 }, uWSpeed: { value: 0 }, uAspect: { value: 1 },
+    uSharp: { value: 0 }, uGrade: { value: 0 },
   },
   vertexShader: HazeShader.vertexShader,
   fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse; uniform float uTime, uVignette, uCA, uGrain, uRainWS, uWSpeed, uAspect; uniform vec2 uRes;
+    uniform sampler2D tDiffuse; uniform float uTime, uVignette, uCA, uGrain, uRainWS, uWSpeed, uAspect, uSharp, uGrade; uniform vec2 uRes;
     varying vec2 vUv;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     // water on the windshield: beads at low speed, streaks blown up and outwards at speed
@@ -111,6 +113,24 @@ const LensShader = {
       col.r = texture2D(tDiffuse, uvIn + dir).r;
       col.g = texture2D(tDiffuse, uvIn).g;
       col.b = texture2D(tDiffuse, uvIn - dir).b;
+      if (uSharp > 0.0) {
+        // contrast-adaptive sharpening (restores the detail the MSAA resolve / upscale softens)
+        vec2 px = 1.0 / uRes;
+        vec3 n = texture2D(tDiffuse, uvIn + vec2(0.0, px.y)).rgb, s = texture2D(tDiffuse, uvIn - vec2(0.0, px.y)).rgb;
+        vec3 e = texture2D(tDiffuse, uvIn + vec2(px.x, 0.0)).rgb, w = texture2D(tDiffuse, uvIn - vec2(px.x, 0.0)).rgb;
+        vec3 mn = min(min(min(n, s), min(e, w)), col), mx = max(max(max(n, s), max(e, w)), col);
+        vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, 1e-3), 0.0, 1.0));
+        vec3 wt = -amp * uSharp * 0.2;
+        col = clamp((col + (n + s + e + w) * wt) / (1.0 + 4.0 * wt), 0.0, 1.0);
+      }
+      if (uGrade > 0.0) {
+        // gentle filmic grade: a touch more saturation, cool shadows, warm highlights
+        float lg = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        vec3 g = mix(vec3(lg), col, 1.0 + 0.12 * uGrade);
+        g += (vec3(-0.012, -0.002, 0.014) * (1.0 - lg) + vec3(0.012, 0.004, -0.01) * lg) * uGrade;
+        g = mix(g, g * g * (3.0 - 2.0 * g), 0.18 * uGrade);
+        col = clamp(g, 0.0, 1.0);
+      }
       // natural vignette (cos^4 falloff approximation)
       float v = 1.0 - uVignette * smoothstep(0.05, 0.75, r2 * 2.0);
       col *= v;
@@ -132,20 +152,44 @@ export class PostFX {
     rt.depthTexture.type = THREE.FloatType;
     this.composer = new EffectComposer(renderer, rt);
     this.composer.addPass(new RenderPass(scene, camera));
+    this.shared = { depth: null };
+    this.composer.addPass(new DepthGrabPass(this.shared));
+    this.ssao = new SSAOPass(camera, this.shared);
+    this.composer.addPass(this.ssao);
     this.clouds = new CloudPass(camera);
+    this.clouds.shared = this.shared;
     this.composer.addPass(this.clouds);
+    this.rays = new GodRayPass(camera, this.shared);
+    this.composer.addPass(this.rays);
     this.clamp = new ShaderPass(ClampShader);
     this.composer.addPass(this.clamp);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.25, 0.45, 0.9);
     this.composer.addPass(this.bloom);
+    this.flare = new FlarePass(camera, this.shared);
+    this.composer.addPass(this.flare);
     this.haze = new ShaderPass(HazeShader);
     this.composer.addPass(this.haze);
     this.composer.addPass(new OutputPass());
     this.lens = new ShaderPass(LensShader);
     this.composer.addPass(this.lens);
     this.enabled = true;
+    this.ultra = false;
+    this.setUltra(false);
     this.time = 0;
     this._v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  }
+
+  // Ultra: SSAO, god rays, lens flare, sharpening + grade, 8x MSAA where the GPU has it
+  setUltra(on) {
+    this.ultra = on;
+    this.ssao.enabled = this.rays.enabled = this.flare.enabled = on;
+    this.lens.uniforms.uSharp.value = on ? 0.55 : 0;
+    this.lens.uniforms.uGrade.value = on ? 1 : 0;
+    const gl = this.renderer.getContext();
+    const samples = on ? Math.min(8, gl.getParameter(gl.MAX_SAMPLES) || 4) : 4;
+    for (const rt of [this.composer.renderTarget1, this.composer.renderTarget2]) {
+      if (rt.samples !== samples) { rt.samples = samples; rt.dispose(); }
+    }
   }
 
   setSize(w, h) {
@@ -156,15 +200,24 @@ export class PostFX {
     this.haze.uniforms.uAspect.value = w / h;
     this.lens.uniforms.uAspect.value = w / h;
     this.clouds.setSize(s.x, s.y);
+    this.ssao.setSize(s.x, s.y);
+    this.rays.setSize(s.x, s.y);
+    this.flare.setSize(s.x, s.y);
   }
 
   // plumes: [{ start: Vector3, end: Vector3, r0, r1, strength }] in world space
-  update(dt, { night = 0, plumes = [], clouds = null, windshield = 0, wsSpeed = 0 } = {}) {
+  update(dt, { night = 0, plumes = [], clouds = null, windshield = 0, wsSpeed = 0, sun = null } = {}) {
     this.time += dt;
     if (clouds) this.clouds.update(dt, clouds); else this.clouds.enabled = false;
     // bloom works on the HDR image (before exposure): only what ends up brighter than
     // ~1.4 after exposure blooms - sun glints, lights, the sun disc
     const ex = this.renderer.toneMappingExposure || 1;
+    if (this.ultra) {
+      this.ssao.enabled = true;
+      this.ssao.update(dt, ex);
+      if (sun) { this.rays.update(dt, ex, sun); this.flare.update(dt, ex, sun); }
+      else this.rays.enabled = this.flare.enabled = false;
+    }
     this.bloom.strength = 0.1 + 0.25 * night;
     this.bloom.radius = 0.25 - 0.05 * night;
     this.bloom.threshold = (3.4 - 1.2 * night) / ex;

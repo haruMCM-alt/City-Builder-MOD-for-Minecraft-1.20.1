@@ -551,7 +551,7 @@ export class Traffic {
   _staticModel(liv, tm) {
     const o = tm.staticTpl.clone(true);
     if (tm.layout) dressParked(o, liv, tm.layout);
-    o.traverse((m) => { if (m.isMesh) { m.castShadow = this.quality === 'high'; m.receiveShadow = true; } });
+    o.traverse((m) => { if (m.isMesh) { m.castShadow = (this.quality === 'high' || this.quality === 'ultra'); m.receiveShadow = true; } });
     return o;
   }
 
@@ -559,7 +559,7 @@ export class Traffic {
     let obj = tm.pool.pop();
     if (!obj) {
       obj = new ArticulatedModel(tm.artTpl.clone(true), tm);
-      obj.obj.traverse((m) => { if (m.isMesh) { m.castShadow = this.quality === 'high'; m.receiveShadow = true; } });
+      obj.obj.traverse((m) => { if (m.isMesh) { m.castShadow = (this.quality === 'high' || this.quality === 'ultra'); m.receiveShadow = true; } });
       this.scene.add(obj.obj);
     }
     if (tm.layout) dressParked(obj.obj, liv, tm.layout);
@@ -956,7 +956,7 @@ export class Traffic {
       if (!src) return null;
       const obj = src.clone(true);
       obj.position.set(0, 0, 0);
-      obj.traverse((m) => { if (m.isMesh) { m.castShadow = this.quality === 'high'; m.receiveShadow = true; } });
+      obj.traverse((m) => { if (m.isMesh) { m.castShadow = (this.quality === 'high' || this.quality === 'ultra'); m.receiveShadow = true; } });
       this.scene.add(obj);
       const v = new Vehicle(this, type, this.gseInfo[type], obj, this.vehicles.length);
       this.vehicles.push(v);

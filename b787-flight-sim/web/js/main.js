@@ -723,14 +723,68 @@ class App {
 
   setQuality(q) {
     this.quality = q;
-    const r = this.renderer;
-    r.setPixelRatio(q === 'high' ? Math.min(window.devicePixelRatio, 2) : q === 'medium' ? 1 : 0.75);
+    const r = this.renderer, ultra = q === 'ultra';
+    this.renderScale = 1;
+    this._drT = 0; this._drN = 0; this._drCool = 3;
+    r.setPixelRatio(this.basePixelRatio());
     r.shadowMap.enabled = q !== 'low';
-    this.world.sun.castShadow = q !== 'low';
-    const sm = q === 'high' ? 4096 : 2048;
-    this.world.sun.shadow.mapSize.set(sm, sm);
-    if (this.world.sun.shadow.map) { this.world.sun.shadow.map.dispose(); this.world.sun.shadow.map = null; }
+    const sun = this.world.sun;
+    sun.castShadow = q !== 'low';
+    const maxTex = r.capabilities.maxTextureSize || 4096;
+    const sm = ultra ? Math.min(8192, maxTex) : q === 'high' ? 4096 : 2048;
+    sun.shadow.mapSize.set(sm, sm);
+    sun.shadow.radius = ultra ? 2.5 : 1;
+    if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
     this.world.quality = q;
+    if (this.post) {
+      this.post.clouds.scale = ultra ? 0.7 : 0.5;
+      this.post.setUltra(ultra);
+    }
+    this.boostTextures();
+    this.resize();
+  }
+
+  basePixelRatio() {
+    const q = this.quality, dpr = window.devicePixelRatio || 1;
+    if (q === 'ultra') return THREE.MathUtils.clamp(Math.min(dpr, 2) * (this.renderScale || 1), 0.6, 2.5);
+    return q === 'high' ? Math.min(dpr, 2) : q === 'medium' ? 1 : 0.75;
+  }
+
+  // maximum anisotropic filtering on every texture in the scene (Ultra); 8x otherwise
+  boostTextures() {
+    const a = this.quality === 'ultra' ? this.renderer.capabilities.getMaxAnisotropy() : 8;
+    const seen = new Set();
+    this.scene.traverse((o) => {
+      const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+      for (const m of mats) {
+        for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
+          const t = m[k];
+          if (!t || seen.has(t) || t.isRenderTargetTexture || t.isVideoTexture) continue;
+          seen.add(t);
+          if (t.anisotropy !== a && t.anisotropy >= 4) { t.anisotropy = a; t.needsUpdate = true; }
+        }
+      }
+    });
+  }
+
+  // Ultra: dynamic resolution - supersamples when the GPU has headroom, backs off below
+  // ~45 fps so the flying stays smooth
+  dynamicResolution(dt) {
+    if (this.quality !== 'ultra' || this.paused || !(dt > 0)) return;
+    this._drT += dt; this._drN++;
+    this._drCool -= dt;
+    if (this._drT < 2) return;
+    const fps = this._drN / this._drT;
+    this._drT = 0; this._drN = 0;
+    if (this._drCool > 0) return;
+    let s = this.renderScale || 1;
+    if (fps < 45) s = Math.max(0.6, s * (fps < 30 ? 0.8 : 0.9));
+    else if (fps > 58 && s < 1.5) s = Math.min(1.5, s * 1.12);
+    else return;
+    if (Math.abs(s - this.renderScale) < 0.01) return;
+    this.renderScale = s;
+    this._drCool = 4;
+    this.renderer.setPixelRatio(this.basePixelRatio());
     this.resize();
   }
 
@@ -1389,6 +1443,7 @@ class App {
       emit: (p, v, life, size, grow, alpha) => this.visual.emit(p, v, life, size, grow, alpha) });
     this.rain.update(dt, { camera: this.camera, amount: this.world.rain || 0, wind: fm.wind, camVel: this.camVel,
       inside: cockpit || ['cabin', 'walk', 'wing', 'ife'].includes(this.rig.view), night: this.world.night });
+    this.dynamicResolution(dt);
     const hdr = !!this.post && this.quality !== 'low';
     HDR.uLin.value = hdr ? 1 : 0;
     // clouds / smoke: lit like white surfaces; point lights: bright enough to bloom at night
@@ -1396,11 +1451,23 @@ class App {
     HDR.uGainL.value = 1.1 / Math.max(this.renderer.toneMappingExposure, 0.3);
     if (hdr) {
       const rainAmt = this.world.rain || 0;
-      this.post.update(dt, { night: this.world.night, plumes: this.plumes(), clouds: this.world.volumetricState(this.quality === 'high'),
+      this.post.update(dt, { night: this.world.night, plumes: this.plumes(), clouds: this.world.volumetricState(this.quality === 'high' || this.quality === 'ultra'),
+        sun: this.sunFX(),
         windshield: cockpit ? rainAmt : 0, wsSpeed: Math.min(1, (fm.out.ias || 0) / 120) });
       this.post.render();
     } else { this.world.volumetricState(false); this.renderer.render(this.scene, this.camera); }
     if (!this.paused) this.updateUI();
+  }
+
+  sunFX() {
+    const w = this.world;
+    const o = this._sunFX || (this._sunFX = { dir: new THREE.Vector3(), color: new THREE.Color(), strength: 0 });
+    if (!w.sunDir) { o.strength = 0; return o; }
+    o.dir.copy(w.sunDir);
+    o.color.copy(w.sun.color);
+    const el = Math.asin(THREE.MathUtils.clamp(w.sunDir.y, -1, 1)) * 180 / Math.PI;
+    o.strength = THREE.MathUtils.clamp(w.sun.intensity / 3.4, 0, 1) * THREE.MathUtils.smoothstep(el, -1.5, 2);
+    return o;
   }
 
   // IFE tail camera: the scene from the top of the fin, rendered into your seat monitor

@@ -3,7 +3,7 @@
 // airfield / city lights and parked aircraft.
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL } from './terrain.js';
+import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL, terrainHeight } from './terrain.js';
 import { patchFacade } from './shading.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
 import { clamp, smoothstep, lerp, mulberry32, DEG } from './util.js';
@@ -462,7 +462,7 @@ varying vec3 vTW; varying float vSlope;`)
       }
       o.receiveShadow = true;
       const n = o.name;
-      o.castShadow = this.quality === 'high' && !/Markings|Pavement/.test(n);
+      o.castShadow = (this.quality === 'high' || this.quality === 'ultra') && !/Markings|Pavement/.test(n);
       if (n.startsWith('TreeProto')) o.visible = false;
     });
   }
@@ -813,7 +813,7 @@ varying vec3 vTW; varying float vSlope;`)
     v.haze.copy(this.scene.fog.color);
     v.vis = W.vis * 0.9;
     v.density = 0.02 + 0.03 * W.overcast;
-    v.steps = 56;
+    v.steps = this.quality === 'ultra' ? 88 : 56;
     return v;
   }
 
@@ -843,7 +843,7 @@ varying vec3 vTW; varying float vSlope;`)
       if (dress) dress(o);
       o.position.set(st.cg[0], -0.55 + 0.55 + 5.25 - 0.05, st.cg[2]);
       o.rotation.y = Math.PI / 2 - st.heading * DEG;   // heading 0 = north (-z)
-      o.traverse((m) => { if (m.isMesh) { m.castShadow = this.quality === 'high'; m.receiveShadow = true; } });
+      o.traverse((m) => { if (m.isMesh) { m.castShadow = (this.quality === 'high' || this.quality === 'ultra'); m.receiveShadow = true; } });
       this.scene.add(o);
       this.parked.push(o);
     }
@@ -893,6 +893,52 @@ varying vec3 vTW; varying float vSlope;`)
     return { el, az, v: new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)) };
   }
 
+  // Ultra: the sun's shadow box follows what the camera sees. On the ground it stays tight
+  // around the aircraft (2 cm texels on an 8k map); climbing out it grows with the height
+  // above the ground and moves ahead of the camera, so the city blocks and the terminal
+  // cast shadows too. The box centre is snapped to whole shadow texels (no shimmering).
+  _shadowFocus(camera, focus, sunV) {
+    const sc = this.sun.shadow.camera;
+    const ext = this._shadowExt || (this._shadowExt = { r: 110, dist: 1500 });
+    const out = this._sfv || (this._sfv = new THREE.Vector3());
+    if (this.quality !== 'ultra') {
+      if (ext.r !== 110) {
+        ext.r = 110; ext.dist = 1500; sc.left = -110; sc.right = 110; sc.top = 110; sc.bottom = -110; sc.far = 3000; sc.updateProjectionMatrix();
+        this.sun.shadow.normalBias = 0.06;
+      }
+      return out.copy(focus);
+    }
+    const agl = Math.max(0, camera.position.y - Math.max(0, terrainHeight(camera.position.x, camera.position.z)));
+    const dFocus = camera.position.distanceTo(focus);
+    let r = 130;
+    if (agl > 120 || dFocus > 400) r = THREE.MathUtils.clamp(Math.max(agl * 1.1, dFocus * 0.6), 130, 2600);
+    // hysteresis: re-fit only on a real change (a projection change reallocates nothing, but
+    // a constantly breathing box shimmers)
+    if (Math.abs(r - ext.r) > ext.r * 0.15 || (r === 130 && ext.r !== 130)) {
+      ext.r = r; ext.dist = Math.max(1500, r * 2.2);
+      sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r; sc.near = 1; sc.far = ext.dist * 2 + r * 2;
+      sc.updateProjectionMatrix();
+      this.sun.shadow.normalBias = Math.max(0.05, (2 * r / this.sun.shadow.mapSize.x) * 1.6);
+    }
+    if (ext.r <= 130) out.copy(focus);
+    else {
+      // centre on the ground a bit ahead of the camera
+      const fw = camera.getWorldDirection(this._sfd || (this._sfd = new THREE.Vector3()));
+      const h = Math.hypot(fw.x, fw.z) || 1;
+      const ahead = ext.r * 0.55;
+      out.set(camera.position.x + fw.x / h * ahead, 0, camera.position.z + fw.z / h * ahead);
+      if (agl < 400) out.lerp(focus, 0.35);
+    }
+    // texel snap in the light's frame
+    const texel = (2 * ext.r) / this.sun.shadow.mapSize.x;
+    const up = Math.abs(sunV.y) > 0.99 ? this._X || (this._X = new THREE.Vector3(1, 0, 0)) : this._Y || (this._Y = new THREE.Vector3(0, 1, 0));
+    const ax = (this._sax || (this._sax = new THREE.Vector3())).crossVectors(up, sunV).normalize();
+    const ay = (this._say || (this._say = new THREE.Vector3())).crossVectors(sunV, ax);
+    const px = out.dot(ax), py = out.dot(ay);
+    out.addScaledVector(ax, Math.round(px / texel) * texel - px).addScaledVector(ay, Math.round(py / texel) * texel - py);
+    return out;
+  }
+
   update(dt, camera, focus) {
     this.time += dt;
     this.updateWet(dt);
@@ -912,8 +958,9 @@ varying vec3 vTW; varying float vSlope;`)
     const sunCol = new THREE.Color().setRGB(1, lerp(0.96, 0.62, golden), lerp(0.92, 0.38, golden));
     this.sun.color.copy(sunCol);
     this.sun.intensity = 3.4 * day * (1 - 0.7 * W.overcast);
-    const f = focus || camera.position;
-    this.sun.position.set(f.x + sd.v.x * 1500, f.y + sd.v.y * 1500, f.z + sd.v.z * 1500);
+    const f = this._shadowFocus(camera, focus || camera.position, sd.v);
+    const sr = this._shadowExt;
+    this.sun.position.set(f.x + sd.v.x * sr.dist, f.y + sd.v.y * sr.dist, f.z + sd.v.z * sr.dist);
     this.sun.target.position.copy(f);
     this.sun.target.updateMatrixWorld();
     this.hemi.intensity = lerp(0.07, 0.55, day) * (1 + 0.4 * W.overcast);
@@ -970,7 +1017,7 @@ varying vec3 vTW; varying float vSlope;`)
     // trees: distance culling
     for (const c of this.treeChunks) {
       const d = Math.hypot(c.x - camera.position.x, c.z - camera.position.z) - camera.position.y * 0.5;
-      const vis = d < ({ low: 2500, medium: 4500 }[this.quality] || 6500);
+      const vis = d < ({ low: 2500, medium: 4500, ultra: 11000 }[this.quality] || 6500);
       for (const m of c.meshes) m.visible = vis;
     }
     // clouds
