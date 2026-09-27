@@ -296,8 +296,13 @@ EXTRA_RWYS = {
     4: [dict(cx=0, cy=-1150, hdg=1, len=2700, wid=60, names=("36L", "18R"))],
 }
 
-# AI traffic intensity (relative) and the number of contact stands
-TRAFFIC = {1: dict(rate=1.0, stands=14), 2: dict(rate=0.55, stands=7), 3: dict(rate=0.45, stands=7), 4: dict(rate=0.5, stands=7)}
+# AI traffic: intensity (relative, sets the turnaround pace), the number of contact stands, the
+# share of the flights from Haneda (Haneda - New Chitose is Japan's busiest route, then Naha,
+# then Kansai) and the real daily movements (arrivals + departures, approx.)
+TRAFFIC = {1: dict(rate=1.0, stands=14, route=0.0, movements=1250),
+           2: dict(rate=0.55, stands=7, route=0.22, movements=560),
+           3: dict(rate=0.5, stands=7, route=0.46, movements=420),
+           4: dict(rate=0.5, stands=7, route=0.32, movements=450)}
 
 
 def city_local(apid, lat, lon):
@@ -316,6 +321,9 @@ def export_js():
                     hard=f["hard"]) for i, fl in FLATS.items() for f in fl],
         extraRunways={i: [dict(r, cx=r["cx"], cy=r["cy"]) for r in v] for i, v in EXTRA_RWYS.items()},
         traffic=TRAFFIC,
+        # urban fabric for the terrain shader: world x, z, radius (m), density, city id
+        urban=[[*map(round, world_ll(i, d["lat"], d["lon"])), round(d["r"] * 1000 * k), d["dens"] * f, i]
+               for i, c in CITIES.items() for (d, k, f) in [(c["fill"], 1.0, 0.6)] + [(d, 1.8, 1.0) for d in c["districts"]]],
         # reef: shallow coral shelf around Okinawa (world x, z, radius)
         reef=[round(AP[4]["x"]), round(AP[4]["z"]), 90000],
     )

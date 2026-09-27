@@ -1,22 +1,29 @@
 """
-Second airport ("Minato", ~200 km east of the home airport) and its town (Blender / bpy).
+The remote airports (Blender / bpy): Osaka Kansai (--id 2), Sapporo New Chitose (--id 3) and
+Okinawa Naha (--id 4).
 
-    python3 build_airport2.py
+    python3 build_airport2.py --id 2
 
-Local Blender frame: +X east, +Y north, +Z up, metres, origin = runway centre.  The simulator
-places the model at three.js (200000, 0, -9000) (web/js/airport2.js, A2).
+Local Blender frame: +X along the main runway (world +x), +Y towards the terminal (world -z),
++Z up, metres, origin = runway centre.  The simulator places the model at the airport's world
+position (geo.py -> web/js/geo_data.js); each airport has its own compass north there.
 
 Contents
-  * runway 09/27 3000 m x 45 m with shoulders, blast pads and full ICAO markings, parallel
-    taxiway B with three connectors, holding positions and signs
+  * the main runway at its real length / width and names (Kansai 06R/24L 3500 m, New Chitose
+    01R/19L 3000 m, Naha 36R/18L 3000 m) with shoulders, blast pads and ICAO markings, parallel
+    taxiway with three connectors, holding positions and signs
+  * the second runway of each airport (Kansai 06L/24R on the second island, New Chitose
+    01L/19R, Naha 36L/18R on the reclaimed land) with taxiway links
   * apron with seven nose-in stands (lead-in lines, stop bars, safety lines, stand numbers),
     GSE service road and equipment parking
   * terminal: glazed gate pier with a wave roof on columns, three-level landside hall with a
     curbside canopy, seven boarding bridges, stair towers, docking guidance boards
   * control tower, maintenance hangar with office annex, fire station, cargo shed,
     multi-storey car park, floodlight masts, windsock, ILS localizer / glideslope, fence
-  * the town around it: ~120 m blocks, streets, low / mid-rise buildings and a small centre
-  * airport2.glb + airport2.json (lights, collision boxes, stands, sign anchors)
+  * each airport's own terminal architecture: Kansai's 1.7 km curved wing and aerofoil hall,
+    New Chitose's arched hall and international terminal, Naha's vaulted hall and palms
+  * the city's landmarks (real_kit.py); the city itself is instanced (city_gen.py)
+  * airportN.glb + airportN.json (lights, collision boxes, stands, sign anchors)
 """
 import json
 import math
@@ -30,25 +37,29 @@ import common as C  # noqa: E402
 import build_world as W  # noqa: E402  (materials, geometry helpers, light / obstacle registries)
 import airport_kit as K  # noqa: E402
 from airport_kit import mi  # noqa: E402
+import geo as G  # noqa: E402
+import real_kit as R  # noqa: E402
 
 # which remote airport to build: python3 build_airport2.py [--id 3]
-#   id 2 (default), 3, 4 -> airportN.glb / airportN.json, gates B1.., C1.., D1..; the airfield and
-#   terminal are the same design, the town around each airport differs (seed, centre, density)
+#   id 2 (default), 3, 4 -> airportN.glb / airportN.json, gates B1.., C1.., D1..; runways,
+#   terminal architecture and landmarks per airport (geo.py, real_kit.py)
 AID = int(sys.argv[sys.argv.index("--id") + 1]) if "--id" in sys.argv else 2
-VARIANT = {2: dict(letter="B", seed=20250925, centre=(-1300.0, 1900.0), dens=1.0),
-           3: dict(letter="C", seed=20260103, centre=(1600.0, 2300.0), dens=0.85),
-           4: dict(letter="D", seed=20260417, centre=(-600.0, -2100.0), dens=1.15)}[AID]
-GL = VARIANT["letter"]
+GL = {2: "B", 3: "C", 4: "D"}[AID]
 
-RWY_LEN, RWY_W = 3000.0, 45.0
+AP = G.AP[AID]
+RWY_LEN, RWY_W = float(AP["rwy"]["len"]), float(AP["rwy"]["wid"])
+K09, K27 = AP["rwy"]["k09"], AP["rwy"]["k27"]
 TWY_Y, TWY_W = 170.0, 23.0
-CONNS = [-1480.0, 0.0, 1480.0]
+CONNS = [-(RWY_LEN / 2 - 20.0), 0.0, RWY_LEN / 2 - 20.0]
+TOWER_CAB = {2: 64.0, 3: 30.0, 4: 66.0}[AID]     # Kansai 86 m, New Chitose 51 m, Naha 88 m
 APRON = (-450.0, 450.0, 190.0, 410.0)       # x0, x1, y0, y1
 LANE_Y = 240.0                              # apron taxilane
 SERVICE_Y = 398.0                           # GSE road in front of the terminal
 STANDS = [-360.0 + 120.0 * k for k in range(7)]
 STAND_CG_Y = 352.0                          # 787-9 CG on the stand (three.js z = -352)
 S_CG_FROM_NOSE = 31.85
+LINKS = {2: [-300.0, 300.0], 3: [-1200.0, 1200.0], 4: [-1100.0, 1100.0]}[AID]   # taxiways to runway 2
+LAND_DY = {2: 30.0, 3: 15.0, 4: 10.0}[AID]     # landside roads / car parks moved out past the bigger halls
 PIER_Y = 410.0                              # airside face of the terminal
 Z_PAV, Z_MK = 0.12, 0.16                    # a little higher than at home: far from the origin
 
@@ -83,26 +94,18 @@ def build_airfield(M, col):
     rect(pav, -700, 260, 260, 140, 0, Z_PAV + 0.002, 3)
     rect(pav, -420, (TWY_Y + y0) / 2, 60, y0 - TWY_Y + 10, 0, Z_PAV - 0.003, 2)
     rect(pav, 420, (TWY_Y + y0) / 2, 60, y0 - TWY_Y + 10, 0, Z_PAV - 0.003, 2)
-    # --- runway markings ---
-    for sx in (-1, 1):
-        thr = sx * h
-        inward = -sx
-        for i in range(6):
-            for sy in (-1, 1):
-                rect(mk, thr + inward * 21, sy * (3.0 + 0.9 + i * 3.6), 30, 1.8, 0, Z_MK, 0)
-        rect(mk, thr + inward * 1.0, 0, 1.8, RWY_W - 2, 0, Z_MK, 0)
-        W.text_mesh(mk, "27" if sx > 0 else "09", thr + inward * 58, 0, Z_MK, 14.0, math.pi / 2 if sx > 0 else -math.pi / 2, 0)
-        for sy in (-1, 1):
-            rect(mk, thr + inward * 430, sy * 9.5, 60, 8, 0, Z_MK, 0)
-            for d, n in ((150, 3), (300, 3), (600, 2), (750, 2), (900, 1)):
-                for k in range(n):
-                    rect(mk, thr + inward * (d + 11), sy * (3.8 + 0.9 + k * 3.0), 22.5, 1.8, 0, Z_MK, 0)
-    x = -h + 90
-    while x < h - 90:
-        rect(mk, x + 15, 0, 30, 0.9, 0, Z_MK, 0)
-        x += 50
-    for sy in (-1, 1):
-        rect(mk, 0, sy * (RWY_W / 2 - 0.9), RWY_LEN, 0.9, 0, Z_MK, 0)
+    # --- runway markings (real names: "24L" at the threshold flown towards +x) ---
+    R.runway_markings(mk, 0.0, 0.0, 0.0, RWY_LEN, RWY_W, (K09, K27), Z_MK, 0, rect=rect)
+    # --- the second runway and the links to it ---
+    for er in G.EXTRA_RWYS[AID]:
+        R.extra_runway(pav, mk, er["cx"], er["cy"], R.local_ang(AID, er["hdg"]), er["len"], er["wid"], er["names"],
+                       Z_PAV, Z_MK, mats=(0, 1, 0))
+        ty = er["cy"] + TWY_Y
+        R.taxi_link(pav, mk, (-er["len"] / 2, ty), (er["len"] / 2, ty), Z_PAV, Z_MK, mats=(2, 1))
+        for xl in LINKS:
+            R.taxi_link(pav, mk, (xl, TWY_Y), (xl, er["cy"]), Z_PAV, Z_MK, mats=(2, 1))
+        for xc in (-er["len"] / 2 + 20, 0.0, er["len"] / 2 - 20):
+            R.taxi_link(pav, mk, (xc, ty), (xc, er["cy"]), Z_PAV, Z_MK, mats=(2, 1), lights=False)
     # --- taxiway markings: centre lines, holding positions, apron guidance ---
     rect(mk, 0, TWY_Y, RWY_LEN + 40, 0.3, 0, Z_MK, 1)
     for xc in CONNS:
@@ -197,6 +200,75 @@ def build_lights(fx):
             add("a2_stopbar", (xc + d * 2.0, 66, 0.25), "#ff2020", 0.9)
 
 
+def _hall_walls(tb, x0, x1, y0, y1, h, levels):
+    """Glazed hall on four sides with floor slabs and a dark interior block."""
+    K.box(tb, x0, x1, y0, y1, 0, 0.6, mi("concrete"))
+    for (a, b, o) in (((x0, y1), (x1, y1), (0, 1)), ((x1, y0), (x0, y0), (0, -1)),
+                      ((x0, y0), (x0, y1), (-1, 0)), ((x1, y1), (x1, y0), (1, 0))):
+        K.curtain_wall(tb, a, b, 0.6, h, o, floor=h / levels)
+    K.box(tb, x0 + 0.5, x1 - 0.5, y0 + 0.5, y1 - 0.5, 0.6, h - 0.1, mi("dark"), uv=0.1)
+
+
+def terminal_architecture(tb, px0, px1, py0, py1, rng):
+    """Each airport's own terminal: roofs over the gate pier and the landside hall.
+    Returns the hall rectangle and the height of its landside eave."""
+    if AID == 2:
+        # Kansai (Renzo Piano): the 1.7 km wing -- the pier continues past the seven contact
+        # stands, under one roof that curves down towards both tips -- and the main building
+        # whose roof rises like an aerofoil from the airside to the landside canyon
+        for sx in (-1, 1):
+            a, b = sorted((sx * px1, sx * 860.0))
+            K.box(tb, a, b, py0, py1, 0, 0.6, mi("concrete"))
+            K.curtain_wall(tb, (a, py0), (b, py0), 0.6, 9.0, (0, -1), floor=4.5)
+            K.curtain_wall(tb, (b, py1), (a, py1), 0.6, 9.0, (0, 1), floor=4.5)
+            K.box(tb, a, b, py0 + 0.4, py1 - 0.4, 0.6, 8.9, mi("dark"), uv=0.1)
+            K.eave_columns(tb, np.arange(a + 15, b, 45.0), py0 - 6.0, 10.0)
+            W.obstacle(a, py0, b, py1, 14.0)
+        K.curtain_wall(tb, (-860.0, py1), (-860.0, py0), 0.6, 9.0, (-1, 0), floor=4.5)
+        K.curtain_wall(tb, (860.0, py0), (860.0, py1), 0.6, 9.0, (1, 0), floor=4.5)
+        R.aerofoil_roof(tb, -872.0, 872.0, py0 - 9, py1 + 4, 19.0, 11.5, 0.8, 1.0, mi("roof"), n=220)
+        K.eave_columns(tb, np.arange(px0 + 20, px1 - 10, 60.0), py0 - 7.0, 13.4)
+        W.obstacle(px0, py0, px1, py1, 17.0)
+        hx0, hx1, hy0, hy1 = -300.0, 300.0, py1, 560.0
+        _hall_walls(tb, hx0, hx1, hy0, hy1, 24.0, 4)
+        K.curtain_wall(tb, (hx0, hy1), (hx1, hy1), 24.0, 31.0, (0, 1), floor=7.0, slabs=False)
+        R.aerofoil_roof(tb, hx0 - 12, hx1 + 12, hy0 - 6, hy1 + 16, 40.0, 31.0, 0.6, 1.0, mi("roof"), n=80)
+        K.eave_columns(tb, np.arange(hx0 + 10, hx1, 36.0), hy1 + 13.0, 30.0)
+        W.obstacle(hx0, hy0, hx1, hy1, 40.0)
+        return hx0, hx1, hy0, hy1, 30.0
+    if AID == 3:
+        # New Chitose: domestic terminal under a long arched roof; the international terminal
+        # (arched too) to the east of the tower
+        R.vault_roof(tb, px0 - 12, px1 + 12, py0 - 9, py1 + 4, 13.2, 4.5, mi("roof"), n=100, end_taper=0.3)
+        K.eave_columns(tb, np.arange(px0 + 20, px1 - 10, 60.0), py0 - 7.0, 13.4)
+        W.obstacle(px0, py0, px1, py1, 18.0)
+        hx0, hx1, hy0, hy1 = -300.0, 300.0, py1, 545.0
+        _hall_walls(tb, hx0, hx1, hy0, hy1, 20.0, 4)
+        R.vault_roof(tb, hx0 - 10, hx1 + 10, hy0 - 8, hy1 + 16, 20.0, 14.0, mi("roof"), n=60, m=20, end_taper=0.25)
+        K.eave_columns(tb, np.arange(hx0 + 10, hx1, 36.0), hy1 + 13.0, 21.0)
+        W.obstacle(hx0, hy0, hx1, hy1, 34.0)
+        ix0, ix1, iy0, iy1 = 470.0, 770.0, 468.0, 560.0
+        _hall_walls(tb, ix0, ix1, iy0, iy1, 18.0, 3)
+        R.vault_roof(tb, ix0 - 8, ix1 + 8, iy0 - 6, iy1 + 10, 18.0, 9.0, mi("roof"), n=40, m=16)
+        W.obstacle(ix0, iy0, ix1, iy1, 27.0)
+        K.box(tb, 440.0, 470.0, 480.0, 500.0, 6.0, 12.0, mi("curtain"))     # link bridge
+        return hx0, hx1, hy0, hy1, 20.0
+    # Naha: a vaulted hall behind a big curbside canopy, the pier under a low vault; the
+    # international / domestic link building to the west
+    R.vault_roof(tb, px0 - 12, px1 + 12, py0 - 9, py1 + 4, 13.2, 3.0, mi("roof"), n=100, end_taper=0.2)
+    K.eave_columns(tb, np.arange(px0 + 20, px1 - 10, 60.0), py0 - 7.0, 13.4)
+    W.obstacle(px0, py0, px1, py1, 16.5)
+    hx0, hx1, hy0, hy1 = -280.0, 280.0, py1, 540.0
+    _hall_walls(tb, hx0, hx1, hy0, hy1, 22.0, 4)
+    R.vault_roof(tb, hx0 - 14, hx1 + 14, hy0 - 6, hy1 + 22, 22.0, 9.0, mi("roof"), n=60, m=18, end_taper=0.35)
+    K.eave_columns(tb, np.arange(hx0 + 10, hx1, 28.0), hy1 + 19.0, 23.0)
+    W.obstacle(hx0, hy0, hx1, hy1, 31.0)
+    _hall_walls(tb, -560.0, -300.0, 450.0, 520.0, 16.0, 3)
+    R.vault_roof(tb, -566.0, -294.0, 444.0, 526.0, 16.0, 5.0, mi("roof"), n=30, m=12)
+    W.obstacle(-560, 450, -300, 520, 21.0)
+    return hx0, hx1, hy0, hy1, 22.0
+
+
 def build_terminal(M, col):
     """Gate pier + landside hall + boarding bridges.  Returns stand records and sign anchors."""
     tb = C.MeshBuilder()
@@ -210,14 +282,7 @@ def build_terminal(M, col):
     for (a, b, o) in (((px0, py1), (px0, py0), (-1, 0)), ((px1, py0), (px1, py1), (1, 0))):
         K.curtain_wall(tb, a, b, 0.6, 13.0, o, floor=6.2)
     K.box(tb, px0 + 0.4, px1 - 0.4, py0 + 0.4, py1 - 0.4, 0.6, 12.9, mi("dark"), uv=0.1)
-    W.wave_roof(tb, px0 - 12, px1 + 12, py0 - 9, py1 + 4, 13.2, 2.8, mi("roof"), n=120, waves=7)
-    K.eave_columns(tb, np.arange(px0 + 20, px1 - 10, 60.0), py0 - 7.0, 13.4)
-    W.obstacle(px0, py0, px1, py1, 16.0)
-    # --- landside hall: three levels, curtain walls, roof with a deep curbside canopy ---
-    hx0, hx1, hy0, hy1 = -230.0, 230.0, py1, 530.0
-    hh = K.terminal_block(tb, hx0, hx1, hy0, hy1, levels=4, floor=5.0, airside="S", eave=(4, 4, 0, 16), rng=rng, doors=False)
-    K.eave_columns(tb, np.arange(hx0 + 10, hx1, 36.0), hy1 + 13.0, hh)
-    W.obstacle(hx0, hy0, hx1, hy1, hh + 1.4)
+    hx0, hx1, hy0, hy1, hh = terminal_architecture(tb, px0, px1, py0, py1, rng)
     # curbside road deck and drop-off canopy columns
     K.box(tb, hx0 - 40, hx1 + 40, hy1 + 4, hy1 + 22, 0.0, 0.25, mi("concrete"))
     # entrance doors (glass portals) on the landside face
@@ -247,7 +312,7 @@ def build_terminal(M, col):
 def build_airport_buildings(M, col):
     b = C.MeshBuilder()
     # control tower
-    top = K.control_tower(b, 600.0, 440.0, cab_z=46.0, lights=W.add_light)
+    top = K.control_tower(b, 600.0, 440.0, cab_z=TOWER_CAB, lights=W.add_light)
     W.obstacle(574, 424, 626, 456, 12.0)
     W.obstacle(587, 427, 613, 453, top)
     # maintenance hangar + annex (doors face the taxiway)
@@ -262,14 +327,14 @@ def build_airport_buildings(M, col):
     # multi-storey car park (open decks) landside
     for lvl in range(5):
         z = lvl * 3.2
-        K.box(b, -200, 200, 580, 660, z, z + 0.45, mi("concrete"))
+        K.box(b, -200, 200, (580 + LAND_DY), (660 + LAND_DY), z, z + 0.45, mi("concrete"))
         for x in np.arange(-195, 200, 13.0):
-            for y in (582, 658):
+            for y in ((582 + LAND_DY), (658 + LAND_DY)):
                 K.box(b, x - 0.35, x + 0.35, y - 0.35, y + 0.35, z + 0.45, z + 3.2, mi("concrete"))
-        K.box(b, -200, 200, 579.6, 580.2, z + 0.45, z + 1.5, mi("paint_white"))
-        K.box(b, -200, 200, 659.8, 660.4, z + 0.45, z + 1.5, mi("paint_white"))
-    K.box(b, -200, 200, 580, 660, 16.0, 16.45, mi("concrete"))
-    W.obstacle(-200, 580, 200, 660, 16.5)
+        K.box(b, -200, 200, (579.6 + LAND_DY), (580.2 + LAND_DY), z + 0.45, z + 1.5, mi("paint_white"))
+        K.box(b, -200, 200, (659.8 + LAND_DY), (660.4 + LAND_DY), z + 0.45, z + 1.5, mi("paint_white"))
+    K.box(b, -200, 200, (580 + LAND_DY), (660 + LAND_DY), 16.0, 16.45, mi("concrete"))
+    W.obstacle(-200, (580 + LAND_DY), 200, (660 + LAND_DY), 16.5)
     # floodlight masts along the apron front and the GSE road
     for xm in np.arange(-420.0, 421.0, 140.0):
         K.flood_mast(b, xm, 404.0, 26.0, face=-math.pi / 2, lights=W.add_light, group="a2_apron_flood")
@@ -278,14 +343,23 @@ def build_airport_buildings(M, col):
     K.windsock(b, -1100.0, -95.0, heading=2.4)
     K.ils_localizer(b, RWY_LEN / 2 + 300.0, 0.0)
     K.ils_localizer(b, -RWY_LEN / 2 - 300.0, 0.0, axis_ang=math.pi)
+    for er in G.EXTRA_RWYS[AID]:
+        for sx in (-1, 1):
+            K.ils_localizer(b, er["cx"] + sx * (er["len"] / 2 + 300.0), er["cy"], axis_ang=0.0 if sx > 0 else math.pi)
+        K.windsock(b, er["cx"] - er["len"] / 2 + 350, er["cy"] - 90)
+        for xc in (-er["len"] / 2 + 20, 0.0, er["len"] / 2 - 20):
+            K.taxi_sign(b, xc + 20, er["cy"] + 68, 0.0, er["names"][0] + "-" + er["names"][1], mat_bg="red_white")
     K.glideslope_mast(b, -RWY_LEN / 2 + 300.0, -120.0)
     K.glideslope_mast(b, RWY_LEN / 2 - 300.0, 120.0)
-    K.blast_fence(b, -1720, -1600, 150, face=1)
-    for xc, name in zip(CONNS, ("B1", "B2", "B3")):
-        K.taxi_sign(b, xc + 20, 60, 0.0, "09-27", mat_bg="red_white")
+    K.blast_fence(b, -RWY_LEN / 2 - 220, -RWY_LEN / 2 - 100, 150, face=1)
+    for xc, name in zip(CONNS, (GL + "1", GL + "2", GL + "3")):
+        K.taxi_sign(b, xc + 20, 60, 0.0, K09 + "-" + K27, mat_bg="red_white")
         K.taxi_sign(b, xc - 20, TWY_Y - 20, 0.0, name)
     K.taxi_sign(b, -440, TWY_Y + 25, 0.0, "APRON")
-    K.fence(b, [(-30, 700), (-1900, 700), (-1900, -260), (1900, -260), (1900, 700), (30, 700)], step=5.0)
+    fx0 = RWY_LEN / 2 + 400
+    fy0 = min([-260.0] + [er["cy"] - 260 for er in G.EXTRA_RWYS[AID]])
+    if AID != 2:                       # Kansai is an island: the sea wall is the fence
+        K.fence(b, [(-30, 700), (-fx0, 700), (-fx0, fy0), (fx0, fy0), (fx0, 700), (30, 700)], step=5.0)
     b.build("A2_Buildings", K.kit_materials(M), col=col)
 
 
@@ -296,6 +370,8 @@ def build_landside(M, col):
             M["red_white"], M["glass_dark"], M["steel"], M["crane"], M["yellow"], M["containers"]]
     R, CO, WH, GR, PW, PG, DK, RW, GD, ST, CR, YE, CT = range(len(mats))
     mb = C.MeshBuilder()
+    mb.transform = lambda V: V + np.array([0.0, LAND_DY, 0.0])
+    n_l0, n_t0 = len(W.LIGHTS.get("a2_street", {}).get("pos", [])), len(W.TREES)
     rng = np.random.default_rng(530)
 
     def road(x0, x1, y0, y1, z=0.08):
@@ -376,83 +452,38 @@ def build_landside(M, col):
         if abs(x) > 250:
             W.tree(mb, x, 709 + rng.normal(0, 2), rng.uniform(7, 12), rng)
     mb.build("A2_Landside", mats, col=col)
+    pos = W.LIGHTS["a2_street"]["pos"]
+    for i in range(n_l0 + 2, len(pos), 3):
+        pos[i] = round(pos[i] - LAND_DY, 2)
+    for i in range(n_t0, len(W.TREES)):
+        x, y, h, k = W.TREES[i]
+        W.TREES[i] = (x, y + LAND_DY, h, k)
 
 
-# ---------------------------------------------------------------------------
-# town
-# ---------------------------------------------------------------------------
-def build_town(M, col):
-    rng = np.random.default_rng(VARIANT["seed"])
-    ch = W.Chunks(1500.0)
-    mats = [M[s] for s in W.STYLE_ORDER] + [M["roof"], M["paint_grey"], M["steel"], M["road"], M["concrete"],
-                                            M["grass"], M["leaf"], M["leaf2"], M["trunk"], M["glass_tower"]]
-    I_ROOF, I_GREY, I_STEEL, I_ROAD, I_CONC, I_GRASS, I_LEAF, I_LEAF2, I_TRUNK, I_GT = range(6, 16)
-    B, ROAD = 120.0, 18.0
-    centre = VARIANT["centre"]
-    n_bld = 0
-    in_airport = lambda x, y: -2100 < x < 2100 and -380 < y < 760
-    in_corridor = lambda x, y: abs(y) < 700 and abs(x) > 1500
-    for gx in np.arange(-5400.0, 5400.0, B):
-        for gy in np.arange(-3000.0, 4200.0, B):
-            x0, x1, y0, y1 = gx + ROAD / 2, gx + B - ROAD / 2, gy + ROAD / 2, gy + B - ROAD / 2
-            cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-            if in_airport(cx, cy) or in_corridor(cx, cy):
-                continue
-            d = math.hypot(cx - centre[0], cy - centre[1])
-            dens = math.exp(-d / 1700.0)
-            if rng.random() > (0.25 + 0.75 * dens + (0.2 if d < 3200 else 0.0)) * VARIANT["dens"]:
-                continue
-            mb = ch.get(gx, gy)
-            # streets (both sides of the block corner) and the block pavement
-            W.rect(mb, gx + B / 2, gy, B + ROAD, ROAD, 0, 0.06, I_ROAD, ("road", 20.0, ROAD))
-            W.rect(mb, gx, gy + B / 2, B, ROAD, math.pi / 2, 0.061, I_ROAD, ("road", 20.0, ROAD))
-            park = rng.random() < 0.09
-            W.rect(mb, cx, cy, x1 - x0, y1 - y0, 0, 0.05, I_GRASS if park else I_CONC)
-            W.add_light("a2_street", (gx + B / 2, gy + ROAD / 2 + 1.5, 9.0), "#ffc27a", 2.2)
-            W.add_light("a2_street", (gx + ROAD / 2 + 1.5, gy + B / 2, 9.0), "#ffc27a", 2.2)
-            if park:
-                for k in range(int(rng.integers(10, 22))):
-                    W.tree(mb, rng.uniform(x0 + 5, x1 - 5), rng.uniform(y0 + 5, y1 - 5), rng.uniform(6, 12), rng,
-                           I_LEAF if rng.random() < 0.5 else I_LEAF2, I_TRUNK)
-                continue
-            lots = 1 if (dens > 0.45 and rng.random() < 0.5) else int(rng.integers(2, 5))
-            cells = [(x0, y0, x1, y1)]
-            while len(cells) < lots:
-                a, b_, c, e = cells.pop(0)
-                if (c - a) > (e - b_):
-                    m = (a + c) / 2
-                    cells += [(a, b_, m - 2, e), (m + 2, b_, c, e)]
-                else:
-                    m = (b_ + e) / 2
-                    cells += [(a, b_, c, m - 2), (a, m + 2, c, e)]
-            for (a, b_, c, e) in cells:
-                ins = rng.uniform(3, 7)
-                a, b_, c, e = a + ins, b_ + ins, c - ins, e - ins
-                if c - a < 8 or e - b_ < 8:
-                    continue
-                h = 8 + rng.random() ** 2 * 30 + dens * dens * 90 * rng.random()
-                h = min(h, 35.0 if abs(cy) < 1400 else 140.0)
-                if h > 60 and min(c - a, e - b_) > 22:
-                    W.skyscraper(mb, a, b_, c, e, h, int(rng.choice([0, 1, 2])), rng, I_ROOF)
-                else:
-                    if h > 18:
-                        style = int(rng.choice([2, 3, 5]))
-                    else:
-                        style = int(rng.choice([3, 4]))
-                    tw, th = W.FACADES[W.STYLE_ORDER[style]]
-                    h = round(h / (th / 4)) * (th / 4) or th / 4
-                    W.box(mb, a, b_, c, e, 0, h, style, I_ROOF, (tw, th), float(rng.integers(0, 8)))
-                    if (c - a) > 14 and (e - b_) > 14 and rng.random() < 0.7:
-                        for k in range(int(rng.integers(1, 3))):
-                            ux, uy = rng.uniform(a + 3, c - 8), rng.uniform(b_ + 3, e - 8)
-                            W.box(mb, ux, uy, ux + rng.uniform(3, 6), uy + rng.uniform(3, 6), h, h + rng.uniform(1.5, 3.5), I_GREY, I_GREY)
-                n_bld += 1
-            if rng.random() < 0.5:
-                for t in np.arange(x0 + 8, x1 - 4, 18):
-                    W.tree(mb, t, y0 - 3, rng.uniform(6, 9), rng, I_LEAF, I_TRUNK)
-    for k, mb in ch.b.items():
-        mb.build("A2_Town_%d_%d" % k, mats, col=col)
-    print("town buildings:", n_bld)
+def build_local(M, col):
+    """Regional touches around the terminal: Naha's palms and red-tiled entrance gate,
+    snow-country windbreak conifers at New Chitose."""
+    mats = R.lm_materials(M)
+    mb = C.MeshBuilder()
+    rng = np.random.default_rng(90 + AID)
+    if AID == 4:
+        for x in np.arange(-290.0, 291.0, 14.0):
+            R.palm(mb, x + rng.normal(0, 1), 557 + LAND_DY, rng.uniform(8, 12), rng)
+        for y in np.arange(700.0, 900.0, 16.0):
+            for sx in (-1, 1):
+                R.palm(mb, sx * 18 + rng.normal(0, 0.8), y + LAND_DY, rng.uniform(9, 13), rng)
+        for k in range(260):
+            x, y = rng.uniform(-2000, 2000), rng.uniform(760, 1300)
+            R.palm(mb, x, y, rng.uniform(7, 12), rng)
+        gx, gy = 0.0, 568.0 + LAND_DY
+        for sx in (-1, 1):
+            K.box(mb, gx + sx * 9 - 1, gx + sx * 9 + 1, gy - 1, gy + 1, 0, 6.5, R.li("lacquer"))
+        R.hip_roof(mb, gx, gy, 6.5, 22, 5, 2.4, 1.5, R.li("tile_red"), 0.0, upturn=0.4)
+    elif AID == 3:
+        for k in range(900):
+            x, y = rng.uniform(-3200, 3200), rng.uniform(1400, 1650)
+            W.TREES.append((round(x, 1), round(y, 1), round(float(rng.uniform(10, 18)), 1), 0))
+    mb.build("A2_Local", mats, col=col)
 
 
 # ---------------------------------------------------------------------------
@@ -471,11 +502,15 @@ def main():
     stands, signs = build_terminal(M, col)
     build_airport_buildings(M, col)
     build_landside(M, col)
-    build_town(M, col)
+    build_local(M, col)
+    landmarks = R.build_landmarks(AID, M, col, name="A2_Landmarks")
     data = dict(
-        name="remote airport %d" % AID,
-        frame="three.js local frame (+x east, +y up, +z south), origin = runway centre; placed at A2",
-        runway=dict(length=RWY_LEN, width=RWY_W, idents=["09", "27"]),
+        name="%s (%s)" % (AP["name"], AP["icao"]),
+        frame="three.js local frame (x along the main runway, +y up, z = -Blender y), origin = runway centre; "
+              "placed at the airport's world position (geo_data.js)",
+        runway=dict(length=RWY_LEN, width=RWY_W, idents=["09", "27"], names=[K09, K27]),
+        extraRunways=G.EXTRA_RWYS[AID],
+        landmarks=landmarks,
         stands=stands, signs=signs,
         lights=W.LIGHTS,
         trees=[v for t in W.TREES for v in (t[0], t[2], -t[1], t[3])],

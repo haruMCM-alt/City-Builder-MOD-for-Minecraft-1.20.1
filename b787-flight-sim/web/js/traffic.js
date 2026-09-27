@@ -12,6 +12,7 @@ import { hdg3, AIRPORT, aptName } from './atc.js';
 import { PlayerATC } from './playeratc.js';
 import { dressParked, logoById } from './livery.js';
 import { REMOTES, runwayWords } from './airports.js';
+import { GEO } from './geo_data.js';
 import { weatherModel, weatherGSE } from './shading.js';
 import { initGSELivery, dressGSE, renameGSE } from './gselivery.js';
 import { terrainHeight } from './terrain.js';
@@ -701,14 +702,22 @@ export class Traffic {
   // where a flight from home goes: chosen once (the departure board shows it), a random remote
   // airport; another one with a free stand if that one is full when it leaves
   destOf(ac) {
-    if (!ac.destAp) ac.destAp = REMOTES[Math.floor(this.rnd() * REMOTES.length)];
+    if (!ac.destAp) ac.destAp = this._weighted(REMOTES);
     return ac.destAp;
+  }
+
+  // a remote airport picked by its share of Haneda's flights (GEO.traffic.route)
+  _weighted(list) {
+    const w = list.map((ap) => GEO.traffic[ap.id]?.route || 0.1), sum = w.reduce((a, b) => a + b, 0);
+    let r = this.rnd() * sum;
+    for (let i = 0; i < list.length; i++) { r -= w[i]; if (r <= 0) return list[i]; }
+    return list[list.length - 1];
   }
 
   _pickRemote(pref) {
     if (pref && this._a2Stand(pref)) return pref;
     const free = REMOTES.filter((ap) => this._a2Stand(ap));
-    return free.length ? free[Math.floor(this.rnd() * free.length)] : null;
+    return free.length ? this._weighted(free) : null;
   }
 
   _outRoute(ac, ap) {
@@ -883,7 +892,8 @@ export class Traffic {
         const lane = ap.z + ap.laneZ, n2 = aptName(ap.id), rw = Traffic.rwWords(ap);
         const endX = ap.x - sx * ap.conns[2];                       // take-off end of the runway
         if (ac.state === 'R_TAXI') {
-          ac.state = 'R_PARK'; ac.timer = 0; ac.parkFor = 300 + this.rnd() * 420; ac.v = 0;
+          // busier airports turn their aircraft round faster (GEO.traffic.rate)
+          ac.state = 'R_PARK'; ac.timer = 0; ac.parkFor = (300 + this.rnd() * 420) * (0.75 / (GEO.traffic[ap.id]?.rate || 0.5)) ** 0.5; ac.v = 0;
         } else if (ac.state === 'R_PUSH') {
           const pts = [{ x: ac.x, z: lane, v: 8 }, { x: ap.x - sx * 420, z: lane, v: 10 }, { x: ap.x - sx * 420, z: ap.z + ap.twyZ, v: 10 },
             { x: endX, z: ap.z + ap.twyZ, v: 12 }, { x: endX, z: ap.z - 60, v: 6 },

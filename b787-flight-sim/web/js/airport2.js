@@ -26,7 +26,9 @@ export function remoteLights(ap, data) {
   for (const [name, g] of Object.entries(data?.lights || {})) {
     const pos = g.pos.slice();
     for (let i = 0; i < pos.length; i += 3) { pos[i] += ap.x; pos[i + 2] += ap.z; }
-    L[pre + name.replace(/^a\d+_/, '')] = { ...g, pos };
+    const key = pre + name.replace(/^a\d+_/, ''), have = L[key];
+    // 'a2_street' and 'street' (kit pieces without the prefix) are the same group
+    if (have) { have.pos = have.pos.concat(pos); if (g.dir?.length) have.dir = (have.dir || []).concat(g.dir); } else L[key] = { ...g, pos };
   }
   return L;
 }

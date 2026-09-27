@@ -1,21 +1,22 @@
 """
-Procedural airport + city for the flight simulator (Blender / bpy).
+The home airport, Tokyo Haneda (RJTT), and Tokyo's landmarks (Blender / bpy).
 
     python3 build_world.py [--quick]
 
-World frame (Blender): +X east, +Y north, +Z up, metres.  Origin = runway centre.
-The glTF export turns this into three.js (+x east, +y up, +z south).
+Blender frame: +X along runway C (world +x), +Y towards the terminal (world -z), +Z up,
+metres, origin = runway centre.  Haneda's compass north is 247 deg in this frame
+(geo.py), so the main runway is 34R / 16L.  The glTF export turns this into three.js.
 
 Contents
-  * "City Builder International" (RJCB): runway 09/27 3500 m x 60 m with full ICAO
-    markings, parallel taxiway, rapid exits, apron, 14 contact stands with jet
-    bridges, terminal + pier, control tower, maintenance hangars, cargo area,
-    fuel farm, fire station, car park, hotel, ILS / PAPI / approach-light hardware.
-  * a coastal city: downtown skyscrapers, mid/low rise districts, parks, streets,
-    a river with road bridges and a cable-stayed landmark bridge, a 450 m
-    broadcast tower, a container port with gantry cranes.
-  * world.json: runway / ILS data, stands, lights (for the simulator's light
-    renderer, incl. directional PAPI), flat-terrain zone, river and coastline.
+  * runway C 34R/16L 3360 m x 60 m with full ICAO markings, parallel taxiway, rapid exits,
+    apron, 14 contact stands with jet bridges, terminal + pier under an arched roof, the
+    116 m control tower, maintenance hangars, cargo area, fuel farm, fire station, car park,
+    hotel, ILS / PAPI / approach-light hardware
+  * runways A 34L/16R, B 04/22 and D 05/23 (on its island in the bay) with taxiway links
+  * Tokyo's landmarks (real_kit.py): Skytree, Tokyo Tower, Rainbow Bridge, Landmark Tower,
+    Yokohama Bay Bridge, the Aqua-Line with Umihotaru; the city is instanced (city_gen.py)
+  * world.json: runway / ILS data, stands, lights (for the simulator's light renderer, incl.
+    directional PAPI), trees, collision boxes
 """
 import json
 import math
@@ -28,10 +29,17 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C  # noqa: E402
 
+# real_kit / airport_kit import this module by name: run as a script, they must share the
+# light / obstacle / tree registries of __main__ instead of loading a second copy
+if __name__ == "__main__":
+    sys.modules.setdefault("build_world", sys.modules[__name__])
+
 QUICK = "--quick" in sys.argv
 RNG = np.random.default_rng(42)
 
-RWY_LEN, RWY_W = 3500.0, 60.0
+import geo as G  # noqa: E402
+
+RWY_LEN, RWY_W = float(G.AP[1]["rwy"]["len"]), float(G.AP[1]["rwy"]["wid"])
 RWY_X0, RWY_X1 = -RWY_LEN / 2, RWY_LEN / 2
 TWY_Y = 185.0
 TWY_W = 23.0
@@ -48,6 +56,11 @@ PUSH_Y = 340.0                                 # push-back / departure taxilane
 SERVICE_Y = 415.0                              # GSE service road behind the parked tails
 GSE_DEPOTS = [(-690.0, 460.0), (690.0, 460.0)]  # ground-equipment parking at the apron ends
 S_CG_FROM_NOSE = 31.85
+# taxiways to runways A (north of the terminal), B and D (on its island, over the bridge)
+HND_TAXI = [((-1500.0, 185.0), (-1500.0, 1700.0)), ((1500.0, 185.0), (1500.0, 1700.0)), ((-1650.0, 1870.0), (1650.0, 1870.0)),
+            ((-1500.0, 1870.0), (-1500.0, 1700.0)), ((1500.0, 1870.0), (1500.0, 1700.0)),
+            ((-1750.0, 185.0), (-1750.0, -2000.0)), ((-1750.0, -2000.0), (-2454.0, -2418.0)),
+            ((-2702.0, -1605.0), (-1972.0, -3995.0))]
 
 LIGHTS = {}          # name -> dict(color, size, pos[], dir[] (optional), kind)
 
@@ -334,35 +347,16 @@ def build_airfield(M, col):
             rect(pav, xl + sx * (TWY_W / 2 + 7), TWY_Y + TWY_W / 2 + 5, 14, 12, 0, Z_PAV - 0.004, 2)
     rect(pav, 1150, 330, 700, 240, 0, Z_PAV + 0.002, 3)       # maintenance apron
     rect(pav, -1150, 330, 700, 240, 0, Z_PAV + 0.002, 3)      # cargo apron
-    # --- runway markings (white) ------------------------------------------------
-    for sx in (-1, 1):          # sx=+1: east end (rwy 27 threshold)
-        thr = sx * RWY_LEN / 2
-        inward = -sx
-        # piano keys: 16 stripes, 30 m long, 1.8 m wide
-        for i in range(8):
-            for sy in (-1, 1):
-                yy = sy * (3.0 + 1.8 / 2 + i * 3.6)
-                rect(mk, thr + inward * (6 + 15), yy, 30, 1.8, 0, Z_MK, 0)
-        # threshold bar
-        rect(mk, thr + inward * 1.0, 0, 1.8, RWY_W - 2, 0, Z_MK, 0)
-        # designator
-        txt = "27" if sx > 0 else "09"
-        rot = math.pi / 2 if sx > 0 else -math.pi / 2
-        text_mesh(mk, txt, thr + inward * 62, 0, Z_MK, 16.0, rot, 0)
-        # aiming point (400 m) and touchdown zone pairs
-        for sy in (-1, 1):
-            rect(mk, thr + inward * (400 + 30), sy * 11.0, 60, 10, 0, Z_MK, 0)
-            for d, n in ((150, 3), (300, 3), (600, 2), (750, 2), (900, 1)):
-                for k in range(n):
-                    rect(mk, thr + inward * (d + 11), sy * (4.5 + 1.8 / 2 + k * 3.3), 22.5, 1.8, 0, Z_MK, 0)
-    # centreline 30 m stripes / 20 m gaps
-    x = RWY_X0 + 90
-    while x < RWY_X1 - 90:
-        rect(mk, x + 15, 0, 30, 0.9, 0, Z_MK, 0)
-        x += 50
-    # edge lines
-    for sy in (-1, 1):
-        rect(mk, 0, sy * (RWY_W / 2 - 0.9), RWY_LEN, 0.9, 0, Z_MK, 0)
+    # --- runway markings (white): the real names, 34R flown towards +x ---------------
+    import real_kit as R
+    H = G.AP[1]["rwy"]
+    R.runway_markings(mk, 0.0, 0.0, 0.0, RWY_LEN, RWY_W, (H["k09"], H["k27"]), Z_MK, 0)
+    # --- runways A, B, D and the taxiways to them ------------------------------------
+    for er in G.EXTRA_RWYS[1]:
+        R.extra_runway(pav, mk, er["cx"], er["cy"], R.local_ang(1, er["hdg"]), er["len"], er["wid"], er["names"],
+                       Z_PAV, Z_MK, mats=(0, 1, 0))
+    for p0, p1 in HND_TAXI:
+        R.taxi_link(pav, mk, p0, p1, Z_PAV, Z_MK, mats=(2, 1))
     # --- taxiway markings (yellow) ------------------------------------------------
     rect(mk, 0, TWY_Y, RWY_LEN + 40, 0.3, 0, Z_MK, 1)
     for xc in conns:
@@ -553,7 +547,8 @@ def build_terminal(M, col):
     for (a, b, o) in (((px0, py1), (px0, py0), (-1, 0)), ((px1, py0), (px1, py1), (1, 0))):
         K.curtain_wall(tb, a, b, 0.6, 16.0, o, floor=5.2)
     K.box(tb, px0 + 0.4, px1 - 0.4, py0 + 0.4, py1 - 0.4, 0.6, 15.9, mi("dark"), uv=0.1)
-    wave_roof(tb, px0 - 14, px1 + 14, py0 - 10, py1 + 2, 16.2, 3.5, mi("roof"), n=140, waves=7)
+    import real_kit as R
+    R.vault_roof(tb, px0 - 14, px1 + 14, py0 - 10, py1 + 2, 16.2, 4.0, mi("roof"), n=140, end_taper=0.25)
     K.eave_columns(tb, np.arange(px0 + 20, px1 - 10, 40.0), py0 - 8.0, 16.4)
     obstacle(px0, py0, px1, py1, 19.0)
     # --- main hall: five levels of glazing, deep landside canopy over the departures curb
@@ -597,11 +592,11 @@ def build_tower(M, col):
     import airport_kit as K
     tb = C.MeshBuilder()
     x, y = 830.0, 640.0
-    top = K.control_tower(tb, x, y, cab_z=88.0, lights=add_light)
+    top = K.control_tower(tb, x, y, cab_z=92.0, lights=add_light)     # Haneda's tower: 116 m
     obstacle(x - 26, y - 16, x + 26, y + 16, 12.5)
     obstacle(x - 12, y - 12, x + 12, y + 12, top)
     tb.build("ControlTower", K.kit_materials(M), col=col)
-    return dict(x=x, y=y, h=91.0)          # controllers' eye height in the cab
+    return dict(x=x, y=y, h=95.0)          # controllers' eye height in the cab
 
 
 def barrel_hangar(mb, x0, x1, y0, y1, h_wall, h_top, wall, roof, door):
@@ -980,13 +975,15 @@ def build_airport_trees(M, col):
     for k in range(700):
         x = rng.uniform(-2400, 2400)
         y = rng.uniform(870, 1120)
+        if abs(abs(x) - 1500) < 40 or x < -1900:
+            continue
         tree(mb, x, y, rng.uniform(6, 12), rng, 0, 2)
     for k in range(250):
         x = rng.uniform(-900, 900)
         y = rng.uniform(730, 760)
         tree(mb, x, y, rng.uniform(5, 9), rng, 1, 2)
     # airport access road
-    for x in np.arange(-2300, 2450, 20):
+    for x in np.arange(-1440, 1440, 20):
         rect(mb, x + 10, 880, 20, 24, 0, 0.05, 3, ("road", 20.0, 24.0))
         if int(x) % 60 == 0:
             add_light("street", (x, 868, 10), "#ffc27a", 2.2)
@@ -1010,25 +1007,29 @@ def main():
     tower = build_tower(M, col)
     build_airport_buildings(M, col)
     build_airport_trees(M, col)
-    build_city(M, col)
-    lm = build_landmarks(M, col)
+    import real_kit as R
+    placed = R.build_landmarks(1, M, col)
+    sky = next(p for p in placed if p[0] == "skytree")
     build_tree_prototypes(M, col)
 
+    HA = G.AP[1]
+
     def rwy(ident, thr_x, hdg):
-        return dict(ident=ident, threshold=[thr_x, 0.0, 0.0], heading=hdg, length=RWY_LEN, width=RWY_W,
-                    elevation=0.0, ils=dict(course=hdg, glideslope=3.0, gsAntennaFromThr=300.0,
-                                            freq="110.30" if ident == "27" else "109.50"))
+        # ident: the layout key ('27' flown towards -x); name / heading: Haneda's real ones
+        hdg = (hdg + HA["north"]) % 360
+        return dict(ident=ident, name=HA["rwy"]["k" + ident], threshold=[thr_x, 0.0, 0.0], heading=hdg, length=RWY_LEN,
+                    width=RWY_W, elevation=0.0, ils=dict(course=hdg, glideslope=3.0, gsAntennaFromThr=300.0,
+                                                         freq=HA["ils"]["k" + ident]))
     world = dict(
-        name="City Builder International (RJCB)",
+        name="Tokyo Haneda (RJTT)",
         frame="three.js: +x east, +y up, +z south; metres",
         runways=[rwy("27", RWY_X1, 270.0), rwy("09", RWY_X0, 90.0)],
         stands=stands,
         signs=signs,
         tower=dict(pos=[tower["x"], tower["h"], -tower["y"]]),
-        landmarkTower=[lm["tower"][0], lm["tower"][2], -lm["tower"][1]],
-        flatZone=dict(x0=FLAT["x0"], x1=FLAT["x1"], z0=-FLAT["y1"], z1=-FLAT["y0"]),
-        coastZ=-COAST_Y,
-        river=dict(x=RIVER_X, width=RIVER_W, z0=-9800.0, z1=-COAST_Y),
+        landmarkTower=[sky[1], sky[3] + 634.0, -sky[2]],
+        landmarks=placed,
+        extraRunways=G.EXTRA_RWYS[1],
         lights=LIGHTS,
         # ground movement network (three.js x, z = -design y)
         ground=dict(twyZ=-TWY_Y, taxilaneZ=-TAXILANE_Y, pushZ=-PUSH_Y, serviceZ=-SERVICE_Y, apronZ=[-APRON_Y1, -APRON_Y0],

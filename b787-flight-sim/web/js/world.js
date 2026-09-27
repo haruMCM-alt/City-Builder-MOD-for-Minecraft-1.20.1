@@ -420,6 +420,8 @@ uniform sampler2D uDetail;
 ${FLATS_GLSL}
 const vec2 cCTS = vec2(${GEO.airports[2].x.toFixed(1)}, ${GEO.airports[2].z.toFixed(1)});
 const vec2 cOKA = vec2(${GEO.airports[3].x.toFixed(1)}, ${GEO.airports[3].z.toFixed(1)});
+const int N_URB = ${GEO.urban.length};
+const vec4 cUrb[N_URB] = vec4[N_URB](${GEO.urban.map((u) => `vec4(${u[0].toFixed(1)}, ${u[1].toFixed(1)}, ${u[2].toFixed(1)}, ${u[3].toFixed(3)})`).join(', ')});
 float tfH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 ${GROUND_GLSL}
 float gH = 0.0;
@@ -482,6 +484,31 @@ varying vec3 vTW; varying float vSlope;`)
     float farm = smoothstep(0.38, 0.5, d3.b * 0.8 + d2.r * 0.2) * (1.0 - fm) * (1.0 - smoothstep(60.0, 220.0, h))
                * smoothstep(0.5, 2.0, h) * (1.0 - smoothstep(0.06, 0.18, vSlope)) * outside;
     col = mix(col, fc, farm);
+  }
+  // urban fabric of Tokyo, Osaka, Sapporo and Naha (geo.py districts): roofs and paving in
+  // ~90 m blocks with darker streets and pocket parks under the instanced buildings
+  {
+    float urb = 0.0;
+    for (int i = 0; i < N_URB; i++) {
+      vec4 u = cUrb[i];
+      float d = length(vTW.xz - u.xy) + (nA - 0.5) * u.z * 0.35;
+      urb = max(urb, u.w * (1.0 - smoothstep(u.z * 0.5, u.z, d)));
+    }
+    urb *= smoothstep(0.4, 2.5, h) * (1.0 - smoothstep(0.12, 0.3, vSlope)) * (inFlats(vTW.xz, 150.0) ? 0.0 : 1.0);
+    if (urb > 0.001) {
+      vec2 bc = floor(vTW.xz / 90.0), bf = fract(vTW.xz / 90.0);
+      float edge = min(min(bf.x, 1.0 - bf.x), min(bf.y, 1.0 - bf.y)) * 90.0;
+      float street = 1.0 - smoothstep(5.0, 6.0 + tpx, edge);
+      float lt = tfH(floor(vTW.xz / 22.0) + bc * 3.1);
+      vec3 lot = lt < 0.3 ? vec3(0.27, 0.26, 0.245) : lt < 0.55 ? vec3(0.13, 0.13, 0.135)
+               : lt < 0.8 ? vec3(0.31, 0.285, 0.25) : vec3(0.18, 0.19, 0.2);
+      lot *= 0.8 + 0.35 * d1.r;
+      float park = step(tfH(bc + 9.7), 0.1 * (1.2 - urb));
+      lot = mix(lot, grass * 1.1, park);
+      vec3 ucol = mix(lot, vec3(0.085, 0.085, 0.09) * (0.9 + 0.2 * nB), street);
+      col = mix(col, ucol, clamp(urb * 1.5, 0.0, 0.94));
+      gH *= 1.0 - clamp(urb * 1.5, 0.0, 1.0) * 0.8;
+    }
   }
   vec3 rock = vec3(0.24, 0.225, 0.2) * (0.7 + 0.5 * d1.b) * (0.8 + 0.4 * nB);
   gH += smoothstep(0.22, 0.42, vSlope) * (nB - 0.5) * 0.4;
