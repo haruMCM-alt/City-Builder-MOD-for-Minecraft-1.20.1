@@ -70,6 +70,8 @@ void main() {
     occ += fall * max((dot(v, Nn) - 0.0015 * w) * inversesqrt(vv + 1e-4) - 0.15, 0.0);
   }
   float ao = clamp(1.0 - occ * 2.2 / float(N), 0.0, 1.0);
+  // surfaces seen at grazing angles (the ground ahead) get unreliable depth normals: fade out
+  ao = mix(ao, 1.0, smoothstep(0.35, 0.12, abs(dot(Nn, normalize(-P)))));
   ao = mix(ao, 1.0, smoothstep(uMaxDist * 0.6, uMaxDist, w));
   gl_FragColor = vec4(ao, w, 0.0, 1.0);
 }`;

@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL, terrainHeight } from './terrain.js';
 import { patchFacade } from './shading.js';
+import { GROUND_GLSL } from './ground.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
 import { clamp, smoothstep, lerp, mulberry32, DEG } from './util.js';
 
@@ -127,8 +128,16 @@ function puffCanvas(size = 128) {
 // tyre rubber in the touchdown zones concentrated on the main-gear and nose-gear tracks,
 // worn centre lanes, fine aggregate grain and longitudinal paving joints.
 function patchPavement(m) {
-  const asphalt = m.name === 'W_Asphalt' || m.name === 'W_TaxiAsphalt';
-  const concrete = m.name === 'W_Concrete';
+  const kind = { W_Asphalt: 'asphalt', W_TaxiAsphalt: 'taxi', W_Shoulder: 'shoulder', W_Concrete: 'concrete',
+    W_MarkWhite: 'mark', W_MarkYellow: 'mark', W_Road: 'road' }[m.name];
+  const asphalt = kind === 'asphalt' || kind === 'taxi' || kind === 'shoulder' || kind === 'road';
+  const concrete = kind === 'concrete';
+  const mark = kind === 'mark';
+  m.metalness = 0;
+  m.envMapIntensity = 0.42;      // sky light : sun about 1 : 5 on a clear day (was ~1 : 1)
+  // aged asphalt reflects ~11 %, concrete ~33 %: the colours below are physical albedos
+  const base = { asphalt: '0.106, 0.099, 0.090', taxi: '0.092, 0.088, 0.082', shoulder: '0.140, 0.134, 0.124',
+    road: '0.085, 0.082, 0.078' }[kind];
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uWet = WET.uWet;
     sh.vertexShader = sh.vertexShader
@@ -137,59 +146,121 @@ function patchPavement(m) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec3 vRwP;
+${GROUND_GLSL}
 float rwHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float rwNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(rwHash(i), rwHash(i + vec2(1, 0)), f.x), mix(rwHash(i + vec2(0, 1)), rwHash(i + vec2(1, 1)), f.x), f.y); }
 float rwRubber = 0.0;
 float rwWet = 0.0;
+float gH = 0.0;
+float gRough = 0.9;
 uniform float uWet;`)
       .replace('#include <map_fragment>', `#include <map_fragment>
 {
   vec3 wp = vRwP;
+  vec2 p = wp.xz;
   float ax = abs(wp.x), az = abs(wp.z);
-  float aa = clamp(1.0 - length(fwidth(wp.xz)) * 12.0, 0.0, 1.0);     // fade detail with distance
-  if (az < 30.5 && ax < 1760.0) {
-    float d = 1750.0 - ax;                                            // metres past the threshold
+  float px = length(fwidth(p));                          // metres per pixel
+  float aa = 1.0 - smoothstep(0.015, 0.2, px);           // millimetre-scale detail
+  float mm = 1.0 - smoothstep(0.25, 2.5, px);            // decimetre-scale detail
+  bool rwy = az < 30.5 && ax < 1760.0;
+  if (rwy) {
+    float d = 1750.0 - ax;                                 // metres past the threshold
     float tdz = smoothstep(90.0, 260.0, d) * (1.0 - smoothstep(650.0, 1250.0, d));
     float tracks = exp(-pow((az - 4.9) / 1.7, 2.0)) + 0.55 * exp(-pow(az / 1.3, 2.0));
     float spread = smoothstep(12.0, 3.0, az);
     float streak = rwNoise(vec2(wp.x * 0.04, wp.z * 2.2)) * 0.55 + rwNoise(vec2(wp.x * 0.35, wp.z * 7.0)) * 0.45;
     rwRubber = clamp(tdz * (0.6 * tracks + 0.4 * spread) * (0.35 + streak), 0.0, 1.0);
-    float wear = 0.10 * spread * (0.6 + 0.4 * rwNoise(vec2(wp.x * 0.02, wp.z * 0.7)));
-    diffuseColor.rgb *= 1.0 - 0.78 * rwRubber - wear;
   }
   ${asphalt ? `
-  float g = rwNoise(wp.xz * 17.0) * 0.55 + rwNoise(wp.xz * 53.0) * 0.45;
-  float blot = rwNoise(wp.xz * 0.11) * 0.6 + rwNoise(wp.xz * 0.5) * 0.4;
-  diffuseColor.rgb *= mix(1.0, 0.88 + 0.24 * g, aa) * (0.93 + 0.14 * blot);
-  if (az < 30.5 && ax < 1760.0) {
-    float jl = 1.0 - smoothstep(0.0, 0.035, abs(fract(wp.z / 7.5 + 0.5) - 0.5) * 7.5);
-    float jt = 1.0 - smoothstep(0.0, 0.03, abs(fract(wp.x / 15.0 + 0.5) - 0.5) * 15.0);
-    diffuseColor.rgb *= 1.0 - (0.22 * jl + 0.12 * jt) * aa;
-  }` : ''}
+  // paving lanes along the runway, repair patches, aggregate stones in the bitumen,
+  // wandering cracks and the sealant over the lane joints
+  float lane = rwy ? gHash(vec2(floor((wp.z + 30.0) / 7.5), 1.0)) : 0.5;
+  float patchN = gFbm(p * 0.03);
+  float repair = smoothstep(0.78, 0.8, gNoise(floor(p / 6.0) * 0.37 + 11.0)) * mm;
+  float cell = gCell(p * 26.0);
+  float stone = (1.0 - smoothstep(0.16, 0.4, cell)) * gHash(floor(p * 26.0) + 3.0);
+  float grain = gNoise(p * 95.0);
+  float agg = mix(1.0, (0.84 + 0.28 * grain) * (1.0 + 0.7 * stone), aa);
+  // rare thin random cracks, and on the runway transverse cracks every 8-25 m sealed with
+  // tar ("tar snakes"), slightly wandering and not always across the full width
+  float crackMask = smoothstep(0.62, 0.8, gFbm(p * 0.045 + 7.0));
+  float cr = gCrack(p * 0.33, 0.006) * crackMask * mm * 0.7;
+  if (rwy) {
+    float cx = floor(wp.x / 14.0);
+    float xc = cx * 14.0 + 2.5 + gHash(vec2(cx, 5.0)) * 9.0 + (gNoise(vec2(wp.z * 0.18, cx)) - 0.5) * 1.6
+             + (gNoise(vec2(wp.z * 1.3, cx * 1.7)) - 0.5) * 0.22;
+    float present = step(0.3, gHash(vec2(cx, 9.0))) * smoothstep(0.25, 0.5, gNoise(vec2(wp.z * 0.05, cx * 3.0)));
+    cr = max(cr, (1.0 - smoothstep(0.02, 0.035 + px, abs(wp.x - xc))) * present * mm);
+  }
+  float seal = rwy ? (1.0 - smoothstep(0.025, 0.08, abs(fract((wp.z + 30.0) / 7.5 + 0.5) - 0.5) * 7.5)) * mm : 0.0;
+  vec3 col = vec3(${base}) * (0.93 + 0.12 * lane) * (0.88 + 0.24 * patchN) * agg;
+  col *= 1.0 - 0.18 * repair;
+  col = mix(col, vec3(0.045, 0.043, 0.041), max(cr * 0.75, seal * 0.35));
+  // bleached, oxidised surface away from the traffic, darker where the wheels run
+  if (rwy) col *= 1.0 - 0.12 * smoothstep(14.0, 4.0, az) - 0.8 * rwRubber;
+  diffuseColor.rgb = col;
+  gH = ((0.3 - cell) * 0.006 * (0.5 + stone) + (grain - 0.5) * 0.0015) * aa - cr * 0.004 + seal * 0.0015;
+  gRough = 0.93 - 0.2 * seal - 0.08 * repair;` : ''}
   ${concrete ? `
-  // apron slabs: 7.5 m joints, per-slab tone, tyre marks and oil / fuel stains
-  vec2 sl = floor(wp.xz / 7.5);
-  float slab = rwHash(sl);
-  vec2 fj = abs(fract(wp.xz / 7.5 + 0.5) - 0.5) * 7.5;
-  float joint = 1.0 - smoothstep(0.0, 0.05, min(fj.x, fj.y));
-  float g = rwNoise(wp.xz * 21.0) * 0.5 + rwNoise(wp.xz * 3.1) * 0.5;
-  float oil = smoothstep(0.62, 0.8, rwNoise(wp.xz * 0.23) * 0.6 + rwNoise(wp.xz * 1.3) * 0.4);
-  float blot = rwNoise(wp.xz * 0.04);
-  diffuseColor.rgb *= (0.9 + 0.1 * slab) * mix(1.0, 0.9 + 0.16 * g, aa) * (0.9 + 0.14 * blot) * (1.0 - 0.35 * oil) * (1.0 - 0.45 * joint * aa);
-  rwRubber = 0.4 * oil;` : ''}
+  // apron slabs: 7.5 m joints with dark sealant, per-slab tone, replaced slabs, broom
+  // texture, corner cracks, tyre marks and oil / hydraulic stains
+  vec2 sl = floor(p / 7.5);
+  vec2 fr = fract(p / 7.5);
+  float slab = gHash(sl);
+  float newer = step(0.93, gHash(sl + 7.0));
+  vec2 fj = abs(fr - 0.5) * 7.5;
+  float joint = 1.0 - smoothstep(0.012, 0.03 + px * 0.5, 3.75 - max(fj.x, fj.y));
+  float broom = gNoise(vec2(p.x * 1.3, p.y * 60.0)) * 0.6 + gNoise(vec2(p.x * 3.1, p.y * 140.0)) * 0.4;
+  float sand = gNoise(p * 120.0);
+  float blot = gFbm(p * 0.06);
+  float oil = smoothstep(0.64, 0.8, gFbm(p * 0.22 + 3.0)) * (0.6 + 0.4 * gNoise(p * 2.3));
+  float rust = smoothstep(0.8, 0.9, gFbm(p * 0.5 + 9.0)) * 0.5;
+  float tyre = smoothstep(0.7, 0.85, gNoise(vec2(p.x * 0.05, p.y * 1.1) + sl.y * 3.1)) * mm;
+  // corner crack: a short, slightly jagged line cutting one corner of some slabs
+  float cmask = step(0.8, gHash(sl + 13.0));
+  vec2 cq = vec2(gHash(sl + 21.0) < 0.5 ? fr.x : 1.0 - fr.x, gHash(sl + 22.0) < 0.5 ? fr.y : 1.0 - fr.y) * 7.5;
+  float cL = 1.2 + 2.2 * gHash(sl + 23.0);
+  float cd = abs(cq.x + cq.y * (0.7 + 0.6 * gHash(sl + 24.0)) - cL + (gNoise(p * 3.0) - 0.5) * 0.25);
+  float ccr = (1.0 - smoothstep(0.008, 0.02 + px, cd)) * step(cq.x, cL) * step(cq.y, cL * 1.4) * cmask * mm;
+  vec3 col = vec3(0.285, 0.275, 0.255) * (0.92 + 0.12 * slab) * (0.9 + 0.2 * blot);
+  col = mix(col, vec3(0.34, 0.33, 0.30), newer);
+  col *= mix(1.0, (0.9 + 0.12 * broom) * (0.93 + 0.1 * sand), aa);
+  col = mix(col, vec3(0.08, 0.075, 0.07), oil * 0.55);
+  col = mix(col, vec3(0.30, 0.21, 0.14), rust * 0.35);
+  col *= 1.0 - 0.18 * tyre;
+  col = mix(col, vec3(0.05, 0.05, 0.05), max(joint * 0.85 * mm, ccr * 0.8));
+  diffuseColor.rgb = col;
+  rwRubber = 0.5 * oil;
+  gH = (broom - 0.5) * 0.0012 * aa + (sand - 0.5) * 0.0006 * aa - joint * 0.008 * mm - ccr * 0.003;
+  gRough = 0.86 - 0.3 * oil;` : ''}
+  ${mark ? `
+  // paint: worn and chipped (more in the touchdown zone), slightly raised
+  // worn zones where the paint has thinned: the tops of the aggregate show through as fine
+  // dark speckles (not blotches); most wear where the wheels run
+  float worn = smoothstep(0.45, 0.8, gFbm(p * 0.6)) * 0.6 + (rwy ? 0.6 * rwRubber : 0.0);
+  float fine = gNoise(p * 70.0) * 0.6 + (1.0 - smoothstep(0.1, 0.35, gCell(p * 26.0))) * 0.4;
+  float wear = smoothstep(1.0 - worn * 0.7, 1.05 - worn * 0.6, fine) * mm;
+  diffuseColor.rgb = mix(diffuseColor.rgb * 0.8 * (0.94 + 0.08 * gNoise(p * 9.0)), vec3(0.1, 0.095, 0.09), wear * 0.9);
+  diffuseColor.rgb *= 1.0 - 0.7 * rwRubber;
+  gH = (1.0 - wear) * 0.0012 * aa;
+  gRough = 0.72;` : ''}
   if (uWet > 0.0) {
     // water fills the low spots first: puddles, then a continuous film
     float pud = smoothstep(0.42, 0.7, rwNoise(wp.xz * 0.07) * 0.7 + rwNoise(wp.xz * 0.31) * 0.3);
     rwWet = uWet * mix(0.55, 1.0, pud);
     diffuseColor.rgb *= 1.0 - 0.42 * rwWet;
+    gH *= 1.0 - rwWet * pud;                              // standing water is flat
   }
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+roughnessFactor = gRough;
 roughnessFactor *= 1.0 - 0.3 * rwRubber;
-roughnessFactor = mix(roughnessFactor, 0.12, rwWet * 0.85);`);
+roughnessFactor = mix(roughnessFactor, 0.08, rwWet * 0.85);`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+normal = gBump(normal, - vViewPosition, gH, 1.0);`);
   };
-  m.customProgramCacheKey = () => 'rwy2-' + (asphalt ? 'a' : concrete ? 'c' : 'm');
+  m.customProgramCacheKey = () => 'rwy3-' + kind;
 }
 
 export function glowTexture() {
@@ -320,7 +391,7 @@ export class World {
     detail.wrapS = detail.wrapT = THREE.RepeatWrapping;
     detail.colorSpace = THREE.NoColorSpace;
     detail.anisotropy = 8;
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0, envMapIntensity: 0.42 });
     const F = TERRAIN.flat, Rv = TERRAIN.river;
     this.terrainUniforms = {
       uFlat: { value: new THREE.Vector4(F.x0, F.x1, F.z0, F.z1) },
@@ -352,6 +423,9 @@ vTW = vec3(wxz.x, h0, wxz.y);`)
 uniform sampler2D uDetail; uniform vec4 uFlat;
 ${FLATS_GLSL}
 float tfH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+${GROUND_GLSL}
+float gH = 0.0;
+float gRough = 0.97;
 varying vec3 vTW; varying float vSlope;`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 {
@@ -359,13 +433,28 @@ varying vec3 vTW; varying float vSlope;`)
   vec3 d2 = texture2D(uDetail, vTW.xz / 410.0).rgb;
   vec3 d3 = texture2D(uDetail, vTW.xz / 5300.0).rgb;
   float h = vTW.y;
-  vec3 grass = mix(vec3(0.11, 0.19, 0.06), vec3(0.22, 0.29, 0.10), d2.r);
-  grass = mix(grass, vec3(0.36, 0.34, 0.17), smoothstep(0.62, 0.8, d3.g) * 0.6);
-  grass *= 0.78 + 0.44 * d1.r;
-  // mowed airport infield
+  // grass at real-world albedo (lush ~0.07, dry ~0.2): tones mixed at several scales, dry
+  // and lush patches, and close up clumps, bare soil and single blades
+  float tpx = length(fwidth(vTW.xz));                    // metres per pixel
+  float nearC = 1.0 - smoothstep(0.06, 0.5, tpx);        // clump scale visible
+  float nearB = 1.0 - smoothstep(0.008, 0.06, tpx);      // blade scale visible
+  float nA = gFbm(vTW.xz / 55.0);
+  float nB = gFbm(vTW.xz / 7.5);
+  float nC = gNoise(vTW.xz / 1.1) * 0.6 + gNoise(vTW.xz / 0.37) * 0.4;
+  float nD = gNoise(vTW.xz * 7.0) * 0.6 + gNoise(vTW.xz * 19.0) * 0.4;
+  vec3 lush = vec3(0.052, 0.095, 0.024), midG = vec3(0.10, 0.145, 0.042), dry = vec3(0.23, 0.205, 0.105);
+  vec3 grass = mix(lush, midG, smoothstep(0.25, 0.75, d2.r * 0.55 + nA * 0.45));
+  grass = mix(grass, dry, smoothstep(0.58, 0.82, d3.g * 0.55 + nA * 0.45) * 0.75);
+  grass *= 0.8 + 0.4 * mix(d1.r, nB, 0.6);
+  grass *= mix(1.0, 0.72 + 0.56 * nC, nearC);
+  float soil = smoothstep(0.74, 0.86, nB * 0.6 + nC * 0.4) * nearC * 0.6;
+  grass = mix(grass, vec3(0.13, 0.10, 0.07) * (0.8 + 0.4 * nD), soil);
+  grass *= mix(1.0, 0.7 + 0.6 * nD, nearB);
+  // mowed airport infield: alternating stripes, greener where it is watered by the drains
   float airport = step(-2750.0, vTW.x) * step(vTW.x, 2500.0) * step(-1150.0, vTW.z) * step(vTW.z, 1390.0);
-  grass = mix(grass, grass * (0.92 + 0.12 * step(0.5, fract(vTW.x / 24.0))) * vec3(1.05, 1.08, 0.95), airport);
-  vec3 forest = vec3(0.07, 0.12, 0.05) * (0.75 + 0.5 * d1.g);
+  grass = mix(grass, grass * (0.9 + 0.14 * step(0.5, fract(vTW.x / 24.0))) * vec3(0.95, 1.06, 0.9), airport);
+  gH = ((nB - 0.5) * 0.08 + (nC - 0.5) * 0.05 * nearC + (nD - 0.5) * 0.02 * nearB) * (1.0 - soil * 0.5);
+  vec3 forest = vec3(0.035, 0.065, 0.022) * (0.7 + 0.6 * d1.g) * (0.8 + 0.4 * nB);
   float fm = smoothstep(0.52, 0.6, d3.r * 0.7 + d2.b * 0.3) * smoothstep(15.0, 60.0, h);
   vec3 col = mix(grass, forest, fm);
   // farmland patchwork outside the city: rotated field blocks, crops, soil, hedgerows
@@ -377,8 +466,8 @@ varying vec3 vTW; varying float vSlope;`)
     vec2 fsz = vec2(230.0, 150.0) * (0.8 + 0.5 * tfH(blk + 5.0));
     vec2 cell = floor(r / fsz), fr = fract(r / fsz);
     float hc = tfH(cell + blk * 37.0);
-    vec3 fc = hc < 0.28 ? vec3(0.17, 0.25, 0.07) : hc < 0.46 ? vec3(0.34, 0.31, 0.15)
-            : hc < 0.62 ? vec3(0.24, 0.18, 0.11) : hc < 0.8 ? vec3(0.12, 0.21, 0.06) : vec3(0.42, 0.38, 0.19);
+    vec3 fc = hc < 0.28 ? vec3(0.085, 0.14, 0.035) : hc < 0.46 ? vec3(0.25, 0.22, 0.11)
+            : hc < 0.62 ? vec3(0.14, 0.105, 0.07) : hc < 0.8 ? vec3(0.06, 0.115, 0.03) : vec3(0.31, 0.27, 0.13);
     fc *= 0.82 + 0.3 * d1.r + 0.12 * (tfH(cell + 3.3) - 0.5);
     float px = length(fwidth(r));
     float rows = step(0.5, fract(r.x / 3.2 + hc * 7.0)) * (1.0 - smoothstep(0.4, 1.6, px));
@@ -392,16 +481,19 @@ varying vec3 vTW; varying float vSlope;`)
                * smoothstep(0.5, 2.0, h) * (1.0 - smoothstep(0.06, 0.18, vSlope)) * outside;
     col = mix(col, fc, farm);
   }
-  vec3 rock = vec3(0.33, 0.31, 0.28) * (0.7 + 0.5 * d1.b);
+  vec3 rock = vec3(0.24, 0.225, 0.2) * (0.7 + 0.5 * d1.b) * (0.8 + 0.4 * nB);
+  gH += smoothstep(0.22, 0.42, vSlope) * (nB - 0.5) * 0.4;
   col = mix(col, rock, smoothstep(0.22, 0.42, vSlope));
   col = mix(col, rock, smoothstep(750.0, 1150.0, h + d2.g * 250.0));
   float snow = smoothstep(1300.0, 1500.0, h + d2.r * 200.0) * (1.0 - smoothstep(0.45, 0.7, vSlope));
   col = mix(col, vec3(0.9, 0.93, 0.97), snow);
-  vec3 sand = vec3(0.60, 0.54, 0.41) * (0.85 + 0.3 * d1.r);
+  vec3 sand = vec3(0.42, 0.37, 0.27) * (0.85 + 0.3 * d1.r) * mix(1.0, 0.85 + 0.3 * nD, nearB);
   col = mix(col, sand, smoothstep(-0.05, -1.2, h));
   col = mix(col, vec3(0.16, 0.19, 0.17), smoothstep(-6.0, -30.0, h));
   diffuseColor.rgb = col;
-}`);
+}`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+normal = gBump(normal, - vViewPosition, gH, 1.0);`);
     };
     this.terrain = new THREE.Mesh(geo, mat);
     this.terrain.frustumCulled = false;
@@ -422,6 +514,45 @@ varying vec3 vTW; varying float vSlope;`)
       normalScale: new THREE.Vector2(0.28, 0.28), envMapIntensity: 1.0, clearcoat: 0.0,
     });
     this.waterNormal = nt;
+    // three wave scales (swell, wind waves, ripples) drifting in different directions break the
+    // tiling; the depth from the terrain gives shallow water its colour and the shore its foam
+    this.waterU = { uWTime: { value: 0 }, uWaterLevel: { value: TERRAIN.waterLevel } };
+    this.waterMat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, this.waterU, this.terrainUniforms);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWW;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+varying vec3 vWW;
+uniform float uWTime, uWaterLevel;
+${TERRAIN_GLSL}
+${GROUND_GLSL}
+float wFoam = 0.0;`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  float dist = length(vWW - cameraPosition);
+  float depth = 60.0;
+  if (dist < 9000.0) depth = uWaterLevel - terrainHeight(vWW.xz);
+  // deep water: dark blue-green body colour, shallow: sand showing through (turquoise)
+  vec3 deep = vec3(0.012, 0.045, 0.06), shallow = vec3(0.06, 0.2, 0.19), sandC = vec3(0.3, 0.27, 0.19);
+  float sh = exp(-max(depth, 0.0) / 3.5);
+  vec3 wc = mix(deep, shallow, exp(-max(depth, 0.0) / 14.0));
+  wc = mix(wc, sandC, sh * 0.55);
+  // breaking foam along the shore, pulsing with the swell
+  float swell = 0.5 + 0.5 * sin(uWTime * 0.8 - depth * 2.2 + gNoise(vWW.xz * 0.05) * 6.0);
+  float fn = gFbm(vWW.xz * 0.35 + vec2(uWTime * 0.05, 0.0));
+  wFoam = smoothstep(1.4, 0.2, depth) * smoothstep(0.35, 0.75, fn * 0.7 + swell * 0.5) * step(-0.5, depth);
+  diffuseColor.rgb = mix(wc, vec3(0.8, 0.82, 0.82), wFoam) * diffuse;
+}`)
+        .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;', `vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
+  vec3 mapN2 = texture2D( normalMap, vNormalMapUv * 0.27 + vec2( uWTime * 0.0021, - uWTime * 0.0033 ) ).xyz * 2.0 - 1.0;
+  vec3 mapN3 = texture2D( normalMap, vNormalMapUv * 2.3 + vec2( - uWTime * 0.021, uWTime * 0.014 ) ).xyz * 2.0 - 1.0;
+  float wfade = clamp( 1.0 - length( fwidth( vNormalMapUv ) ) * 3.0, 0.35, 1.0 );
+  mapN = normalize( vec3( ( mapN.xy + mapN2.xy * 1.1 + mapN3.xy * 0.45 * wfade ) * wfade * ( 1.0 - wFoam * 0.6 ), mapN.z ) );`)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
+    };
     // tessellated (not a single quad) so logarithmic depth stays precise near the camera
     const g = World.radialGrid(96, size / 2);
     const n = g.getAttribute('normal');
@@ -453,11 +584,8 @@ varying vec3 vTW; varying float vSlope;`)
         }
         if (m.name === 'W_GlassTower' || m.name === 'W_Sign') this.emissiveMats.push(m);
         if (m.map) m.map.anisotropy = 8;
-        if (m.name === 'W_Asphalt' || m.name === 'W_TaxiAsphalt') m.color.setScalar(0.62);
-        if (['W_Asphalt', 'W_TaxiAsphalt', 'W_MarkWhite', 'W_MarkYellow', 'W_Concrete'].includes(m.name)) patchPavement(m);
+        if (['W_Asphalt', 'W_TaxiAsphalt', 'W_Shoulder', 'W_MarkWhite', 'W_MarkYellow', 'W_Concrete', 'W_Road'].includes(m.name)) patchPavement(m);
         if (m.name.startsWith('W_facade_') || m.name === 'W_GlassTower' || m.name === 'W_Curtain') patchFacade(m);
-        if (m.name === 'W_Shoulder') m.color.setScalar(0.75);
-        if (m.name === 'W_Concrete') m.color.setScalar(0.66);
         if (m.name === 'W_Roof' || m.name === 'W_PaintWhite') m.color.multiplyScalar(0.72);
       }
       o.receiveShadow = true;
@@ -999,7 +1127,8 @@ varying vec3 vTW; varying float vSlope;`)
     this.terrainUniforms.uCenter.value.set(cx, cz);
     this.water.position.x = cx; this.water.position.z = cz;
     this.waterNormal.offset.set(cx / 55 + this.time * 0.012, -cz / 55 + this.time * 0.007);
-    this.waterMat.color.setRGB(0.03 + 0.05 * day, 0.10 * day + 0.01, 0.14 * day + 0.02);
+    this.waterMat.color.setRGB(0.35 + 0.65 * day, 0.35 + 0.65 * day, 0.4 + 0.6 * day);   // tints the shader's body colour
+    if (this.waterU) this.waterU.uWTime.value = this.time;
     // emissive windows at night
     const em = this.night;
     for (const m of this.emissiveMats) m.emissiveIntensity = m.name === 'W_GlassTower' || m.name === 'W_Sign' ? em * 2 : em * 1.4;
@@ -1036,6 +1165,6 @@ varying vec3 vTW; varying float vSlope;`)
       this.deck.material.color.setRGB(0.62 * day + 0.03, 0.65 * day + 0.03, 0.7 * day + 0.04);
       this.deck.material.map.offset.set(camera.position.x / 3500, -camera.position.z / 3500);
     }
-    this.renderer.toneMappingExposure = lerp(0.95, 0.45, day);
+    this.renderer.toneMappingExposure = lerp(0.95, 0.32, day);
   }
 }
