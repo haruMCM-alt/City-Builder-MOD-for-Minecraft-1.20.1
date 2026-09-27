@@ -1152,7 +1152,7 @@ class App {
       if (c.loaded || c.loading || c.failed) continue;
       if (Math.hypot(cam.x - c.ap.x, cam.z - c.ap.z) > 90000) continue;
       c.loading = true;
-      fetch(ASSET + 'city' + c.ap.id + '.bin').then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((buf) => {
+      fetch(ASSET + 'city' + c.ap.id + (window.B787_CITY_EXT || '.bin')).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((buf) => {
         c.build(buf);
         // tall buildings join the collision boxes
         if (c.obstacles.length) { this.worldData.obstacles = (this.worldData.obstacles || []).concat(c.obstacles); configureObstacles(this.worldData); }
