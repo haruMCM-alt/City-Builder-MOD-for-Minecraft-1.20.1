@@ -1448,6 +1448,8 @@ class App {
     const L = this._L;
     L.view = this.rig.view; L.acPos = root.position; L.camPos = this.camera.position;
     L.rain = this.world.rain || 0;
+    L.ground = Math.max(0, terrainHeight(this.camera.position.x, this.camera.position.z));
+    L.hardGround = this.camera.position.y - L.ground < 40 && this.fm.out.wow;
     L.traffic = this.traffic && this.traffic.enabled ? this.traffic.sound(this.camera.position) : null;
     L.camRight.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
     L.fwd.set(1, 0, 0).applyQuaternion(root.quaternion);

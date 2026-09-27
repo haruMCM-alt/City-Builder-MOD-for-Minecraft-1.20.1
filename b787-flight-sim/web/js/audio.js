@@ -9,8 +9,18 @@
 //   * jet mixing roar          broadband low/mid roar, loudest ~140 deg off the nose (aft arc)
 //   * crackle                  sparse impulsive bursts at high thrust (aft)
 //   * low rumble               combustion / structure-borne
-// The listener position then shapes it: front/aft directivity, distance attenuation and
-// air absorption, Doppler shift, stereo placement per engine, and muffled cabin views.
+// The listener position then shapes it:
+//   * propagation delay (distance / c) in a delay line: the Doppler shift of every component
+//     follows from the changing delay, and a fly-over is heard from where the aircraft was
+//   * ground reflection: a second, later and duller path - the sweeping comb filter gives the
+//     characteristic "flanging" of a passing or taxiing jet
+//   * atmospheric turbulence: slow level fluctuations that grow with distance
+//   * front / aft directivity, spherical spreading, frequency-dependent air absorption,
+//     outdoor reverberation near the ground, stereo placement per engine
+//   * the two engines never run at exactly the same speed: their tones beat slowly
+//   * transients: surge bang on a flame-out, ignitor ticks and light-off on a relight,
+//     reverser doors, APU at the gate
+// Inside, the flight deck / cabin filtering takes over.
 import { clamp, lerp, smoothstep } from './util.js';
 
 const PHRASES = {
@@ -73,6 +83,23 @@ export class Audio {
     const hs = ctx.createBiquadFilter(); hs.type = 'highshelf'; hs.frequency.value = 2200; hs.gain.value = -7;
     const ls = ctx.createBiquadFilter(); ls.type = 'lowshelf'; ls.frequency.value = 160; ls.gain.value = 4;
     this.engBus.connect(hs); hs.connect(ls); ls.connect(this.airLP); this.airLP.connect(this.cabinLP); this.cabinLP.connect(this.cabinLP2); this.cabinLP2.connect(this.master);
+    // outdoor reverberation (terminal / hangar walls, the ground): synthetic stereo impulse
+    // response - sparse early reflections, then a diffuse exponential tail
+    this.verb = ctx.createConvolver();
+    {
+      const n = Math.floor(sr * 2.6), ir = ctx.createBuffer(2, n, sr), rr = seeded(4242);
+      for (let c = 0; c < 2; c++) {
+        const d = ir.getChannelData(c);
+        for (let k = 0; k < 14; k++) {
+          const at = Math.floor(sr * (0.018 + rr() * 0.16)), g = (0.5 + rr() * 0.5) * Math.exp(-at / sr / 0.12);
+          d[at] += (rr() < 0.5 ? -1 : 1) * g;
+        }
+        for (let i = Math.floor(sr * 0.04); i < n; i++) d[i] += (rr() * 2 - 1) * 0.32 * Math.exp(-(i / sr) / 0.55);
+      }
+      this.verb.buffer = ir;
+    }
+    this.verbG = ctx.createGain(); this.verbG.gain.value = 0;
+    this.airLP.connect(this.verbG); this.verbG.connect(this.verb); this.verb.connect(this.master);
 
     // noise buffers (white, pink, brown, crackle), 4 s loops
     const len = sr * 4;
@@ -157,10 +184,22 @@ export class Audio {
     const ctx = this.ctx;
     const r = seeded(100 + i * 17);
     const E = {};
-    E.pan = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
-    E.pan.connect(this.engBus);
     const gain = (v = 0) => { const g = ctx.createGain(); g.gain.value = v; return g; };
     const filt = (type, f, q = 0.7) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; };
+    // propagation: sources -> turbulence -> delay line -> direct + ground-reflected -> panner
+    E.out = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
+    E.out.connect(this.engBus);
+    E.turb = gain(1);
+    E.delay = ctx.createDelay(30); E.delay.delayTime.value = 0;
+    E.direct = gain(1);
+    E.refl = ctx.createDelay(0.1); E.refl.delayTime.value = 0.001;
+    E.reflLP = filt('lowpass', 3500, 0.5);
+    E.reflG = gain(0);
+    E.turb.connect(E.delay); E.delay.connect(E.direct); E.direct.connect(E.out);
+    E.delay.connect(E.refl); E.refl.connect(E.reflLP); E.reflLP.connect(E.reflG); E.reflG.connect(E.out);
+    E.pan = gain(1);                // (name kept: every source connects here)
+    E.pan.connect(E.turb);
+    E.turbT = 0;
     // ---- fan blade-passing tone (BPF, 2xBPF, 3xBPF) with slight "breath" -------------------
     const real = new Float32Array(5), imag = new Float32Array(5);
     imag[1] = 1; imag[2] = 0.28; imag[3] = 0.07; imag[4] = 0.02;
@@ -344,6 +383,51 @@ export class Audio {
     o.connect(g); g.connect(this.master); o.start(); o.stop(ctx.currentTime + 1.8);
   }
 
+  // compressor surge / flame-out: a sharp bang and a short roar through that engine's path
+  _surge(E) {
+    if (!this.ctx || !this.enabled) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    for (const [buf, f, q, g, d, type] of [[this.brown, 120, 0.7, 2.4, 0.9, 'lowpass'], [this.white, 900, 0.8, 0.9, 0.35, 'bandpass'],
+      [this.crackle, 2400, 1.2, 0.6, 0.6, 'bandpass']]) {
+      const s = ctx.createBufferSource(); s.buffer = buf;
+      const fl = ctx.createBiquadFilter(); fl.type = type; fl.frequency.value = f; fl.Q.value = q;
+      const gg = ctx.createGain(); gg.gain.setValueAtTime(g, t); gg.gain.exponentialRampToValueAtTime(0.0005, t + d);
+      s.connect(fl); fl.connect(gg); gg.connect(E.pan); s.start(t, Math.random() * 3); s.stop(t + d + 0.05);
+    }
+  }
+
+  // relight: ignitor ticks (~1.5 per second) and the soft "whoomp" of light-off
+  _relight(E) {
+    if (!this.ctx || !this.enabled) return;
+    const ctx = this.ctx, t0 = ctx.currentTime;
+    for (let k = 0; k < 6; k++) {
+      const t = t0 + k * 0.62;
+      const s = ctx.createBufferSource(); s.buffer = this.white;
+      const fl = ctx.createBiquadFilter(); fl.type = 'highpass'; fl.frequency.value = 3500;
+      const gg = ctx.createGain(); gg.gain.setValueAtTime(0.5, t); gg.gain.exponentialRampToValueAtTime(0.0005, t + 0.02);
+      s.connect(fl); fl.connect(gg); gg.connect(E.pan); s.start(t, Math.random() * 3); s.stop(t + 0.05);
+    }
+    const t = t0 + 2.2, s = ctx.createBufferSource(); s.buffer = this.brown;
+    const fl = ctx.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = 180;
+    const gg = ctx.createGain(); gg.gain.setValueAtTime(0.0001, t); gg.gain.linearRampToValueAtTime(1.4, t + 0.15); gg.gain.exponentialRampToValueAtTime(0.0005, t + 1.6);
+    s.connect(fl); fl.connect(gg); gg.connect(E.pan); s.start(t, Math.random() * 3); s.stop(t + 1.7);
+  }
+
+  // thrust reverser translating sleeves: hydraulic whirr and the end-of-travel clunk
+  _reverserDoors(E, deploy) {
+    if (!this.ctx || !this.enabled) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(deploy ? 180 : 220, t);
+    o.frequency.linearRampToValueAtTime(deploy ? 240 : 160, t + 0.9);
+    const fl = ctx.createBiquadFilter(); fl.type = 'bandpass'; fl.frequency.value = 500; fl.Q.value = 2;
+    const gg = ctx.createGain(); gg.gain.setValueAtTime(0.0001, t); gg.gain.linearRampToValueAtTime(0.05, t + 0.1); gg.gain.linearRampToValueAtTime(0.0001, t + 0.95);
+    o.connect(fl); fl.connect(gg); gg.connect(E.pan); o.start(t); o.stop(t + 1);
+    const s = ctx.createBufferSource(); s.buffer = this.brown;
+    const f2 = ctx.createBiquadFilter(); f2.type = 'lowpass'; f2.frequency.value = 260;
+    const g2 = ctx.createGain(); g2.gain.setValueAtTime(0.0001, t + 0.95); g2.gain.linearRampToValueAtTime(0.9, t + 0.97); g2.gain.exponentialRampToValueAtTime(0.0005, t + 1.35);
+    s.connect(f2); f2.connect(g2); g2.connect(E.pan); s.start(t, Math.random() * 3); s.stop(t + 1.4);
+  }
+
   // ---------------------------------------------------------------- per frame
   // listener: { view, camPos (THREE.Vector3), camRight (THREE.Vector3), engines: [pos, pos], fwd, vel }
   update(dt, fm, sys, L) {
@@ -365,7 +449,7 @@ export class Audio {
     const jetDir = 0.3 + 1.1 * smoothstep(0.3, -0.75, front);   // jet noise peaks ~140 deg off the nose
     // Doppler: velocity of the source towards the listener
     const vr = inside || cabin ? 0 : (fm.vel.x * ux + fm.vel.y * uy + fm.vel.z * uz);
-    const dop = clamp(C_SOUND / (C_SOUND - clamp(vr, -150, 150)), 0.6, 1.8);
+    void vr;
     // distance (spherical spreading, a 787 at 60 m ~ full scale) and air absorption
     const spread = inside || cabin ? 1 : clamp(60 / dist, 0.004, 1.4);
     set(this.airLP.frequency, inside || cabin ? 18000 : clamp(18000 * Math.exp(-dist / 900), 600, 18000), 0.2);
@@ -373,24 +457,62 @@ export class Audio {
     set(this.cabinLP.frequency, inside ? 520 : cabin ? 1500 : 20000, 0.2);
     set(this.cabinLP2.frequency, inside ? 900 : cabin ? 2600 : 20000, 0.2);
     const cabinGain = inside ? 0.55 : cabin ? 0.85 : 1;
-    set(this.engBus.gain, on * spread * cabinGain, 0.1);
+    set(this.engBus.gain, on * cabinGain, 0.1);
 
+    // outdoor reverberation: strongest on the ground among the buildings, faint in the air
+    const camAGL = L.camPos.y - (L.ground || 0);
+    set(this.verbG.gain, on * (inside ? 0 : cabin ? 0.02 : 0.2 * (1 - smoothstep(20, 400, camAGL)) + 0.02), 0.4);
+    const outsideProp = !(inside || cabin);
     for (let i = 0; i < 2; i++) {
       const e = fm.engines[i], E = this.eng[i];
       const n1 = clamp(e.n1 / 100, 0, 1.05), n2 = clamp(e.n2 / 100, 0, 1.05);
+      // ---- propagation from this engine to the listener ----------------------------------
+      const p = L.engines[i];
+      const ex = p.x - L.camPos.x, ey = p.y - L.camPos.y, ez = p.z - L.camPos.z;
+      const d1 = Math.max(Math.hypot(ex, ey, ez), 0.5);
+      const delayT = outsideProp ? Math.min(d1, 9000) / C_SOUND : 0;
+      const cur = E.delay.delayTime.value;
+      // small changes glide (that glide IS the Doppler shift); a view switch jumps
+      if (Math.abs(delayT - cur) > 0.04) { E.delay.delayTime.cancelScheduledValues(t); E.delay.delayTime.setValueAtTime(delayT, t); }
+      else E.delay.delayTime.setTargetAtTime(delayT, t, 0.05);
+      // ground reflection: image source below the ground
+      const g0 = L.ground || 0;
+      const hS = Math.max(p.y - g0, 0.3), hL = Math.max(L.camPos.y - g0, 0.3), dh = Math.hypot(ex, ez);
+      const extra = (Math.hypot(dh, hS + hL) - Math.hypot(dh, hS - hL)) / C_SOUND;
+      set(E.refl.delayTime, clamp(extra, 0.00003, 0.09), 0.03);
+      // spherical spreading is applied before the delay line, so a fly-over gets loud when its
+      // sound arrives, not when the aircraft passes
+      set(E.pan.gain, outsideProp ? clamp(60 / d1, 0.004, 1.4) : 1, 0.05);
+      const hard = L.hardGround ? 1 : 0;
+      set(E.reflLP.frequency, hard ? 6500 : 2600, 0.3);
+      set(E.reflG.gain, outsideProp ? (0.5 + 0.25 * hard) * (1 - smoothstep(60, 400, hL)) : 0, 0.2);
+      // atmospheric turbulence: random slow level changes, deeper far away
+      E.turbT -= dt;
+      if (E.turbT <= 0) {
+        E.turbT = 0.12 + Math.random() * 0.25;
+        const depth = outsideProp ? 0.45 * smoothstep(150, 2500, d1) : 0;
+        set(E.turb.gain, 1 + depth * (Math.random() * 2 - 1), 0.15);
+      }
+      // ---- transients -----------------------------------------------------------------------
+      const Es = this._engState || (this._engState = [{}, {}]);
+      const st = Es[i];
+      if (st.running === true && !e.running && n1 > 0.35) this._surge(E, );
+      if (st.running === false && e.running) this._relight(E);
+      st.running = e.running;
+      if ((st.rev ?? 0) < 0.1 && e.reverse >= 0.1) this._reverserDoors(E, true);
+      if ((st.rev ?? 0) > 0.5 && e.reverse <= 0.5) this._reverserDoors(E, false);
+      st.rev = e.reverse;
       // tonal parts are voiced a little below the physical values: at a real airport the
       // fan tones are masked by broadband roar and the ear hears a deep, rounded sound
-      const shaft = ENGINE_SOUND.shaftHz * n1 * dop * TONE_SCALE * (ENGINE_SOUND.blades === 18 ? 1 : 0.8);
+      const dop = 1;       // Doppler comes from the delay line now
+      const shaft = ENGINE_SOUND.shaftHz * n1 * dop * TONE_SCALE * (ENGINE_SOUND.blades === 18 ? 1 : 0.8) * (i ? 1.0035 : 1);
       const bpf = shaft * ENGINE_SOUND.blades;
       const thrust = clamp(Math.abs(e.thrust) / 330000, 0, 1.1);
       const rev = e.reverse;
       // stereo placement from the engine position relative to the camera
-      if (E.pan.pan) {
-        const p = L.engines[i];
-        const rx = p.x - L.camPos.x, ry = p.y - L.camPos.y, rz = p.z - L.camPos.z;
-        const rl = Math.max(Math.hypot(rx, ry, rz), 1);
-        const pan = (rx * L.camRight.x + ry * L.camRight.y + rz * L.camRight.z) / rl;
-        set(E.pan.pan, clamp(pan * (inside ? 0.5 : 0.9), -1, 1), 0.1);
+      if (E.out.pan) {
+        const pan = (ex * L.camRight.x + ey * L.camRight.y + ez * L.camRight.z) / Math.max(d1, 1);
+        set(E.out.pan, clamp(pan * (inside ? 0.5 : 0.9), -1, 1), 0.1);
       }
       // cabin window view is next to the left engine
       const near = cabin ? (i === 0 ? 1.6 : 0.55) : 1;
@@ -404,7 +526,7 @@ export class Audio {
       set(E.buzzLP.frequency, 450 + 1300 * n1, 0.1);
       set(E.buzzG.gain, on * near * fanDir * 0.11 * smoothstep(0.76, 0.96, n1), 0.1);
       // core whine: loudest (relatively) at idle, the classic GEnx whistle
-      const cf = (1150 + 1500 * n2) * dop;
+      const cf = (1150 + 1500 * n2) * dop * (i ? 1.0025 : 1);
       set(E.core1.frequency, cf, 0.08);
       set(E.core2.frequency, cf * 1.018, 0.08);
       set(E.coreG.gain, on * near * (0.3 + 0.7 * fanDir) * (0.004 + 0.004 * n2), 0.1);
@@ -412,15 +534,28 @@ export class Audio {
       set(E.coreNoiseG.gain, on * near * 0.03 * n2, 0.1);
       // jet roar grows with thrust; reversers throw it forwards
       const jet = Math.pow(thrust, 1.25) + rev * 0.5;
-      E.jetSrc.playbackRate.setTargetAtTime(dop, t, 0.1);
+
       set(E.jetLP.frequency, 220 + 1100 * Math.min(jet, 1) * (inside ? 0.5 : 1), 0.12);
       set(E.jetG.gain, on * near * (jetDir + rev * 0.8) * (0.02 + 0.55 * jet), 0.12);
       // crackle at high thrust, aft
-      E.crkSrc.playbackRate.setTargetAtTime(dop, t, 0.1);
+
       set(E.crkG.gain, on * near * jetDir * 0.35 * smoothstep(0.6, 1.0, thrust), 0.12);
       // rumble
       set(E.rumG.gain, on * near * (0.16 + 0.65 * n1) * (inside ? 1.6 : 1), 0.1);
     }
+    // ---- APU at the gate: high whine + exhaust hiss from the tail cone ----------------------------
+    if (!this.apu) {
+      const c = this.ctx;
+      this.apu = c.createGain(); this.apu.gain.value = 0;
+      const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = 7350;
+      const o2 = c.createOscillator(); o2.type = 'sine'; o2.frequency.value = 3675;
+      const og = c.createGain(); og.gain.value = 0.25;
+      const nf = c.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 1400; nf.Q.value = 0.6;
+      o.connect(og); o2.connect(og); og.connect(this.apu); this.noise(this.pink, 0.2).connect(nf); nf.connect(this.apu);
+      this.apu.connect(this.master); o.start(); o2.start();
+    }
+    const apuOn = fm.out.wow && (fm.out.gs || 0) < 2 && !inside;
+    set(this.apu.gain, on * (apuOn ? 0.035 * spread * (cabin ? 0.3 : 1) : 0), 0.8);
 
     // ---- AI traffic ----------------------------------------------------------------------------------
     const tr = L.traffic;

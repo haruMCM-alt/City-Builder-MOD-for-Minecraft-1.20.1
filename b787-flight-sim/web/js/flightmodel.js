@@ -74,7 +74,8 @@ export class Engine {
     // N1 limit with altitude (flat rated): slight reduction in thin air is handled by lapse
     const tau = 0.9 + 3.2 * Math.pow(1 - clamp(this.n1 / 100, 0, 1), 1.6);
     this.n1 += (target - this.n1) * Math.min(dt / tau, 1);
-    this.n2 = 55 + 0.46 * this.n1;
+    // a flamed-out / shut-down core spools down to windmilling (N2 follows N1)
+    this.n2 = this.running ? 55 + 0.46 * this.n1 : Math.max(this.n1 * 1.1, this.n2 + (this.n1 * 1.1 - this.n2) * Math.min(dt / 6, 1));
     // thrust: fraction of static rating vs. N1, altitude and Mach lapse
     const nf = clamp((this.n1 - 19) / (100 - 19), 0, 1.02);
     const frac = 0.035 + 0.965 * Math.pow(nf, 2.2);
