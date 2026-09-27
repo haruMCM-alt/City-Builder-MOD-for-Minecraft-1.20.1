@@ -19,19 +19,19 @@
 //
 // Only FlightModel / Systems are used, so the headless test (tests/autoflight_test.mjs) runs
 // exactly the same code.  Manual stick input cancels it (main.js).
-import { headingVec, wrap180, clamp, FT, FPM } from './util.js';
+import { headingVec, runwayDir, compassOf, northAt, wrap180, clamp, FT, FPM } from './util.js';
 import { FLAPS } from './flightmodel.js';
 import { terrainHeight } from './terrain.js';
 import { obstacleAt } from './obstacles.js';
 
 const NM = 1852;
-const bearing = (fx, fz, tx, tz) => ((Math.atan2(tx - fx, -(tz - fz)) * 180 / Math.PI) + 360) % 360;
+const bearing = (fx, fz, tx, tz) => compassOf(tx - fx, tz - fz, fx, fz);
 
 export class AutoFlight {
   // dep: home runway (world.json runway object), dest: destination runway, name: airport name
   constructor(fm, sys, { dep, dest, name }) {
     this.fm = fm; this.sys = sys; this.dep = dep; this.dest = dest; this.name = name;
-    const dd = headingVec(dep.heading), ad = headingVec(dest.heading);
+    const dd = runwayDir(dep), ad = runwayDir(dest);
     const rwEnd = [dep.threshold[0] + dd.x * dep.length, dep.threshold[2] + dd.z * dep.length];
     // route: straight out 8 km past the departure end, then direct to the initial approach fix
     // 14 NM before the destination threshold on the extended centre line
@@ -75,7 +75,7 @@ export class AutoFlight {
     af.runways = runways;
     af.phase = 'DS_GLIDE'; af._planT = 99;
     af._dsPlan();
-    af._say(`両エンジン停止 · 滑空で ${name} RWY ${af.dest.ident} へ (${Math.round(af._ds.len / NM)} NM, ${af._ds.ok ? '到達可能' : '高度不足'})`);
+    af._say(`両エンジン停止 · 滑空で ${name} RWY ${(af.dest.name || af.dest.ident)} へ (${Math.round(af._ds.len / NM)} NM, ${af._ds.ok ? '到達可能' : '高度不足'})`);
     return af;
   }
 
@@ -87,7 +87,7 @@ export class AutoFlight {
     // (180 kt, 27 degrees of the 30 allowed)
     if (!this._Rh) this._Rh = 92.6 * 92.6 / (9.81 * Math.tan(27 * Math.PI / 180)) * 1.15;
     const Rh = this._Rh;
-    const d = headingVec(r.heading), n = { x: -d.z, z: d.x };          // n: right of the centre line
+    const d = runwayDir(r), n = { x: -d.z, z: d.x };          // n: right of the centre line
     const A = { x: r.threshold[0] + d.x * 400, z: r.threshold[2] + d.z * 400 };
     const E = { x: A.x - d.x * F, z: A.z - d.z * F };
     const C = { x: E.x + n.x * s * Rh, z: E.z + n.z * s * Rh };
@@ -105,11 +105,11 @@ export class AutoFlight {
         const dot = ux * v.x + uz * v.z;
         if (!best || dot > best.dot) best = { t, v, dot };
       }
-      T = best.t; hT = (Math.atan2(best.v.x, -best.v.z) * 180 / Math.PI + 360) % 360;
+      T = best.t; hT = compassOf(best.v.x, best.v.z, this.fm.pos.x, this.fm.pos.z);
     } else {
       T = { x: p.x, z: p.z };
       const v = vAt(dx / (D || 1), dz / (D || 1));
-      hT = (Math.atan2(v.x, -v.z) * 180 / Math.PI + 360) % 360;
+      hT = compassOf(v.x, v.z, this.fm.pos.x, this.fm.pos.z);
     }
     // turn still to go round the circle from the tangent point to the runway heading
     let turn = right ? (r.heading - hT) : (hT - r.heading);
@@ -119,7 +119,7 @@ export class AutoFlight {
     // tangent point costs distance too
     const inside = D <= Rh * 0.97;
     const arc = Rh * turn * Math.PI / 180 + (inside ? Rh * Math.PI : 0);
-    const brgT = Math.atan2(T.x - p.x, -(T.z - p.z)) * 180 / Math.PI;
+    const brgT = compassOf(T.x - p.x, T.z - p.z, p.x, p.z);
     const toT = Math.hypot(T.x - p.x, T.z - p.z) + (inside ? 0 : this._turnR() * Math.abs(wrap180(brgT - fm.out.hdg)) * Math.PI / 180 * 0.6);
     return { r, s, F, Rh, A, E, C, T, hT, arc, toT, right, d, n, inside, len: toT + arc + F };
   }
@@ -167,7 +167,7 @@ export class AutoFlight {
   // steer onto the extended centre line of the landing runway: intercept up to 35 degrees,
   // damped by the lateral speed, corrected for the drift (heading vs track)
   _courseSteer() {
-    const fm = this.fm, o = fm.out, d = headingVec(this.dest.heading);
+    const fm = this.fm, o = fm.out, d = runwayDir(this.dest);
     const dx = fm.pos.x - this.dest.threshold[0], dz = fm.pos.z - this.dest.threshold[2];
     const lat = dx * -d.z + dz * d.x;                              // m right of the centre line
     const vlat = fm.vel.x * -d.z + fm.vel.z * d.x;                 // m/s to the right
@@ -201,7 +201,7 @@ export class AutoFlight {
     }
     P.pitch = 0; P.roll = 0; P.yaw = 0; P.throttle = 0;
     const elev = this.dest.elevation || 0, h = fm.pos.y - elev;
-    const d = headingVec(this.dest.heading);
+    const d = runwayDir(this.dest);
     if (this.phase === 'DS_GLIDE' || this.phase === 'DS_HAC') {
       sys.ap.pitch = 'GLIDE'; mcp.spd = this.phase === 'DS_HAC' || this._ds?.toT < 4000 ? 180 : 200; sys.flapLever = 0; sys.gearLever = false;
       // re-plan every few seconds on the way to the circle (runway, side, final length);
@@ -221,7 +221,7 @@ export class AutoFlight {
       if (this.phase === 'DS_GLIDE') {
         // inside the circle: straight on until clear of it, then to the tangent point
         if (g.inside) mcp.hdg = Math.round(o.hdg) || 360;
-        else mcp.hdg = Math.round(Math.atan2(g.T.x - fm.pos.x, -(g.T.z - fm.pos.z)) * 180 / Math.PI + 360) % 360 || 360;
+        else mcp.hdg = Math.round(compassOf(g.T.x - fm.pos.x, g.T.z - fm.pos.z, fm.pos.x, fm.pos.z)) % 360 || 360;
         sys.ap.roll = 'HDG';
         // already on the centre line and lined up at the entry point: straight into the final
         const latE0 = (fm.pos.x - g.E.x) * g.n.x + (fm.pos.z - g.E.z) * g.n.z;
@@ -231,18 +231,18 @@ export class AutoFlight {
           sys.selectRunway(this.dest);
           sys.ap.armed.loc = false; sys.ap.armed.gs = false;
           sys.autobrake = 5; sys.speedbrakeArmed = true; sys.speedbrakeLever = 0;
-          this._say(`${this.name} RWY ${this.dest.ident} 最終進入 · 6° パス`);
+          this._say(`${this.name} RWY ${(this.dest.name || this.dest.ident)} 最終進入 · 6° パス`);
           return;
         }
         if (Math.hypot(g.T.x - fm.pos.x, g.T.z - fm.pos.z) < 350 && Math.abs(wrap180(g.hT - o.hdg)) < 35) {
           this.phase = 'DS_HAC';
-          this._say(`整列旋回 Heading alignment turn · RWY ${this.dest.ident}`);
+          this._say(`整列旋回 Heading alignment turn · RWY ${(this.dest.name || this.dest.ident)}`);
         }
       } else {
         // round the circle: tangent heading, pulled towards the circle when off it
         const rx = fm.pos.x - g.C.x, rz = fm.pos.z - g.C.z, D = Math.hypot(rx, rz) || 1;
         const v = g.right ? { x: -rz / D, z: rx / D } : { x: rz / D, z: -rx / D };
-        const ht = Math.atan2(v.x, -v.z) * 180 / Math.PI;
+        const ht = compassOf(v.x, v.z, fm.pos.x, fm.pos.z);
         const vr = (fm.vel.x * rx + fm.vel.z * rz) / D;                       // m/s outwards
         const corr = clamp((D - g.Rh) * 0.04 + vr * 0.4, -35, 35) * (g.right ? 1 : -1);
         mcp.hdg = Math.round(((ht + corr) % 360 + 360) % 360) || 360;
@@ -260,7 +260,7 @@ export class AutoFlight {
           sys.selectRunway(this.dest);
           sys.ap.armed.loc = false; sys.ap.armed.gs = false;
           sys.autobrake = 5; sys.speedbrakeArmed = true; sys.speedbrakeLever = 0;
-          this._say(`${this.name} RWY ${this.dest.ident} 最終進入 · 6° パス`);
+          this._say(`${this.name} RWY ${(this.dest.name || this.dest.ident)} 最終進入 · 6° パス`);
           return;
         }
       }
@@ -304,7 +304,7 @@ export class AutoFlight {
     const wide = af.vmin > 0;
     fixNM = fixNM || (wide ? 12 : 9);
     const back = wide ? 6 : 3, off = wide ? 5.5 : 3.5;
-    const o = fm.out, p = fm.pos, d = headingVec(dest.heading), n = { x: -d.z, z: d.x };
+    const o = fm.out, p = fm.pos, d = runwayDir(dest), n = { x: -d.z, z: d.x };
     const T = { x: dest.threshold[0], z: dest.threshold[2] };
     const along = (p.x - T.x) * d.x + (p.z - T.z) * d.z;        // < 0: before the threshold
     const lat = (p.x - T.x) * n.x + (p.z - T.z) * n.z;
@@ -335,7 +335,7 @@ export class AutoFlight {
     if (aligned) {
       af.wps = [fix]; af.wi = 0;
       af._startApproach(alt);
-      af._say(`緊急着陸 ${name} RWY ${dest.ident} · ILS 進入`);
+      af._say(`緊急着陸 ${name} RWY ${dest.name || dest.ident} · ILS 進入`);
     } else {
       // past the fix (between the fix and the runway, or beyond the airport): a downwind
       // point first, then a 45 degree intercept to the fix
@@ -377,7 +377,7 @@ export class AutoFlight {
 
   // waypoint reached: close, or passed abeam within a turn radius or two
   _reached(w, r0) {
-    const R = this._turnR(), p = this.fm.pos, h = headingVec(this.fm.out.hdg);
+    const R = this._turnR(), p = this.fm.pos, h = headingVec(this.fm.out.hdg, p.x, p.z);
     const ahead = (this.wps[this.wi].x - p.x) * h.x + (this.wps[this.wi].z - p.z) * h.z;
     // (inside the turn circle it could only orbit the point: good enough)
     const off = Math.abs(wrap180(w.brg - this.fm.out.hdg));
@@ -433,7 +433,7 @@ export class AutoFlight {
     if (sys.flapLever < 2) sys.flapLever = this._flap(2);
     if (mcp.spd > 210) mcp.spd = this._spd(190);
     sys.speedbrakeArmed = true; sys.autobrake = this.vmin ? 5 : 3; sys.speedbrakeLever = 0;
-    this._say(`ILS ${this.dest.ident} ${this.name} · APP armed`);
+    this._say(`ILS ${(this.dest.name || this.dest.ident)} ${this.name} · APP armed`);
   }
 
   _say(m) { this.msg = m; this.onMessage?.(m); }
@@ -476,7 +476,7 @@ export class AutoFlight {
         P.brakes = 0; P.reverse = 0;
         P.throttle = 1;
         // stay on the runway centre line (rudder / nose-wheel steering), wings level
-        const d = headingVec(this.dep.heading);
+        const d = runwayDir(this.dep);
         const lat = (fm.pos.x - this.dep.threshold[0]) * -d.z + (fm.pos.z - this.dep.threshold[2]) * d.x;
         const hErr = wrap180(this.dep.heading - o.hdg);
         P.yaw = o.wow ? clamp(hErr * 0.25 - lat * 0.04, -0.6, 0.6) : 0;
@@ -568,13 +568,13 @@ export class AutoFlight {
         P.pitch = 0; P.roll = 0; P.yaw = 0;
         // emergency: not established on the glideslope close to the runway -> go around, new pattern
         if (this.emerg && !o.wow) {
-          const d = headingVec(this.dest.heading);
+          const d = runwayDir(this.dest);
           const along = (fm.pos.x - this.dest.threshold[0]) * d.x + (fm.pos.z - this.dest.threshold[2]) * d.z;
           if (along > -1500 && sys.ap.pitch !== 'GS' && sys.ap.pitch !== 'FLARE' && o.raFt > 150) { this._goAround(); break; }
         }
         if (sys.ap.roll === 'HDG') {
           // intercept the localizer: up to 40 degrees towards the centre line
-          const d = headingVec(this.dest.heading), p = fm.pos;
+          const d = runwayDir(this.dest), p = fm.pos;
           const lat = (p.x - this.dest.threshold[0]) * -d.z + (p.z - this.dest.threshold[2]) * d.x;   // m right of course
           const cm = Math.abs(lat) > 4000 ? 45 : 30;       // far out to the side: a steeper cut first
           const cut = this.emerg ? (this.vmin ? clamp(lat * 0.03, -cm, cm) : clamp(lat * 0.02, -40, 40)) : 0;

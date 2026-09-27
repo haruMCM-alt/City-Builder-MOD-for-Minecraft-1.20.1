@@ -6,7 +6,7 @@
 // Channels are drawn in a nominal 320 x 200 space.
 import * as THREE from 'three';
 import { isWater } from './terrain.js';
-import { clamp } from './util.js';
+import { clamp, northAt } from './util.js';
 import { AIRPORT } from './atc.js';
 
 export const CHANNELS = [
@@ -59,25 +59,28 @@ const DRAW = {
     const R = S.mapR;
     if (img) c.drawImage(img, 0, 0, 320, 200);
     else { c.fillStyle = '#1d4e7a'; c.fillRect(0, 0, 320, 200); }
-    const X = (x) => 160 + (x - d.cx) / R.w * 320, Yp = (z) => 100 + (z - d.cz) / R.h * 200;
+    // north-up: world offsets rotated by the local north at the map centre
+    const nr = (S.mapN || 0) * Math.PI / 180, cN = Math.cos(nr), sN = Math.sin(nr);
+    const EN = (x, z) => { const dx = x - d.cx, dz = z - d.cz; return [dx * cN - dz * sN, -dx * sN - dz * cN]; };
+    const X = (x, z) => 160 + EN(x, z)[0] / R.w * 320, Yp = (z, x) => 100 - EN(x, z)[1] / R.h * 200;
     // route: origin -> destination (chosen in the flight settings), the remaining leg dashed,
     // and the flown track
     const dx = d.destX ?? 0, dz = d.destZ ?? 0;
-    c.strokeStyle = 'rgba(255,255,255,0.25)'; c.beginPath(); c.moveTo(X(0), Yp(0)); c.lineTo(X(dx), Yp(dz)); c.stroke();
-    c.strokeStyle = 'rgba(255,255,255,0.6)'; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(X(d.x), Yp(d.z)); c.lineTo(X(dx), Yp(dz)); c.stroke(); c.setLineDash([]);
+    c.strokeStyle = 'rgba(255,255,255,0.25)'; c.beginPath(); c.moveTo(X(0, 0), Yp(0, 0)); c.lineTo(X(dx, dz), Yp(dz, dx)); c.stroke();
+    c.strokeStyle = 'rgba(255,255,255,0.6)'; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(X(d.x, d.z), Yp(d.z, d.x)); c.lineTo(X(dx, dz), Yp(dz, dx)); c.stroke(); c.setLineDash([]);
     if (S.trail.length > 1) {
       c.strokeStyle = '#ffd24a'; c.lineWidth = 2; c.beginPath();
-      S.trail.forEach(([x, z], i) => (i ? c.lineTo(X(x), Yp(z)) : c.moveTo(X(x), Yp(z)))); c.stroke(); c.lineWidth = 1;
+      S.trail.forEach(([x, z], i) => (i ? c.lineTo(X(x, z), Yp(z, x)) : c.moveTo(X(x, z), Yp(z, x)))); c.stroke(); c.lineWidth = 1;
     }
     c.font = 'bold 9px sans-serif';
-    const pin = (x, z, label, col) => { c.fillStyle = col; c.beginPath(); c.arc(X(x), Yp(z), 3, 0, 7); c.fill(); c.fillStyle = '#fff'; c.fillText(label, X(x) + 5, Yp(z) - 4); };
+    const pin = (x, z, label, col) => { c.fillStyle = col; c.beginPath(); c.arc(X(x, z), Yp(z, x), 3, 0, 7); c.fill(); c.fillStyle = '#fff'; c.fillText(label, X(x, z) + 5, Yp(z, x) - 4); };
     pin(0, 0, AIRPORT.name, '#fff');
     if (d.destName) {
-      const px = X(dx), pz = Yp(dz);
+      const px = X(dx, dz), pz = Yp(dz, dx);
       if (px > 8 && px < 312 && pz > 22 && pz < 164) pin(dx, dz, '✈ ' + d.destName, '#ffd24a');
       else {
         // off the map: a marker on the edge in the destination's direction
-        const ax = X(d.x), az = Yp(d.z), vx = px - ax, vz = pz - az;
+        const ax = X(d.x, d.z), az = Yp(d.z, d.x), vx = px - ax, vz = pz - az;
         const k = Math.min(Math.abs((vx > 0 ? 300 - ax : 20 - ax) / (vx || 1e-6)), Math.abs((vz > 0 ? 156 - az : 30 - az) / (vz || 1e-6)));
         const ex = ax + vx * k, ez = az + vz * k, an = Math.atan2(vz, vx);
         c.save(); c.translate(ex, ez); c.rotate(an); c.fillStyle = '#ffd24a';
@@ -87,7 +90,7 @@ const DRAW = {
       }
     }
     // aircraft symbol
-    c.save(); c.translate(X(d.x), Yp(d.z)); c.rotate(d.hdg * Math.PI / 180);
+    c.save(); c.translate(X(d.x, d.z), Yp(d.z, d.x)); c.rotate(d.hdg * Math.PI / 180);
     c.fillStyle = '#fff'; c.strokeStyle = '#000';
     c.beginPath(); c.moveTo(0, -9); c.lineTo(2, -2); c.lineTo(9, 2); c.lineTo(9, 4); c.lineTo(2, 2); c.lineTo(1.5, 6); c.lineTo(4, 8.5); c.lineTo(-4, 8.5); c.lineTo(-1.5, 6); c.lineTo(-2, 2); c.lineTo(-9, 4); c.lineTo(-9, 2); c.lineTo(-2, -2); c.closePath();
     c.fill(); c.stroke(); c.restore();
@@ -368,8 +371,13 @@ export class IFE {
     this._mapCentre = [cx, cz];
     const cv = this.S.mapBase, c = cv.getContext('2d');
     const img = c.createImageData(160, 100);
+    const N = northAt(cx, cz);
+    this.S.mapN = N;
+    const nr = N * Math.PI / 180, cN = Math.cos(nr), sN = Math.sin(nr);
     for (let j = 0; j < 100; j++) for (let i = 0; i < 160; i++) {
-      const x = cx + (i / 160 - 0.5) * R.w, z = cz + (j / 100 - 0.5) * R.h;
+      // north-up raster: (east, north) -> world
+      const E = (i / 160 - 0.5) * R.w, No = (0.5 - j / 100) * R.h;
+      const x = cx + E * cN - No * sN, z = cz - (No * cN + E * sN);
       const w = isWater(x, z);
       const k = (j * 160 + i) * 4;
       const n = ((i * 7 + j * 13) % 5) * 2;

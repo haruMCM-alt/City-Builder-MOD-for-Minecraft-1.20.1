@@ -1,6 +1,7 @@
+import { GEO } from './geo_data.js';
 // Boeing-style glass cockpit displays (PFD, ND, EICAS) and the head-up display.
 import * as THREE from 'three';
-import { DEG, RAD, KT, FT, FPM, clamp, wrap360, wrap180, headingVec } from './util.js';
+import { DEG, RAD, KT, FT, FPM, clamp, wrap360, wrap180, headingVec, runwayDir, compassOf, northAt } from './util.js';
 import { FLAPS } from './flightmodel.js';
 import { AUTOBRAKE } from './systems.js';
 
@@ -124,7 +125,7 @@ export class Instruments {
     // ILS deviation
     const d = sys.ilsDev;
     if (sys.ils && d.valid) {
-      text(ctx, 'ILS ' + sys.ils.ident + '  ' + sys.ils.ils.freq, 160, 92, C.white, 17, 'left');
+      text(ctx, 'ILS ' + (sys.ils.name || sys.ils.ident) + '  ' + sys.ils.ils.freq, 160, 92, C.white, 17, 'left');
       text(ctx, 'DME ' + Math.max(0, d.dme).toFixed(1), 160, 112, C.white, 17, 'left');
       // localizer (bottom)
       for (const k of [-2, -1, 1, 2]) { ctx.strokeStyle = C.white; ctx.beginPath(); ctx.arc(cx + k * 45, 452, 5, 0, 7); ctx.stroke(); }
@@ -281,11 +282,11 @@ export class Instruments {
     const cx = 300, cy = 470, R = 400;
     const range = o.altFt < 4000 ? 10 : o.altFt < 12000 ? 20 : o.altFt < 25000 ? 40 : 80;     // nm
     const ppm = R / (range * 1852);
-    const hdg = o.hdg;
+    const hdg = o.hdg, north = northAt(fm.pos.x, fm.pos.z);
     const toScreen = (x, z) => {
       // heading-up map: project onto the aircraft's forward / right axes
       const dx = x - fm.pos.x, dz = z - fm.pos.z;
-      const hx = Math.sin(hdg * DEG), hz = -Math.cos(hdg * DEG);
+      const wh = (hdg - north) * DEG, hx = Math.sin(wh), hz = -Math.cos(wh);
       const fwd = dx * hx + dz * hz;
       const right = dx * -hz + dz * hx;
       return [cx + right * ppm, cy - fwd * ppm];
@@ -299,7 +300,7 @@ export class Instruments {
     // runways + ILS course lines
     const rw = this.world?.runways || [];
     for (const r of rw) {
-      const t = r.threshold, dir = headingVec(r.heading);
+      const t = r.threshold, dir = runwayDir(r);
       const endx = t[0] + dir.x * r.length, endz = t[2] + dir.z * r.length;
       const [ax, ay] = toScreen(t[0], t[2]); const [bx, by] = toScreen(endx, endz);
       line(ctx, ax, ay, bx, by, C.white, Math.max(3, 60 * ppm));
@@ -309,10 +310,13 @@ export class Instruments {
         ctx.setLineDash([12, 10]); line(ctx, ax, ay, qx, qy, C.magenta, 2); ctx.setLineDash([]);
       }
     }
-    // airport symbol + name
-    const [apx, apy] = toScreen(0, 0);
-    ctx.strokeStyle = C.cyan; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(apx, apy, 9, 0, 7); ctx.stroke();
-    text(ctx, 'RJCB', apx + 14, apy - 14, C.cyan, 16, 'left');
+    // airport symbols + ICAO codes
+    for (const ap of GEO.airports) {
+      const [apx, apy] = toScreen(ap.x, ap.z);
+      if (apx < -60 || apx > 660 || apy < -60 || apy > 660) continue;
+      ctx.strokeStyle = C.cyan; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(apx, apy, 9, 0, 7); ctx.stroke();
+      text(ctx, ap.icao, apx + 14, apy - 14, C.cyan, 16, 'left');
+    }
     // landmark tower
     if (this.world?.landmarkTower) {
       const [lx, ly] = toScreen(this.world.landmarkTower[0], this.world.landmarkTower[2]);
@@ -352,7 +356,7 @@ export class Instruments {
     text(ctx, 'TAS', 100, 20, C.white, 16, 'left'); text(ctx, Math.round(o.tas / KT), 138, 20, C.white, 22, 'left');
     const wind = fm.wind;
     const ws = Math.hypot(wind.x, wind.z) / KT;
-    const wdir = wrap360(Math.atan2(-wind.x, wind.z) * RAD);
+    const wdir = compassOf(-wind.x, -wind.z, fm.pos.x, fm.pos.z);
     text(ctx, `${String(Math.round(wdir)).padStart(3, '0')}°/${Math.round(ws)}`, 12, 58, C.white, 18, 'left');
     if (ws > 1) {
       ctx.save(); ctx.translate(40, 90); ctx.rotate((wdir + 180 - hdg) * DEG);
@@ -363,7 +367,7 @@ export class Instruments {
     text(ctx, 'TRK ' + String(Math.round(o.track)).padStart(3, '0') + ' MAG', 300, 20, C.green, 20);
     text(ctx, range + ' NM', 588, 20, C.white, 16, 'right');
     if (sys.ils) {
-      text(ctx, 'RWY ' + sys.ils.ident, 588, 58, C.magenta, 18, 'right');
+      text(ctx, 'RWY ' + (sys.ils.name || sys.ils.ident), 588, 58, C.magenta, 18, 'right');
       const d = sys.ilsDev;
       if (d.valid) text(ctx, Math.max(0, d.dme).toFixed(1) + ' NM', 588, 80, C.white, 18, 'right');
     }
@@ -523,7 +527,7 @@ export class Instruments {
     const fma = [sys.at.on ? sys.at.mode : '', sys.ap.on ? sys.ap.roll : '', sys.ap.on ? sys.ap.pitch : ''].join('   ');
     text(ctx, fma, cx, cy - h * 0.3, col, 17);
     if (sys.ils && sys.ilsDev.valid) {
-      text(ctx, 'ILS ' + sys.ils.ident + '  ' + Math.max(0, sys.ilsDev.dme).toFixed(1) + ' NM', cx - 220, cy - h * 0.3, col, 15);
+      text(ctx, 'ILS ' + (sys.ils.name || sys.ils.ident) + '  ' + Math.max(0, sys.ilsDev.dme).toFixed(1) + ' NM', cx - 220, cy - h * 0.3, col, 15);
       // deviation scales
       const lx = cx + clamp(-sys.ilsDev.loc / 1.25 * 30, -70, 70);
       ctx.strokeRect(lx - 6, cy + 120, 12, 12);

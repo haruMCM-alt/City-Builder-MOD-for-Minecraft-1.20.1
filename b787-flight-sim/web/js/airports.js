@@ -1,6 +1,8 @@
-// The remote airports (built by blender/build_airport2.py --id N): one airfield design (runway
-// 09/27, parallel taxiway, seven nose-in stands, terminal, tower, hangar), each airport at its
-// own place with its own town.  Coordinates: three.js world (x east, z south), metres; the
+import { GEO } from './geo_data.js';
+
+// The remote airports (built by blender/build_airport2.py --id N): the simulator's airfield
+// layout (main runway along the local x axis, parallel taxiway, seven nose-in stands) inside
+// each real airport's own terminal, runways and city.  Coordinates: three.js world (x east, z south), metres; the
 // layout numbers are local to the airport's runway centre.  No three.js import here: the
 // terrain module (also used by the headless tests) reads the flat zones from this file.
 
@@ -15,12 +17,19 @@ export const LAYOUT = {
   hangar: { x: [700, 880], z: [-400, -280], h: 32 },
 };
 
-// id 1 is the home airport (world.glb); gate letters B / C / D on the stands
-export const REMOTES = [
-  { id: 2, x: 200000, z: -9000, gate: 'B', asset: 'airport2', where: '東へ約 200 km' },
-  { id: 3, x: -180000, z: -10000, gate: 'C', asset: 'airport3', where: '西へ約 180 km' },
-  { id: 4, x: 300000, z: -8000, gate: 'D', asset: 'airport4', where: '東へ約 300 km' },
-].map((r) => ({ ...LAYOUT, ...r }));
+// id 1 is the home airport (Tokyo Haneda, world.glb); 2 Osaka Kansai, 3 Sapporo New Chitose,
+// 4 Okinawa Naha (geo_data.js from blender/geo.py): position, local north, runway length and
+// names.  Gate letters B / C / D on the stands.
+const WHERE = { 2: '西南西へ約 260 km', 3: '北北東へ約 330 km', 4: '南西へ約 420 km' };
+export const REMOTES = GEO.airports.filter((g) => g.id !== 1).map((g) => {
+  const half = g.rwy.len / 2;
+  return {
+    ...LAYOUT, id: g.id, x: g.x, z: g.z, gate: 'BCD'[g.id - 2], asset: 'airport' + g.id, where: WHERE[g.id],
+    len: g.rwy.len, wid: g.rwy.wid, conns: [-(half - 20), 0, half - 20],
+    key: g.key, icao: g.icao, title: g.name, jp: g.jp, north: g.north, rwy: g.rwy, ils: g.ils,
+  };
+});
+export const HOME = GEO.airports.find((g) => g.id === 1);
 
 export const remoteById = (id) => REMOTES.find((r) => r.id === id) || null;
 
@@ -34,5 +43,43 @@ export function nearestAirport(x, z) {
   return best;
 }
 
-// terrain flat zone around each remote airport (runway, town)
-export const FLATS = REMOTES.map((r) => ({ x0: r.x - 14000, x1: r.x + 14000, z0: r.z - 3500, z1: r.z + 3500 }));
+// terrain flat zones of every airport (runways, aprons, the island airports' sea walls)
+export const FLATS = GEO.flats;
+
+// runway name -> radio words ("24L" -> "two four left")
+const DIG = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'niner'];
+export function runwayWords(name) {
+  const m = /^(\d{1,2})([LRC]?)$/.exec(name || '');
+  if (!m) return name;
+  const side = { L: ' left', R: ' right', C: ' center' }[m[2]] || '';
+  return m[1].padStart(2, '0').split('').map((d) => DIG[+d]).join(' ') + side;
+}
+
+// home runways in world.json: the real names and compass headings through Haneda's north
+export function applyHomeRunways(world) {
+  const H = GEO.airports.find((g) => g.id === 1);
+  for (const r of world?.runways || []) {
+    if (r.apt) continue;
+    const k27 = r.ident === '27';
+    r.name = k27 ? H.rwy.k27 : H.rwy.k09;
+    r.heading = ((k27 ? 270 : 90) + H.north + 360) % 360;
+    if (r.ils) { r.ils.course = r.heading; r.ils.freq = k27 ? H.ils.k27 : H.ils.k09; }
+  }
+  return world;
+}
+
+// main runway of every remote airport, in world.json's runway format (appended after the home
+// runways, so lookups by ident still find the home airport first)
+export function remoteRunways() {
+  const out = [];
+  for (const ap of REMOTES) {
+    // key '09' is flown towards +x, '27' towards -x; the compass headings and names are the
+    // real ones through the airport's local north
+    const rw = (ident, sx, hdg, name, freq) => ({ ident, name, apt: ap.id, threshold: [ap.x + sx * ap.len / 2, 0, ap.z], heading: hdg,
+      length: ap.len, width: ap.wid, elevation: 0, ils: { course: hdg, glideslope: 3, gsAntennaFromThr: 300, freq } });
+    const h09 = (90 + ap.north + 360) % 360, h27 = (270 + ap.north + 360) % 360;
+    out.push(rw('09', -1, h09, ap.rwy.k09, ap.ils.k09), rw('27', 1, h27, ap.rwy.k27, ap.ils.k27));
+  }
+  return out;
+}
+

@@ -2,7 +2,7 @@
 // bank-hold law with auto-trim and envelope protection), autopilot, autothrottle,
 // high-lift, gear, spoilers, autobrake, warnings and aural callouts.
 
-import { V3, DEG, RAD, KT, FT, FPM, G0, clamp, lerp, approach, wrap180, wrap360, smoothstep, headingVec } from './util.js';
+import { V3, DEG, RAD, KT, FT, FPM, G0, clamp, lerp, approach, wrap180, wrap360, smoothstep, headingVec, runwayDir } from './util.js';
 import { FLAPS, SPEC, flapAero } from './flightmodel.js';
 import { isa, tas2cas, cas2tas } from './atmosphere.js';
 
@@ -231,7 +231,7 @@ export class Systems {
     const fm = this.fm, r = this.ils;
     if (!r) { this.ilsDev.valid = false; return; }
     const thr = r.threshold;             // [x, y, z] three coords
-    const dir = headingVec(r.heading);   // landing direction
+    const dir = runwayDir(r);   // landing direction
     const dx = fm.pos.x - thr[0], dz = fm.pos.z - thr[2];
     const along = -(dx * dir.x + dz * dir.z);             // distance before the threshold (+ = on approach)
     const right = { x: -dir.z, z: dir.x };                // right of the landing direction

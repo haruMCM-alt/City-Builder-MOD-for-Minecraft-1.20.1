@@ -1,3 +1,4 @@
+import { compassOf } from './util.js';
 // Two-way radio between the player and the airport Ground / Tower (names from the menu).
 //
 // Each airport has its own frequencies: the player talks to the airport they are at (or
@@ -43,7 +44,7 @@ export class PlayerATC {
     // a remote airport: the runway direction its traffic uses (towards home, see Traffic.rwSide)
     const ap = remoteById(this.apt), sx = ap.x >= 0 ? 1 : -1;
     return { apt: ap.id, ap, name: aptName(ap.id), ox: ap.x, oz: ap.z, half: ap.len / 2 + 50,
-      R: { id: sx > 0 ? '09' : '27', d: sx, tx: ap.x - sx * ap.len / 2 }, conns: ap.conns.map((c) => ap.x + c), holdZ: ap.z + ap.holdZ,
+      R: { key: sx > 0 ? '09' : '27', id: sx > 0 ? ap.rwy.k09 : ap.rwy.k27, d: sx, tx: ap.x - sx * ap.len / 2 }, conns: ap.conns.map((c) => ap.x + c), holdZ: ap.z + ap.holdZ,
       twy: 'Bravo', conn: 'B', stands: T.remoteStands?.[ap.id] || [], gndFreq: 'one two one decimal six' };
   }
 
@@ -141,7 +142,7 @@ export class PlayerATC {
   // the runway in world.json format for the airport the player is working with
   worldRunway(C = this.ctx()) {
     const T = this.T;
-    return C.apt === 1 ? T._rw().r : T.W.runways.find((x) => x.apt === C.apt && x.ident === C.R.id);
+    return C.apt === 1 ? T._rw().r : T.W.runways.find((x) => x.apt === C.apt && x.ident === C.R.key);
   }
 
   // MAYDAY / PAN-PAN: priority, squawk 7700, landing clearance, rescue services
@@ -169,7 +170,7 @@ export class PlayerATC {
       const fx = R.tx - R.d * 12000, fz = C.oz;
       const dx = fx - P.x, dz = fz - P.z, dist = Math.hypot(dx, dz);
       const f = this.final(C);
-      const hdg = Math.round(((Math.atan2(dx, -dz) * 180 / Math.PI) + 360) % 360 / 5) * 5 || 360;
+      const hdg = Math.round(compassOf(dx, dz, this.T.player?.x ?? 0, this.T.player?.z ?? 0) / 5) * 5 || 360;
       const vec = f.aligned && f.along < 20000 ? `continue approach` : `turn heading ${hdg3(hdg)}, ${Math.max(1, Math.round(dist / NM))} miles to final, descend at your discretion`;
       this.say('TWR', `${cs}, ${C.name} Tower, roger ${ack}. Squawk seven seven zero zero. ${vec[0].toUpperCase() + vec.slice(1)}. Runway ${R.id} cleared to land, wind ${hdg3(T.windDir)} at ${Math.round(T.windKt)} knots. Emergency services are standing by.`);
       this.later(7, () => this.say(cs, `Squawk seven seven zero zero, cleared to land runway ${R.id}, ${cs}.`));

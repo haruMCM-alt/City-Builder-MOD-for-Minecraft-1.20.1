@@ -7,7 +7,8 @@ import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL, terrainHeight } from './terrain.js';
 import { patchFacade } from './shading.js';
 import { GROUND_GLSL } from './ground.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
-import { clamp, smoothstep, lerp, mulberry32, DEG } from './util.js';
+import { clamp, smoothstep, lerp, mulberry32, DEG, northAt } from './util.js';
+import { GEO } from './geo_data.js';
 
 const LIGHT_KIND = { steady: 0, directional: 1, papi: 2, sequenced: 3, blink: 4, night: 5 };
 const NIGHT_ONLY = { has: (n) => /^(a\d+_)?(street|landmark|bridge|apron_flood)$/.test(n) };
@@ -392,12 +393,7 @@ export class World {
     detail.colorSpace = THREE.NoColorSpace;
     detail.anisotropy = 8;
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0, envMapIntensity: 0.42 });
-    const F = TERRAIN.flat, Rv = TERRAIN.river;
     this.terrainUniforms = {
-      uFlat: { value: new THREE.Vector4(F.x0, F.x1, F.z0, F.z1) },
-      uCoastZ: { value: TERRAIN.coastZ },
-      uRiver: { value: new THREE.Vector4(Rv.x, Rv.w, Rv.z0, Rv.z1) },
-      uSeaDepth: { value: TERRAIN.seaDepth },
       uCenter: { value: new THREE.Vector2() },
       uDetail: { value: detail },
     };
@@ -420,8 +416,10 @@ vTW = vec3(wxz.x, h0, wxz.y);`)
         .replace('#include <begin_vertex>', 'vec3 transformed = vec3(position.x, h0, position.z);');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-uniform sampler2D uDetail; uniform vec4 uFlat;
+uniform sampler2D uDetail;
 ${FLATS_GLSL}
+const vec2 cCTS = vec2(${GEO.airports[2].x.toFixed(1)}, ${GEO.airports[2].z.toFixed(1)});
+const vec2 cOKA = vec2(${GEO.airports[3].x.toFixed(1)}, ${GEO.airports[3].z.toFixed(1)});
 float tfH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 ${GROUND_GLSL}
 float gH = 0.0;
@@ -451,7 +449,12 @@ varying vec3 vTW; varying float vSlope;`)
   grass = mix(grass, vec3(0.13, 0.10, 0.07) * (0.8 + 0.4 * nD), soil);
   grass *= mix(1.0, 0.7 + 0.6 * nD, nearB);
   // mowed airport infield: alternating stripes, greener where it is watered by the drains
-  float airport = step(-2750.0, vTW.x) * step(vTW.x, 2500.0) * step(-1150.0, vTW.z) * step(vTW.z, 1390.0);
+  float airport = inFlats(vTW.xz, 0.0) ? 1.0 : 0.0;
+  // regional climate: Hokkaido (snow lower, paler grass), Okinawa (lush, coral sand)
+  float hok = 1.0 - smoothstep(60000.0, 150000.0, length(vTW.xz - cCTS));
+  float oki = 1.0 - smoothstep(60000.0, 140000.0, length(vTW.xz - cOKA));
+  grass = mix(grass, grass * vec3(1.06, 1.02, 0.92), hok * 0.6);
+  grass = mix(grass, grass * vec3(0.9, 1.12, 0.85), oki);
   grass = mix(grass, grass * (0.9 + 0.14 * step(0.5, fract(vTW.x / 24.0))) * vec3(0.95, 1.06, 0.9), airport);
   gH = ((nB - 0.5) * 0.08 + (nC - 0.5) * 0.05 * nearC + (nD - 0.5) * 0.02 * nearB) * (1.0 - soil * 0.5);
   vec3 forest = vec3(0.035, 0.065, 0.022) * (0.7 + 0.6 * d1.g) * (0.8 + 0.4 * nB);
@@ -475,8 +478,7 @@ varying vec3 vTW; varying float vSlope;`)
     float edge = min(min(fr.x, 1.0 - fr.x) * fsz.x, min(fr.y, 1.0 - fr.y) * fsz.y);
     float hedge = 1.0 - smoothstep(1.5, 5.0 + px, edge);
     fc = mix(fc, vec3(0.05, 0.09, 0.035), hedge * 0.75);
-    float outside = 1.0 - step(uFlat.x, vTW.x) * step(vTW.x, uFlat.y) * step(uFlat.z, vTW.z) * step(vTW.z, uFlat.w);
-    if (inFlats(vTW.xz, 400.0)) outside = 0.0;
+    float outside = inFlats(vTW.xz, 400.0) ? 0.0 : 1.0;
     float farm = smoothstep(0.38, 0.5, d3.b * 0.8 + d2.r * 0.2) * (1.0 - fm) * (1.0 - smoothstep(60.0, 220.0, h))
                * smoothstep(0.5, 2.0, h) * (1.0 - smoothstep(0.06, 0.18, vSlope)) * outside;
     col = mix(col, fc, farm);
@@ -485,9 +487,10 @@ varying vec3 vTW; varying float vSlope;`)
   gH += smoothstep(0.22, 0.42, vSlope) * (nB - 0.5) * 0.4;
   col = mix(col, rock, smoothstep(0.22, 0.42, vSlope));
   col = mix(col, rock, smoothstep(750.0, 1150.0, h + d2.g * 250.0));
-  float snow = smoothstep(1300.0, 1500.0, h + d2.r * 200.0) * (1.0 - smoothstep(0.45, 0.7, vSlope));
+  float snowLine = mix(1500.0, 750.0, hok);
+  float snow = smoothstep(snowLine - 200.0, snowLine, h + d2.r * 200.0) * (1.0 - smoothstep(0.45, 0.7, vSlope));
   col = mix(col, vec3(0.9, 0.93, 0.97), snow);
-  vec3 sand = vec3(0.42, 0.37, 0.27) * (0.85 + 0.3 * d1.r) * mix(1.0, 0.85 + 0.3 * nD, nearB);
+  vec3 sand = mix(vec3(0.42, 0.37, 0.27), vec3(0.62, 0.6, 0.53), oki) * (0.85 + 0.3 * d1.r) * mix(1.0, 0.85 + 0.3 * nD, nearB);
   col = mix(col, sand, smoothstep(-0.05, -1.2, h));
   col = mix(col, vec3(0.16, 0.19, 0.17), smoothstep(-6.0, -30.0, h));
   diffuseColor.rgb = col;
@@ -519,21 +522,25 @@ normal = gBump(normal, - vViewPosition, gH, 1.0);`);
     this.waterU = { uWTime: { value: 0 }, uWaterLevel: { value: TERRAIN.waterLevel } };
     this.waterMat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, this.waterU, this.terrainUniforms);
+      // the water depth comes from the terrain function, per vertex (the grid is dense near the
+      // camera) - the polygon coastline is too expensive per pixel
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vWW;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        .replace('#include <common>', `#include <common>
+varying vec3 vWW; varying float vWDepth;
+uniform float uWaterLevel;
+${TERRAIN_GLSL}`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+vWW = (modelMatrix * vec4(transformed, 1.0)).xyz;
+vWDepth = uWaterLevel - terrainHeight(vWW.xz);`);
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-varying vec3 vWW;
+varying vec3 vWW; varying float vWDepth;
 uniform float uWTime, uWaterLevel;
-${TERRAIN_GLSL}
 ${GROUND_GLSL}
 float wFoam = 0.0;`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 {
-  float dist = length(vWW - cameraPosition);
-  float depth = 60.0;
-  if (dist < 9000.0) depth = uWaterLevel - terrainHeight(vWW.xz);
+  float depth = vWDepth;
   // deep water: dark blue-green body colour, shallow: sand showing through (turquoise)
   vec3 deep = vec3(0.012, 0.045, 0.06), shallow = vec3(0.06, 0.2, 0.19), sandC = vec3(0.3, 0.27, 0.19);
   float sh = exp(-max(depth, 0.0) / 3.5);
@@ -620,7 +627,7 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
   setAirportName(name) {
     if (!this.signs) return;
     for (const m of this.signs.children.slice()) { this.signs.remove(m); m.geometry.dispose(); m.material.map.dispose(); m.material.dispose(); }
-    const T = signTexts(name || 'City Builder');
+    const T = signTexts(name || 'Tokyo');
     const col = this.signColor || '#20242a';
     const add = (text, h, maxW, x, y, z, ry, color = col) => {
       const m = textSign(text, { h, maxW, color });
@@ -1011,13 +1018,16 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
   }
 
   // ---------------------------------------------------------------------- per frame
-  sunDirection(tod) {
-    // latitude 35 N, spring (declination +8 deg)
-    const lat = 35 * DEG, dec = 8 * DEG;
+  sunDirection(tod, x = 0, z = 0) {
+    // latitude of the nearest airport (26 N Naha .. 43 N Sapporo), spring (declination +8 deg)
+    let near = GEO.airports[0], bd = Infinity;
+    for (const a of GEO.airports) { const d = Math.hypot(x - a.x, z - a.z); if (d < bd) { bd = d; near = a; } }
+    const lat = (near.lat ?? 35) * DEG, dec = 8 * DEG;
     const H = (tod - 12) * 15 * DEG;
     const el = Math.asin(Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(H));
     let az = Math.atan2(-Math.sin(H), Math.tan(dec) * Math.cos(lat) - Math.sin(lat) * Math.cos(H));
-    // az from north, clockwise
+    // az from north, clockwise -> world (the local north, util.northAt)
+    az -= northAt(x, z) * DEG;
     return { el, az, v: new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)) };
   }
 
@@ -1071,7 +1081,7 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
     this.time += dt;
     this.updateWet(dt);
     const W = this.weather;
-    const sd = this.sunDirection(this.tod);
+    const sd = this.sunDirection(this.tod, camera.position.x, camera.position.z);
     this.sunDir = sd.v;
     const elDeg = sd.el / DEG;
     const day = smoothstep(-6, 8, elDeg);

@@ -9,6 +9,11 @@ import { Systems } from '../web/js/systems.js';
 import { configureTerrain, terrainHeight } from '../web/js/terrain.js';
 import { V3, KT, FT, DEG, FPM, headingVec } from '../web/js/util.js';
 
+import { applyHomeRunways } from '../web/js/airports.js';
+import { northAt } from '../web/js/util.js';
+// headings in these tests were written for "north = world -z": convert to the local compass
+const H = (h, x = 0, z = 0) => (h + northAt(x, z) + 360) % 360;
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const meta = JSON.parse(fs.readFileSync(path.join(here, `../web/assets/${process.env.AC || 'b787-9'}.json`)));
 if (meta.spec) Object.assign(SPEC, meta.spec);
@@ -18,6 +23,7 @@ const MC = Math.min(0.85, SPEC.MMO - 0.04);       // cruise Mach
 console.log('type', meta.name || 'Boeing 787-9');
 const world = JSON.parse(fs.readFileSync(path.join(here, '../web/assets/world.json')));
 configureTerrain(world);
+applyHomeRunways(world);
 const rwy27 = world.runways.find((r) => r.ident === '27');
 
 const DT = 1 / 240;
@@ -43,7 +49,7 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
   const sys = new Systems(fm, world);
   fm.payload = 26000 * KM; fm.fuel = 45000 * KM;
   const start = new V3(rwy27.threshold[0] - 80, 0, 0);
-  fm.reset(new V3(start.x, GY, start.z), 270, 0, 0, true);
+  fm.reset(new V3(start.x, GY, start.z), H(270, start.x, start.z), 0, 0, true);
   run(fm, sys, 4);
   const o = fm.out;
   console.log('settled:', fmt(o), 'gear loads', fm.gear.map((g) => (g.load / 1000).toFixed(0) + 'kN').join(' '),
@@ -71,14 +77,14 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
   // --- flap retraction, AP on, climb to 5000 and hold 250 kt ---
   sys.pilot.pitch = 0;
   sys.flapLever = 0;
-  sys.mcp.alt = 5000; sys.mcp.spd = 250; sys.mcp.hdg = 250; sys.mcp.vs = 2000;
+  sys.mcp.alt = 5000; sys.mcp.spd = 250; sys.mcp.hdg = Math.round(H(250)); sys.mcp.vs = 2000;
   sys.ap.roll = 'HDG'; sys.ap.pitch = 'VS';
   sys.engageAP();
   sys.at.on = true; sys.at.mode = 'SPD';
   run(fm, sys, 240);
   console.log('after 240 s AP:', fmt(o), 'stab', (fm.ctl.stab / DEG).toFixed(2), 'elev', (fm.ctl.elevator / DEG).toFixed(2), 'N1', fm.engines[0].n1.toFixed(1));
   check(Math.abs(o.altFt - 5000) < 60, 'AP altitude hold 5000 ft (' + o.altFt.toFixed(0) + ')');
-  check(Math.abs(o.hdg - 250) < 2, 'AP heading 250');
+  check(Math.abs(((o.hdg - Math.round(H(250))) % 360 + 540) % 360 - 180) < 2, 'AP heading ' + Math.round(H(250)));
   check(Math.abs(o.ias - 250) < 6, 'A/T speed 250 kt (' + o.ias.toFixed(1) + ')');
   // --- cruise check: FL350 M0.85 trim
 }
@@ -89,10 +95,10 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
   const sys = new Systems(fm, world);
   fm.payload = 26000 * KM; fm.fuel = Math.min(60000 * KM, SPEC.fuelCapacity * 0.8);
   const alt = 35000 * FT;
-  fm.reset(new V3(0, alt, -30000), 270, MC * 296.5, 2.0, false);
+  fm.reset(new V3(0, alt, -30000), H(270, 0, -30000), MC * 296.5, 2.0, false);
   sys.flapLever = 0; sys.gearLever = false; fm.ctl.gearPos = 1; fm.ctl.flapAngle = 0;
   sys.airTime = 5; sys.gammaT = 0;
-  sys.mcp.alt = 35000; sys.mcp.hdg = 270; sys.mcp.spd = 262;
+  sys.mcp.alt = 35000; sys.mcp.hdg = Math.round(H(270, 0, -30000)); sys.mcp.spd = 262;
   sys.ap.roll = 'HDG'; sys.ap.pitch = 'ALT'; sys.ap.on = true;
   // hold Mach 0.85 with A/T: set IAS target equal to M.85 CAS at FL350
   run(fm, sys, 5);
@@ -113,13 +119,13 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
   const sys = new Systems(fm, world);
   fm.payload = 26000 * KM; fm.fuel = 18000 * KM;
   sys.selectRunway(rwy27);
-  const dir = headingVec(270);
+  const dir = headingVec(H(270));
   const d = 12 * 1852;
   const p = new V3(rwy27.threshold[0] - dir.x * d + 300, 3000 * FT, rwy27.threshold[2] - dir.z * d + 900);
-  fm.reset(p, 250, 180 * KT, 1.5, false);
+  fm.reset(p, H(250, p.x, p.z), 180 * KT, 1.5, false);
   sys.flapLever = 4; fm.ctl.flapAngle = 20; sys.gearLever = true; fm.ctl.gearPos = 0;
   sys.airTime = 5; sys.gammaT = 0;
-  sys.mcp.alt = 3000; sys.mcp.hdg = 250; sys.mcp.spd = 160;
+  sys.mcp.alt = 3000; sys.mcp.hdg = Math.round(H(250, p.x, p.z)); sys.mcp.spd = 160;
   sys.ap.roll = 'HDG'; sys.ap.pitch = 'ALT'; sys.ap.on = true; sys.ap.armed.loc = true; sys.ap.armed.gs = true;
   sys.at.on = true; sys.at.mode = 'SPD';
   sys.speedbrakeArmed = true; sys.autobrake = 3;

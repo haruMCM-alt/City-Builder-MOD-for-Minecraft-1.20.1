@@ -50,11 +50,18 @@ export function textSign(text, { h, maxW = 1e9, color = '#20242a', font = '800 1
   return m;
 }
 
-export const DEFAULT_AIRPORTS = { name: 'City Builder', name2: 'Minato', name3: 'Aoba', name4: 'Kaede' };
+// radio / sign names of the four airports (Haneda is "Tokyo International", its tower "Tokyo Tower")
+export const DEFAULT_AIRPORTS = { name: 'Tokyo', name2: 'Kansai', name3: 'New Chitose', name4: 'Naha' };
+// names saved before the airports became Tokyo / Osaka / Sapporo / Okinawa are replaced
+const OLD_NAMES = { name: 'City Builder', name2: 'Minato', name3: 'Aoba', name4: 'Kaede' };
 export function loadAirportNames() {
-  try { return { ...DEFAULT_AIRPORTS, ...(JSON.parse(localStorage.getItem('b787.airports') || 'null') || {}) }; } catch (e) { return { ...DEFAULT_AIRPORTS }; }
+  try {
+    const saved = JSON.parse(localStorage.getItem('b787.airports2') || localStorage.getItem('b787.airports') || 'null') || {};
+    for (const k of Object.keys(OLD_NAMES)) if (saved[k] === OLD_NAMES[k]) delete saved[k];
+    return { ...DEFAULT_AIRPORTS, ...saved };
+  } catch (e) { return { ...DEFAULT_AIRPORTS }; }
 }
-export function saveAirportNames(a) { try { localStorage.setItem('b787.airports', JSON.stringify(a)); } catch (e) { /* ignore */ } }
+export function saveAirportNames(a) { try { localStorage.setItem('b787.airports2', JSON.stringify(a)); } catch (e) { /* ignore */ } }
 const ascii = (s) => /^[\x20-\x7e]*$/.test(s);
 export const signTexts = (name) => ({
   airside: ascii(name) ? `${name.toUpperCase()} INTERNATIONAL AIRPORT` : `${name}国際空港`,

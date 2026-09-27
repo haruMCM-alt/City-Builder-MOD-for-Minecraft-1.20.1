@@ -2,10 +2,10 @@
 // Messages are shown in the radio log and, when enabled, spoken with the Web Speech API
 // (controller and pilots with different voices), one transmission at a time.
 
-export const FREQ = { GND: 'City Builder Ground 121.9', TWR: 'City Builder Tower 118.1' };
+export const FREQ = { GND: 'Tokyo Ground 121.7', TWR: 'Tokyo Tower 118.1' };
 // airport names chosen in the menu (radio phrases, frequencies, signs)
 // (name: home airport, name2 / name3 / name4: the remote airports, see airports.js)
-export const AIRPORT = { name: 'City Builder', name2: 'Minato', name3: 'Aoba', name4: 'Kaede' };
+export const AIRPORT = { name: 'Tokyo', name2: 'Kansai', name3: 'New Chitose', name4: 'Naha' };
 export const aptName = (id) => (id > 1 ? AIRPORT['name' + id] : AIRPORT.name) || '';
 export function setAirportNames(a) {
   Object.assign(AIRPORT, a);

@@ -7,20 +7,8 @@ import * as THREE from 'three';
 import { textSign, signTexts } from './signs.js';
 import { REMOTES } from './airports.js';
 
-export { REMOTES, remoteById, nearestAirport, LAYOUT } from './airports.js';
+export { REMOTES, remoteById, nearestAirport, LAYOUT, remoteRunways } from './airports.js';
 export const A2 = REMOTES[0];
-
-// runways 09 / 27 of every remote airport, in world.json's runway format (appended after the
-// home runways, so lookups by ident still find the home airport first)
-export function remoteRunways() {
-  const out = [];
-  for (const ap of REMOTES) {
-    const rw = (ident, sx, hdg, freq) => ({ ident, apt: ap.id, threshold: [ap.x + sx * ap.len / 2, 0, ap.z], heading: hdg, length: ap.len,
-      width: ap.wid, elevation: 0, ils: { course: hdg, glideslope: 3, gsAntennaFromThr: 300, freq } });
-    out.push(rw('09', -1, 90, `11${ap.id}.10`), rw('27', 1, 270, `11${ap.id}.70`));
-  }
-  return out;
-}
 
 // collision boxes (three.js x0, z0, x1, z1, top) in world coordinates
 export function remoteObstacles(ap, data) {

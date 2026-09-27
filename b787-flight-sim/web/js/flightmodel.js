@@ -10,7 +10,7 @@
 // Body rates: w.x = roll rate (+ right wing down), w.z = pitch rate (+ nose up),
 // w.y = yaw about +y (+ nose LEFT); r = -w.y is the conventional yaw rate.
 
-import { V3, Quat, DEG, RAD, KT, FT, G0, clamp, lerp, smoothstep, approach, wrap360 } from './util.js';
+import { V3, Quat, DEG, RAD, KT, FT, G0, clamp, lerp, smoothstep, approach, wrap360, compassOf } from './util.js';
 import { isa, tas2cas } from './atmosphere.js';
 import { terrainHeight, isWater, TERRAIN } from './terrain.js';
 import { obstacleAt } from './obstacles.js';
@@ -282,7 +282,7 @@ export class FlightModel {
   reset(pos, hdg, speedMS, pitchDeg = 0, onGround = true) {
     this.resetDamage();
     this.pos.copy(pos);
-    this.q = Quat.fromHPB(hdg, pitchDeg, 0);
+    this.q = Quat.fromHPB(hdg, pitchDeg, 0, pos.x, pos.z);
     const fwd = this.q.rotate(new V3(1, 0, 0));
     this.vel = fwd.scale(speedMS);
     this.w.set(0, 0, 0);
@@ -592,14 +592,14 @@ export class FlightModel {
   // derived attitude / navigation info (call after stepping)
   update() {
     const o = this.out;
-    const e = this.q.toHPB();
+    const e = this.q.toHPB(this.pos.x, this.pos.z);
     o.hdg = e.hdg; o.pitch = e.pitch; o.bank = e.bank;
     o.alt = this.pos.y;
     o.altFt = this.pos.y / FT;
     const vh = Math.hypot(this.vel.x, this.vel.z);
     o.gs = vh / KT;
     o.vs = this.vel.y;
-    o.track = vh > 1 ? wrap360(Math.atan2(this.vel.x, -this.vel.z) * RAD) : e.hdg;
+    o.track = vh > 1 ? compassOf(this.vel.x, this.vel.z, this.pos.x, this.pos.z) : e.hdg;
     o.fpa = Math.atan2(this.vel.y, Math.max(vh, 0.1)) * RAD;
     // flight path relative to the air mass (for FBW)
     const air = V3.sub(this.vel, this.wind);

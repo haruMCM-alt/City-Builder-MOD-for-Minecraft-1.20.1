@@ -1,3 +1,4 @@
+import { GEO } from './geo_data.js';
 // Small dependency-free math used by the physics (so it can run in Node for tests).
 // Frames: world = three.js (x east, y up, z south). Body = aircraft (x fwd, y up, z right).
 
@@ -87,21 +88,21 @@ export class Quat {
     return this.normalize();
   }
   // Build from aviation Euler angles (heading from north cw, pitch up, bank right), degrees.
-  static fromHPB(hdg, pitch, bank) {
+  static fromHPB(hdg, pitch, bank, x = 0, z = 0) {
     // yaw about +y: heading h means nose points (sin h, 0, -cos h); a +y rotation of a
     // turns +x towards -z, so a = 90deg - h.
-    const qy = Quat.axisAngle(0, 1, 0, (90 - hdg) * DEG);
+    const qy = Quat.axisAngle(0, 1, 0, (90 - (hdg - northAt(x, z))) * DEG);
     const qz = Quat.axisAngle(0, 0, 1, pitch * DEG);
     const qx = Quat.axisAngle(1, 0, 0, bank * DEG);
     return qy.mul(qz).mul(qx);
   }
   // heading, pitch, bank (deg) of the body attitude
-  toHPB() {
+  toHPB(x = 0, z = 0) {
     const fwd = this.rotate(new V3(1, 0, 0));
     const up = this.rotate(new V3(0, 1, 0));
     const right = this.rotate(new V3(0, 0, 1));
     const pitch = Math.asin(clamp(fwd.y, -1, 1)) * RAD;
-    const hdg = wrap360(Math.atan2(fwd.x, -fwd.z) * RAD);
+    const hdg = wrap360(Math.atan2(fwd.x, -fwd.z) * RAD + northAt(x, z));
     // bank: angle of the right wing below the horizon, measured in the plane normal to fwd
     const hr = V3.cross(fwd, new V3(0, 1, 0)).norm();   // horizontal right
     const hu = V3.cross(hr, fwd).norm();                // "level" up
@@ -110,8 +111,31 @@ export class Quat {
   }
 }
 
-export function headingVec(hdg) {
-  return new V3(Math.sin(hdg * DEG), 0, -Math.cos(hdg * DEG));
+// ---- compass --------------------------------------------------------------------------------
+// Every airport flies its main runway along the world x axis, so each has its own "north" (the
+// compass heading of world -z there, geo_data.js).  Away from the airports the north blends
+// between them (inverse 4th-power distance weights, ~30 km core).
+export function northAt(x = 0, z = 0) {
+  let sx = 0, sz = 0;
+  for (const a of GEO.airports) {
+    const d2 = ((x - a.x) * (x - a.x) + (z - a.z) * (z - a.z)) / 9e8;
+    const w = 1 / (1 + d2 * d2), r = a.north * DEG;
+    sx += w * Math.cos(r); sz += w * Math.sin(r);
+  }
+  return Math.atan2(sz, sx) * RAD;
+}
+// world direction of a compass heading (at position x, z)
+export function headingVec(hdg, x = 0, z = 0) {
+  const h = (hdg - northAt(x, z)) * DEG;
+  return new V3(Math.sin(h), 0, -Math.cos(h));
+}
+// compass heading of a world direction (at position x, z)
+export function compassOf(vx, vz, x = 0, z = 0) {
+  return wrap360(Math.atan2(vx, -vz) * RAD + northAt(x, z));
+}
+// landing direction of a runway (world.json format)
+export function runwayDir(r) {
+  return headingVec(r.heading, r.threshold[0], r.threshold[2]);
 }
 
 // Deterministic PRNG

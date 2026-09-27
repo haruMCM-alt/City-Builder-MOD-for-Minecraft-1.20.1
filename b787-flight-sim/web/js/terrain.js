@@ -1,27 +1,25 @@
 // Procedural terrain: identical height function in JS (collision / radio altimeter)
-// and GLSL (rendering).  World frame = three.js (x east, y up, z south).
-// The airport + city area (world.json flatZone) is exactly flat at height 0; the
-// sea lies south of the coast, a river crosses the city, hills and mountains rise
-// outside the flat zone.
+// and GLSL (rendering).  World frame = three.js (x, y up, z); the true directions depend on
+// the local north (geo_data.js, util.northAt).
+//
+// Geography (blender/geo.py -> geo_data.js): land polygons (Kanto, Honshu, Kinki, Hokkaido,
+// Okinawa), water polygons cut out of them (Tokyo Bay, Osaka Bay, Sagami Bay, the Kii channel,
+// Lake Shikotsu, Tsugaru strait ...), small islands, mountain peaks (Fuji, Rokko, Eniwa,
+// Tarumae, Yotei ...), the airports' flat zones (hard = sea wall for the island airports).
+// Heights: coastal plains rising inland, fbm hills, cones / ridges for the mountains; the sea
+// deepens away from the coast, with a shallow coral shelf around Okinawa.
 
+import { GEO } from './geo_data.js';
 import { FLATS } from './airports.js';
 
 export const TERRAIN = {
-  flat: { x0: -5200, x1: 11200, z0: -9800, z1: 1400 },
-  // the remote airports (see airports.js)
   flats: FLATS,
-  coastZ: 1400,
-  river: { x: 3000, w: 220, z0: -9800, z1: 1400 },
   seaDepth: -38,
   waterLevel: -0.35,
 };
 
-export function configureTerrain(world) {
-  if (!world) return;
-  if (world.flatZone) Object.assign(TERRAIN.flat, world.flatZone);
-  if (world.coastZ !== undefined) TERRAIN.coastZ = world.coastZ;
-  if (world.river) Object.assign(TERRAIN.river, { x: world.river.x, w: world.river.width, z0: world.river.z0, z1: world.river.z1 });
-}
+// kept for the old world.json fields (the flat zones now come from geo_data.js)
+export function configureTerrain() {}
 
 // ---- integer hash value noise (bit-identical to the GLSL version) ----------
 function hash2(ix, iz) {
@@ -54,34 +52,89 @@ const smooth = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
+// ---- polygons ----------------------------------------------------------------
+// packed: vertices, per polygon [start, count, kind (0 land, 1 water, 2 island)] + bounding box
+const VERTS = [], POLYS = [];
+for (const [kind, list] of [[0, GEO.land], [1, GEO.water], [2, GEO.islands]]) {
+  for (const P of list) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [x, z] of P) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    POLYS.push({ s: VERTS.length, n: P.length, kind, x0, x1, z0, z1 });
+    for (const v of P) VERTS.push(v);
+  }
+}
+
+// signed distance to a polygon (negative inside), Inigo Quilez
+function sdPoly(px, pz, P) {
+  const V = VERTS;
+  // far from the polygon: the bounding box distance is a good lower bound
+  const bx = Math.max(P.x0 - px, 0, px - P.x1), bz = Math.max(P.z0 - pz, 0, pz - P.z1);
+  if (bx > 2000 || bz > 2000) return Math.hypot(bx, bz);
+  let d = Infinity, sg = 1;
+  for (let i = 0, j = P.n - 1; i < P.n; j = i, i++) {
+    const vi = V[P.s + i], vj = V[P.s + j];
+    const ex = vj[0] - vi[0], ez = vj[1] - vi[1];
+    const wx = px - vi[0], wz = pz - vi[1];
+    const t = Math.min(Math.max((wx * ex + wz * ez) / (ex * ex + ez * ez), 0), 1);
+    const qx = wx - ex * t, qz = wz - ez * t;
+    d = Math.min(d, qx * qx + qz * qz);
+    const c1 = pz >= vi[1], c2 = pz < vj[1], c3 = ex * wz > ez * wx;
+    if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) sg = -sg;
+  }
+  return sg * Math.sqrt(d);
+}
+
+// signed distance to the coast (negative on land)
+export function coastDist(x, z) {
+  let dl = 1e9, dw = 1e9, di = 1e9;
+  for (const P of POLYS) {
+    const d = sdPoly(x, z, P);
+    if (P.kind === 0) dl = Math.min(dl, d); else if (P.kind === 1) dw = Math.min(dw, d); else di = Math.min(di, d);
+  }
+  return Math.min(Math.max(dl, -dw), di);
+}
+
+const PEAKS = GEO.peaks;          // [x, z, h, r, cone]
+const REEF = GEO.reef;            // [x, z, radius]
+const FL = GEO.flats;             // {x0, x1, z0, z1, hard}
+
 export function terrainHeight(x, z) {
-  const F = TERRAIN.flat;
-  // distance outside the flat rectangle
-  const dx = Math.max(F.x0 - x, 0, x - F.x1);
-  const dz = Math.max(F.z0 - z, 0, z - F.z1);
-  const d = Math.hypot(dx, dz);
-  let d2 = 1e9;
-  for (const F2 of TERRAIN.flats) d2 = Math.min(d2, Math.hypot(Math.max(F2.x0 - x, 0, x - F2.x1), Math.max(F2.z0 - z, 0, z - F2.z1)));
-  const flatBlend = Math.min(smooth(0, 3500, d), smooth(0, 3000, d2));
-  // hills + northern mountains
-  const n = fbm(x / 7000, z / 7000, 6);
-  let hills = 20 + 520 * n * n;
-  const north = 1 - smooth(-34000, -14000, z);
-  const ridge = 1 - Math.abs(2 * fbm(x / 11000 + 3.1, z / 11000, 5) - 1);
-  hills += 1500 * north * ridge * ridge;
-  let h = hills * flatBlend;
-  // coastline (straight inside the flat zone's x-range, wavy elsewhere)
-  const wx = smooth(0, 4000, Math.max(F.x0 - x, 0, x - F.x1));
-  const zc = TERRAIN.coastZ + wx * (fbm(x / 16000, 7.7, 4) - 0.5) * 6000;
-  const sea = smooth(zc - 30, zc + 500, z);
-  h = h * (1 - sea) + TERRAIN.seaDepth * sea;
-  // river through the city
-  const R = TERRAIN.river;
-  if (z > R.z0 - 3000 && z < R.z1 + 400) {
-    const rw = R.w / 2;
-    const bank = 1 - smooth(rw - 6, rw + 8, Math.abs(x - R.x));
-    const along = smooth(R.z0 - 2500, R.z0, z);
-    h = Math.min(h, h * (1 - bank * along) - 5 * bank * along);
+  const d = coastDist(x, z);
+  let h;
+  if (d < 0) {
+    // land: coastal plain, hills rising inland, mountains
+    const inland = smooth(0, 9000, -d);
+    const n = fbm(x / 7000, z / 7000, 6);
+    h = 2 + (10 + 170 * n * n) * inland;
+    for (const p of PEAKS) {
+      const dx = x - p[0], dz = z - p[1];
+      if (Math.abs(dx) > p[3] * 2.2 || Math.abs(dz) > p[3] * 2.2) continue;
+      const r = Math.hypot(dx, dz) / p[3];
+      if (p[4]) h += p[2] * Math.pow(Math.max(0, 1 - r), 1.6) * (0.92 + 0.16 * fbm(x / 900, z / 900, 3));
+      else {
+        const ridge = 1 - Math.abs(2 * fbm(x / 6000 + 3.1, z / 6000, 4) - 1);
+        h += p[2] * Math.exp(-r * r * 2.2) * (0.35 + 0.9 * ridge * ridge) * inland;
+      }
+    }
+    h *= smooth(0, 60, -d);                    // beaches / sea walls meet the water at ~0
+  } else {
+    // sea: shelf, then the deep ocean; a shallow coral shelf around Okinawa
+    h = -2 - Math.min(d * 0.01, 45) - Math.max(0, d - 8000) * 0.004;
+    const rd = Math.hypot(x - REEF[0], z - REEF[1]);
+    if (rd < REEF[2]) {
+      const reef = -1.1 - Math.min(d * 0.0016, 3.5) - Math.max(0, d - 1800) * 0.04;
+      h = Math.max(h, reef);
+    }
+    h = Math.max(h, -400);
+  }
+  // airport flat zones: exactly 0 inside; soft ones blend into the land around them
+  for (const f of FL) {
+    const dx = Math.max(f.x0 - x, 0, x - f.x1), dz = Math.max(f.z0 - z, 0, z - f.z1);
+    if (dx === 0 && dz === 0) return 0;
+    if (!f.hard && h > 0) {
+      const df = Math.hypot(dx, dz);
+      if (df < 3500) h *= smooth(0, 3500, df);
+    }
   }
   return h;
 }
@@ -90,11 +143,13 @@ export function isWater(x, z) {
   return terrainHeight(x, z) < TERRAIN.waterLevel;
 }
 
-// GLSL implementation (WebGL2 / GLSL ES 3.0).  Uniforms injected by the material.
-const v4 = (F) => `vec4(${F.x0.toFixed(1)}, ${F.x1.toFixed(1)}, ${F.z0.toFixed(1)}, ${F.z1.toFixed(1)})`;
-// remote airports' flat zones as GLSL constants (also used by the terrain colouring)
-export const FLATS_GLSL = `const int N_FLATS = ${FLATS.length};
-const vec4 cFlats[${FLATS.length}] = vec4[${FLATS.length}](${FLATS.map(v4).join(', ')});
+// ---- GLSL ------------------------------------------------------------------------
+const f1 = (v) => v.toFixed(1);
+const v4 = (F) => `vec4(${f1(F.x0)}, ${f1(F.x1)}, ${f1(F.z0)}, ${f1(F.z1)})`;
+// flat zones of every airport as GLSL constants (also used by the terrain colouring)
+export const FLATS_GLSL = `const int N_FLATS = ${FL.length};
+const vec4 cFlats[${FL.length}] = vec4[${FL.length}](${FL.map(v4).join(', ')});
+const float cFlatHard[${FL.length}] = float[${FL.length}](${FL.map((f) => (f.hard ? '1.0' : '0.0')).join(', ')});
 float flatsDist(vec2 p) {
   float d = 1e9;
   for (int i = 0; i < N_FLATS; i++) { vec4 F = cFlats[i]; d = min(d, length(vec2(max(max(F.x - p.x, 0.0), p.x - F.y), max(max(F.z - p.y, 0.0), p.y - F.w)))); }
@@ -104,12 +159,22 @@ bool inFlats(vec2 p, float m) {
   for (int i = 0; i < N_FLATS; i++) { vec4 F = cFlats[i]; if (p.x > F.x - m && p.x < F.y + m && p.y > F.z - m && p.y < F.w + m) return true; }
   return false;
 }`;
+
+const vec2s = VERTS.map(([x, z]) => `vec2(${f1(x)}, ${f1(z)})`).join(', ');
+const polys = POLYS.map((P) => `ivec3(${P.s}, ${P.n}, ${P.kind})`).join(', ');
+const boxes = POLYS.map((P) => v4(P)).join(', ');
+const peaks = PEAKS.map((p) => `vec4(${f1(p[0])}, ${f1(p[1])}, ${f1(p[2])}, ${f1(p[3] * (p[4] ? -1 : 1))})`).join(', ');
+
 export const TERRAIN_GLSL = /* glsl */`
-uniform vec4 uFlat;      // x0, x1, z0, z1
 ${FLATS_GLSL}
-uniform float uCoastZ;
-uniform vec4 uRiver;     // x, w, z0, z1
-uniform float uSeaDepth;
+const int N_VERTS = ${VERTS.length};
+const int N_POLYS = ${POLYS.length};
+const int N_PEAKS = ${PEAKS.length};
+const vec2 cVerts[${VERTS.length}] = vec2[${VERTS.length}](${vec2s});
+const ivec3 cPolys[${POLYS.length}] = ivec3[${POLYS.length}](${polys});
+const vec4 cBoxes[${POLYS.length}] = vec4[${POLYS.length}](${boxes});
+const vec4 cPeaks[${PEAKS.length}] = vec4[${PEAKS.length}](${peaks});
+const vec3 cReef = vec3(${f1(REEF[0])}, ${f1(REEF[1])}, ${f1(REEF[2])});
 
 float t_hash2(int ix, int iz) {
   uint h = uint(ix) * 374761393u + uint(iz) * 668265263u;
@@ -134,28 +199,69 @@ float t_fbm(vec2 p, int oct) {
   }
   return s;
 }
+float t_sdPoly(vec2 p, int k) {
+  vec4 B = cBoxes[k];
+  vec2 bb = vec2(max(max(B.x - p.x, 0.0), p.x - B.y), max(max(B.z - p.y, 0.0), p.y - B.w));
+  if (bb.x > 2000.0 || bb.y > 2000.0) return length(bb);
+  ivec3 P = cPolys[k];
+  float d = 1e18, sg = 1.0;
+  for (int i = 0, j = P.y - 1; i < P.y; j = i, i++) {
+    vec2 vi = cVerts[P.x + i], vj = cVerts[P.x + j];
+    vec2 e = vj - vi, w = p - vi;
+    vec2 q = w - e * clamp(dot(w, e) / dot(e, e), 0.0, 1.0);
+    d = min(d, dot(q, q));
+    bool c1 = p.y >= vi.y, c2 = p.y < vj.y, c3 = e.x * w.y > e.y * w.x;
+    if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) sg = -sg;
+  }
+  return sg * sqrt(d);
+}
+float coastDist(vec2 p) {
+  float dl = 1e9, dw = 1e9, di = 1e9;
+  for (int k = 0; k < N_POLYS; k++) {
+    float d = t_sdPoly(p, k);
+    int kind = cPolys[k].z;
+    if (kind == 0) dl = min(dl, d); else if (kind == 1) dw = min(dw, d); else di = min(di, d);
+  }
+  return min(max(dl, -dw), di);
+}
 float terrainHeight(vec2 xz) {
   float x = xz.x, z = xz.y;
-  float dx = max(max(uFlat.x - x, 0.0), x - uFlat.y);
-  float dz = max(max(uFlat.z - z, 0.0), z - uFlat.w);
-  float d = length(vec2(dx, dz));
-  float d2 = flatsDist(xz);
-  float flatBlend = min(smoothstep(0.0, 3500.0, d), smoothstep(0.0, 3000.0, d2));
-  float n = t_fbm(vec2(x, z) / 7000.0, 6);
-  float hills = 20.0 + 520.0 * n * n;
-  float north = 1.0 - smoothstep(-34000.0, -14000.0, z);
-  float ridge = 1.0 - abs(2.0 * t_fbm(vec2(x / 11000.0 + 3.1, z / 11000.0), 5) - 1.0);
-  hills += 1500.0 * north * ridge * ridge;
-  float h = hills * flatBlend;
-  float wx = smoothstep(0.0, 4000.0, max(max(uFlat.x - x, 0.0), x - uFlat.y));
-  float zc = uCoastZ + wx * (t_fbm(vec2(x / 16000.0, 7.7), 4) - 0.5) * 6000.0;
-  float sea = smoothstep(zc - 30.0, zc + 500.0, z);
-  h = h * (1.0 - sea) + uSeaDepth * sea;
-  if (z > uRiver.z - 3000.0 && z < uRiver.w + 400.0) {
-    float rw = uRiver.y * 0.5;
-    float bank = 1.0 - smoothstep(rw - 6.0, rw + 8.0, abs(x - uRiver.x));
-    float along = smoothstep(uRiver.z - 2500.0, uRiver.z, z);
-    h = min(h, h * (1.0 - bank * along) - 5.0 * bank * along);
+  float d = coastDist(xz);
+  float h;
+  if (d < 0.0) {
+    float inland = smoothstep(0.0, 9000.0, -d);
+    float n = t_fbm(xz / 7000.0, 6);
+    h = 2.0 + (10.0 + 170.0 * n * n) * inland;
+    for (int i = 0; i < N_PEAKS; i++) {
+      vec4 P = cPeaks[i];
+      float R = abs(P.w);
+      vec2 dd = xz - P.xy;
+      if (abs(dd.x) > R * 2.2 || abs(dd.y) > R * 2.2) continue;
+      float r = length(dd) / R;
+      if (P.w < 0.0) h += P.z * pow(max(0.0, 1.0 - r), 1.6) * (0.92 + 0.16 * t_fbm(xz / 900.0, 3));
+      else {
+        float ridge = 1.0 - abs(2.0 * t_fbm(xz / 6000.0 + vec2(3.1, 0.0), 4) - 1.0);
+        h += P.z * exp(-r * r * 2.2) * (0.35 + 0.9 * ridge * ridge) * inland;
+      }
+    }
+    h *= smoothstep(0.0, 60.0, -d);
+  } else {
+    h = -2.0 - min(d * 0.01, 45.0) - max(0.0, d - 8000.0) * 0.004;
+    float rd = length(xz - cReef.xy);
+    if (rd < cReef.z) {
+      float reef = -1.1 - min(d * 0.0016, 3.5) - max(0.0, d - 1800.0) * 0.04;
+      h = max(h, reef);
+    }
+    h = max(h, -400.0);
+  }
+  for (int i = 0; i < N_FLATS; i++) {
+    vec4 F = cFlats[i];
+    vec2 df2 = vec2(max(max(F.x - x, 0.0), x - F.y), max(max(F.z - z, 0.0), z - F.w));
+    if (df2.x == 0.0 && df2.y == 0.0) return 0.0;
+    if (cFlatHard[i] < 0.5 && h > 0.0) {
+      float df = length(df2);
+      if (df < 3500.0) h *= smoothstep(0.0, 3500.0, df);
+    }
   }
   return h;
 }

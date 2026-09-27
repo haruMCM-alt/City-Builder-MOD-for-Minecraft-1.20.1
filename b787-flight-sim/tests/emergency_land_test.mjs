@@ -13,12 +13,19 @@ import { configureObstacles } from '../web/js/obstacles.js';
 import { AutoFlight } from '../web/js/autoflight.js';
 import { V3, FT, KT, FPM, headingVec } from '../web/js/util.js';
 
+import { applyHomeRunways } from '../web/js/airports.js';
+import { northAt } from '../web/js/util.js';
+// headings in these tests were written for "north = world -z": convert to the local compass
+const H = (h, x = 0, z = 0) => (h + northAt(x, z) + 360) % 360;
+import { runwayDir } from '../web/js/util.js';
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const meta = JSON.parse(fs.readFileSync(path.join(here, `../web/assets/${process.env.AC || 'b787-9'}.json`)));
 if (meta.spec) Object.assign(SPEC, meta.spec);
 const KM = SPEC.MTOW / 254011;
 const world = JSON.parse(fs.readFileSync(path.join(here, '../web/assets/world.json')));
 configureTerrain(world);
+applyHomeRunways(world);
 configureObstacles(world);
 const rw = world.runways.find((r) => r.ident === '27');
 
@@ -60,10 +67,10 @@ const pickS = process.env.START, pickF = process.env.FAIL;
 for (const [s, [fname, fail]] of cases.filter(([s, f]) => (pickS == null || s === [...starts, ...deadStarts][+pickS]) && (pickF == null || (f[0] === 'dual engine failure' ? pickF === 'dead' : f === failures[+pickF])))) {
   const fm = new FlightModel(meta), sys = new Systems(fm, world);
   fm.payload = 26000 * KM; fm.fuel = (+process.env.FUEL || 45000) * KM;   // (a torn wing leaks ~30 t/h)
-  fm.reset(new V3(s.x, s.ft * FT, s.z), s.hdg, s.kt * KT, 2, false);
+  fm.reset(new V3(s.x, s.ft * FT, s.z), H(s.hdg, s.x, s.z), s.kt * KT, 2, false);
   if (s.wind) { const wv = headingVec(s.wind[0]); fm.wind.set(-wv.x * s.wind[1] * KT, 0, -wv.z * s.wind[1] * KT); }
   sys.flapLever = s.flaps; sys.gearLever = s.gear; fm.ctl.gearPos = s.gear ? 0 : 1; sys.airTime = 10;
-  sys.mcp.alt = s.ft; sys.mcp.hdg = s.hdg; sys.mcp.spd = s.kt; sys.ap.roll = 'HDG'; sys.ap.pitch = 'ALT'; sys.ap.on = true; sys.at.on = true; sys.at.mode = 'SPD';
+  sys.mcp.alt = s.ft; sys.mcp.hdg = Math.round(H(s.hdg, s.x, s.z)); sys.mcp.spd = s.kt; sys.ap.roll = 'HDG'; sys.ap.pitch = 'ALT'; sys.ap.on = true; sys.at.on = true; sys.at.mode = 'SPD';
   if (s.ils) { sys.selectRunway(rw); sys.ap.armed.loc = true; sys.ap.armed.gs = true; }
   const DT = 1 / 120;
   const run = (sec, af) => { for (let i = 0; i < sec / DT && !fm.crashed && !(af && af.done); i++) { af?.update(DT); sys.update(DT); fm.step(DT); fm.update(); for (const e of fm.events) if (e.type === 'touchdown' && !td) td = { vs: e.vs, x: fm.pos.x, z: fm.pos.z }; fm.events.length = 0; } };
@@ -84,7 +91,7 @@ for (const [s, [fname, fail]] of cases.filter(([s, f]) => (pickS == null || s ==
     if (!fm.out.wow && Math.abs(fm.pos.x) > 6000) minFt = Math.min(minFt, fm.out.altFt);
     if (process.env.VERBOSE && t % (+process.env.EVERY || 20) === 0) console.log(`  t=${t} ${af.phase} x=${fm.pos.x | 0} z=${fm.pos.z | 0} alt=${fm.out.altFt | 0} ias=${fm.out.ias | 0} hdg=${fm.out.hdg | 0} ${sys.ap.roll}/${sys.ap.pitch} F=${af._ds ? (af._ds.F / 1852).toFixed(1) + (af._ds.r?.ident || '') + af._ds.s : ''} spd=${sys.mcp.spd} lvl=${af.dsLevel} sb=${sys.speedbrakeLever} ra=${fm.out.raFt|0} vs=${(fm.out.vs / FPM)|0} gear=${sys.gearLever} ga=${af.goArounds || 0} flap=${sys.flapLever} gs=${sys.ilsDev.gs?.toFixed(2)}`);
   }
-  const R = lrw(), hd = headingVec(R.heading);
+  const R = lrw(), hd = runwayDir(R);
   const along = (fm.pos.x - R.threshold[0]) * hd.x + (fm.pos.z - R.threshold[2]) * hd.z;
   const lat = (fm.pos.x - R.threshold[0]) * -hd.z + (fm.pos.z - R.threshold[2]) * hd.x;
   console.log(`${s.name} / ${fname}: t=${(t / 60).toFixed(1)} min maxBank ${maxBank.toFixed(0)} stop ${along.toFixed(0)} m past thr, lat ${lat.toFixed(1)} m, td ${td ? (td.vs / FPM).toFixed(0) + ' fpm at ' + ((td.x - R.threshold[0]) * hd.x + (td.z - R.threshold[2]) * hd.z).toFixed(0) + ' m lat ' + (td.z - R.threshold[2]).toFixed(1) : '-'} ${fm.crashed ? 'CRASHED' : ''}`);

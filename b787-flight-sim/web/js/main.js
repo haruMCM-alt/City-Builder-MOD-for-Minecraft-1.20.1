@@ -20,6 +20,9 @@ import { Vapor } from './vapor.js';
 import { Traffic } from './traffic.js';
 import { Radio, setAirportNames, AIRPORT, aptName } from './atc.js';
 import { RemoteAirport, REMOTES, remoteById, nearestAirport, remoteLights, remoteObstacles, remoteRunways } from './airport2.js';
+import { HOME, applyHomeRunways } from './airports.js';
+import { Cityscape } from './cityscape.js';
+import { GEO } from './geo_data.js';
 import { AutoPush } from './pushback.js';
 import { AutoFlight } from './autoflight.js';
 import { FIDS } from './fids.js';
@@ -28,7 +31,7 @@ import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
 import { ARFF, Evacuation } from './emergency.js';
 import { configureObstacles } from './obstacles.js';
-import { V3, DEG, KT, FT, FPM, clamp, smoothstep, headingVec, wrap360, mulberry32 } from './util.js';
+import { V3, DEG, KT, FT, FPM, clamp, smoothstep, headingVec, runwayDir, compassOf, northAt, wrap360, mulberry32 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
 const DT = 1 / 240;
@@ -165,6 +168,7 @@ class App {
       world.obstacles = (world.obstacles || []).concat(remoteObstacles(ap, aptData[i]));
       Object.assign(world.lights, remoteLights(ap, aptData[i]));
     });
+    applyHomeRunways(world);
     world.runways = (world.runways || []).concat(remoteRunways());
     configureObstacles(world);
     this.world = new World(renderer, this.scene, this.quality);
@@ -204,6 +208,10 @@ class App {
     this.world.setAirportName(this.airports.name);
     // remote airports: signs now, the Blender models when the camera comes near (updateAirports)
     this.remoteAirports = REMOTES.map((ap, i) => new RemoteAirport(this.scene, this.world, ap, this.airports['name' + ap.id], aptData[i]));
+    // the cities (Tokyo, Osaka, Sapporo, Naha): instanced buildings with world.glb's facades
+    const wm = {};
+    this.world.worldRoot?.traverse((o) => { if (o.isMesh && o.material && !wm[o.material.name]) wm[o.material.name] = o.material; });
+    this.cities = GEO.airports.map((a) => new Cityscape(this.scene, a, wm, this.quality));
     this.world.buildTrees(world.trees);
     this.world.buildLights(world.lights);
     this.world.setWeather('scattered');
@@ -848,8 +856,8 @@ class App {
     if (id === 'rwy27' || id === 'rwy09' || id === 'auto') {
       // auto flight: from the runway in use (headwind) to the destination chosen in the menu
       const wd = +$('windDir').value, wk = +$('windSpd').value;
-      const r = id === 'auto' ? (Math.cos((wd - 270) * DEG) * wk < -3 ? r09 : r27) : id === 'rwy27' ? r27 : r09;
-      const d = headingVec(r.heading);
+      const r = id === 'auto' ? (Math.cos((wd - r27.heading) * DEG) * wk < -3 ? r09 : r27) : id === 'rwy27' ? r27 : r09;
+      const d = runwayDir(r);
       fm.reset(new V3(r.threshold[0] + d.x * 75, gy, r.threshold[2] + d.z * 75), r.heading, 0, 0, true);
       sys.flapLever = 2; fm.ctl.flapAngle = 5; fm.ctl.slat = 1;
       sys.mcp = { spd: Math.round(sys.vspeeds().v2 + 10), hdg: r.heading, alt: 5000, vs: 2000 };
@@ -866,15 +874,15 @@ class App {
     } else if (id === 'gate') {
       const st = W.stands[6];
       skipStand = st.id;
-      fm.reset(new V3(st.cg[0], gy, st.cg[2] - (STAND_NOSE - this.meta.noseGear[0])), 0, 0, 0, true);
+      fm.reset(new V3(st.cg[0], gy, st.cg[2] - (STAND_NOSE - this.meta.noseGear[0])), northAt(st.cg[0], st.cg[2]), 0, 0, true);   // nose to the terminal (world -z)
       fm.ctl.parkingBrake = true;
-      sys.mcp = { spd: 160, hdg: 270, alt: 5000, vs: 2000 };
+      sys.mcp = { spd: 160, hdg: Math.round(r27.heading), alt: 5000, vs: 2000 };
       sys.selectRunway(r27);
       this.rig.setView('orbit');
       this.rig.orbitYaw = 0.9; this.rig.dist = 120;
     } else if (id === 'ils27' || id === 'final') {
       const r = r27;
-      const d = headingVec(r.heading);
+      const d = runwayDir(r);
       const right = new V3(-d.z, 0, d.x);
       if (id === 'ils27') {
         const dist = 12 * 1852;
@@ -912,7 +920,7 @@ class App {
       // short final at the destination airport (the runway its traffic uses, ILS tuned to it)
       const dap = remoteById(this.dest) || REMOTES[0];
       const r = W.runways.find((x) => x.apt === dap.id && x.ident === (dap.x >= 0 ? '09' : '27'));
-      const dist = 5 * 1852, dv = headingVec(r.heading);
+      const dist = 5 * 1852, dv = runwayDir(r);
       const h = Math.tan(3 * DEG) * (dist + 300) + 1.5 - this.meta.groundY;
       setAir(6, true);
       const vref = sys.vspeeds().vref30;
@@ -929,9 +937,9 @@ class App {
       this.rig.setView('chase');
       Object.assign(L, { strobe: true, landing: true, taxi: true });
     } else if (id === 'city') {
-      fm.reset(new V3(1500, 2000 * FT, 2600), 20, spd(210, 610), 2, false);
+      fm.reset(new V3(1500, 2000 * FT, 2600), compassOf(1, -0.12, 1500, 2600), spd(210, 610), 2, false);   // towards central Tokyo
       setAir(1, false);
-      sys.mcp = { spd: 210, hdg: 20, alt: 2000, vs: 1000 };
+      sys.mcp = { spd: 210, hdg: Math.round(compassOf(1, -0.12, 1500, 2600)), alt: 2000, vs: 1000 };
       sys.at.on = true; sys.at.mode = 'SPD';
       sys.gammaT = 0; sys.phiT = 0;
       sys.selectRunway(r27);
@@ -942,9 +950,9 @@ class App {
       this.rig.setView('chase');
     } else if (id === 'cruise') {
       const alt = 35000 * FT;
-      fm.reset(new V3(-70000, alt, 9000), 75, Math.min(0.85, SPEC.MMO - 0.04) * 296.5, 2, false);
+      fm.reset(new V3(-70000, alt, 9000), compassOf(70000, -9000, -70000, 9000), Math.min(0.85, SPEC.MMO - 0.04) * 296.5, 2, false);
       setAir(0, false);
-      sys.mcp = { spd: 270, hdg: 75, alt: 35000, vs: -1500 };
+      sys.mcp = { spd: 270, hdg: Math.round(compassOf(70000, -9000, -70000, 9000)), alt: 35000, vs: -1500 };
       sys.ap.roll = 'HDG'; sys.ap.pitch = 'ALT'; sys.ap.on = true;
       sys.at.on = true; sys.at.mode = 'SPD';
       sys.gammaT = 0;
@@ -961,7 +969,7 @@ class App {
     if (this.traffic) {
       const wdir = +$('windDir').value, wkt = +$('windSpd').value;
       // active runway: the one with a headwind component (27 in calm wind)
-      const head27 = Math.cos((wdir - 270) * DEG) * wkt;
+      const head27 = Math.cos((wdir - (270 + HOME.north)) * DEG) * wkt;
       this.traffic.enabled = $('traffic') ? $('traffic').checked : true;
       this.radio.voice = $('atcVoice') ? $('atcVoice').checked : true;
       this.radio.noise = $('atcNoise') ? $('atcNoise').checked : true;
@@ -977,7 +985,7 @@ class App {
       if (id === 'auto' && this.autoFlight) {
         const pc = this.traffic.pc;
         pc.s.tkof = true;
-        pc.say('TWR', `${pc.cs}, runway ${this.autoFlight.dep.ident}, cleared for take-off.`);
+        pc.say('TWR', `${pc.cs}, runway ${(this.autoFlight.dep.name || this.autoFlight.dep.ident)}, cleared for take-off.`);
       }
     }
     this.crashShown = false;
@@ -1055,7 +1063,7 @@ class App {
       case 'app':
         if (!sys.ils) sys.selectRunway(this.nearestRunway());
         sys.ap.armed.loc = sys.ap.roll !== 'LOC'; sys.ap.armed.gs = true;
-        this.toast('APP armed: ILS ' + sys.ils.ident);
+        this.toast('APP armed: ILS ' + (sys.ils.name || sys.ils.ident));
         break;
       case 'view': {
         const v = this.rig.next();
@@ -1139,6 +1147,17 @@ class App {
   // remote airports: load a Blender model when the camera comes within 70 km; night signs
   updateAirports() {
     const cam = this.camera.position;
+    for (const c of this.cities || []) {
+      c.setNight(this.world.night);
+      if (c.loaded || c.loading || c.failed) continue;
+      if (Math.hypot(cam.x - c.ap.x, cam.z - c.ap.z) > 90000) continue;
+      c.loading = true;
+      fetch(ASSET + 'city' + c.ap.id + '.bin').then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((buf) => {
+        c.build(buf);
+        // tall buildings join the collision boxes
+        if (c.obstacles.length) { this.worldData.obstacles = (this.worldData.obstacles || []).concat(c.obstacles); configureObstacles(this.worldData); }
+      }).catch(() => { c.failed = true; });
+    }
     for (const ra of this.remoteAirports || []) {
       ra.update(this.world.night);
       if (ra.loaded || ra.loading || !ra.data) continue;
@@ -1152,7 +1171,7 @@ class App {
     const W = this.worldData, p = this.fm.pos;
     let best = W.runways[0], bd = 1e12;
     for (const r of W.runways) {
-      const d = headingVec(r.heading);
+      const d = runwayDir(r);
       // prefer the runway we are lined up with / approaching
       const dx = p.x - r.threshold[0], dz = p.z - r.threshold[2];
       const along = -(dx * d.x + dz * d.z);
@@ -1171,7 +1190,7 @@ class App {
     const T = this.traffic;
     if (!T) return;
     const fm = this.fm;
-    const pos = () => ({ x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90) * DEG, v: (fm.out.gs || 0) * KT });
+    const pos = () => ({ x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90 - northAt(fm.pos.x, fm.pos.z)) * DEG, v: (fm.out.gs || 0) * KT });
     const fire = () => {
       const D = fm.dmg, m = this.meta, root = this.visual?.root;
       if (!root) return null;
@@ -1220,7 +1239,7 @@ class App {
     this.autoFlight.runways = runways;
     this.autoFlight.allowRelight = true;
     this.autoFlight.onMessage = (m) => this.toast('🛬 ' + m, 4000);
-    this.toast(`🛬 緊急自動着陸 ${C.name} RWY ${dest.ident} — 操縦桿を動かすと手動に戻ります`, 5000);
+    this.toast(`🛬 緊急自動着陸 ${C.name} RWY ${dest.name || dest.ident} — 操縦桿を動かすと手動に戻ります`, 5000);
   }
 
   // accident on (or next to) an airport: crash alarm, the fire trucks go to the wreck
@@ -1230,7 +1249,7 @@ class App {
     if (Math.hypot(fm.pos.x - ap.x, fm.pos.z - ap.z) > 5000) return;
     const name = aptName(apt), tw = apt === 1 ? 'TWR' : 'TWR' + apt;
     this.radio?.say(tw, `Crash alarm, crash alarm! Aircraft accident at ${name}. All stations hold position, the airport is closed. Fire services responding.`, { apt });
-    this.arff.crash(apt, { x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90) * DEG });
+    this.arff.crash(apt, { x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90 - northAt(fm.pos.x, fm.pos.z)) * DEG });
   }
 
   updateEmergency(dt) {
@@ -1366,7 +1385,7 @@ class App {
     if (this.traffic && !this.paused) {
       const o = fm.out;
       this.traffic.update(dt, {
-        player: { x: fm.pos.x, z: fm.pos.z, alt: o.ra ?? 0, a: ((o.hdg || 0) - 90) * DEG, v: (o.gs || 0) * KT, onGround: !!o.wow, dmg: fm.dmg, fuel: fm.fuel },
+        player: { x: fm.pos.x, z: fm.pos.z, alt: o.ra ?? 0, a: ((o.hdg || 0) - 90 - northAt(fm.pos.x, fm.pos.z)) * DEG, v: (o.gs || 0) * KT, onGround: !!o.wow, dmg: fm.dmg, fuel: fm.fuel },
         playerSteer: fm.ctl.steer || 0,
         camera: this.camera, night: this.world.night, touchdown: (ac) => this.aiTouchdown(ac),
       });
@@ -1577,12 +1596,12 @@ class App {
       // an emergency aircraft touched down: the fire trucks go after it straight away
       if (this.traffic?.pc?.s?.mayday && this.arff.job?.phase !== 'ATTEND') {
         const fm = this.fm;
-        this.arff.attend(() => ({ x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90) * DEG, v: (fm.out.gs || 0) * KT }), this._arffFire, this.meta);
+        this.arff.attend(() => ({ x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90 - northAt(fm.pos.x, fm.pos.z)) * DEG, v: (fm.out.gs || 0) * KT }), this._arffFire, this.meta);
       }
       const fpm = e.vs / FPM;
       this.rig.impulse(Math.min(1, Math.abs(fpm) / 600));
       const r = this.nearestRunway();
-      const d = headingVec(r.heading);
+      const d = runwayDir(r);
       const dx = this.fm.pos.x - r.threshold[0], dz = this.fm.pos.z - r.threshold[2];
       const along = dx * d.x + dz * d.z;
       const lat = dx * -d.z + dz * d.x;

@@ -11,11 +11,11 @@ import { Path, Mover } from './path.js';
 import { hdg3, AIRPORT, aptName } from './atc.js';
 import { PlayerATC } from './playeratc.js';
 import { dressParked, logoById } from './livery.js';
-import { REMOTES } from './airports.js';
+import { REMOTES, runwayWords } from './airports.js';
 import { weatherModel, weatherGSE } from './shading.js';
 import { initGSELivery, dressGSE, renameGSE } from './gselivery.js';
 import { terrainHeight } from './terrain.js';
-import { DEG, KT, FT, clamp, lerp, smoothstep, mulberry32 } from './util.js';
+import { DEG, KT, FT, clamp, lerp, smoothstep, mulberry32, northAt } from './util.js';
 
 const G = 9.81;
 const TAN3 = Math.tan(3 * DEG);
@@ -26,7 +26,7 @@ const DEPART_ALT = 5000 * FT;
 const CRUISE_ALT = 25000 * FT;         // between the two airports (~200 km)
 const TURN_R = 1800;                   // circuit turn radius (25 deg bank at ~180 kt)
 const wrapPi = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
-const compass = (a) => ((a / DEG + 90) % 360 + 360) % 360;
+const compass = (a, x = 0, z = 0) => ((a / DEG + 90 + northAt(x, z)) % 360 + 360) % 360;
 
 // --------------------------------------------------------------------------- model helpers
 function mergeList(meshes, inv) {
@@ -691,7 +691,7 @@ export class Traffic {
   // runway use at a remote airport: arrivals from home land towards it and depart the same way
   // (sx = +1: runway 09 for the airports east of home, -1: runway 27 for those to the west)
   static rwSide(ap) { return ap.x >= 0 ? 1 : -1; }
-  static rwWords(ap) { return Traffic.rwSide(ap) > 0 ? 'zero niner' : 'two seven'; }
+  static rwWords(ap) { return runwayWords(Traffic.rwSide(ap) > 0 ? ap.rwy.k09 : ap.rwy.k27); }
 
   // ------------------------------------------------------------------ remote airport shuttles
   // States: R_OUT (en route, lands there) -> R_TAXI -> R_PARK -> R_PUSH -> R_TAXIOUT -> R_TKOF ->
@@ -1188,7 +1188,8 @@ export class Traffic {
   _rw(id = this.rwy) {
     const r = this.W.runways.find((x) => x.ident === id);
     const d = id === '27' ? -1 : 1;
-    return { r, id, d, tx: r.threshold[0], far: r.threshold[0] + d * r.length };
+    // id: the real runway name for the radio (16L / 34R ...), key: the internal '27' / '09'
+    return { r, id: r.name || id, key: id, d, tx: r.threshold[0], far: r.threshold[0] + d * r.length };
   }
 
   _circuitPts(fromX, fromZ, startLeg = 0) {
