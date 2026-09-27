@@ -725,3 +725,140 @@ def build_landmarks(apid, M, col, name="Landmarks"):
                 K.obox(mb, mx, my, 30.2, 3.1, ang, hz + 15.0, hz + 16.2, li("glass_dark"))
     mb.build(name, mats, col=col)
     return placed
+
+
+# ---------------------------------------------------------------------------------------------
+# "all runways in use": taxiway network, stands and terminals from ops_layout.py
+# ---------------------------------------------------------------------------------------------
+def draw_ops(L, pav, mk, z_pav, z_mk, mats=(2, 1, 3, 0), skip=None, number_mat=1):
+    """Pavement, centre lines, edge / centre-line lights of the ops taxiways, the runway
+    connectors (with holding positions), aprons and stand markings.
+    mats: (taxi pavement, yellow, apron concrete, white) indices; skip(p, q) -> True for
+    segments that already exist in the airport model."""
+    T, Y, AP, WH = mats
+    for line in L["lines"]:
+        pts = line["pts"]
+        for p, q in zip(pts[:-1], pts[1:]):
+            if skip and skip(p, q):
+                continue
+            taxi_link(pav, mk, p, q, z_pav, z_mk, mats=(T, Y))
+    for r in L["runways"]:
+        if r.get("main"):
+            continue
+        for c in r["conns"]:
+            p, q = c["rwy"], c["twy"]
+            taxi_link(pav, mk, p, q, z_pav, z_mk, mats=(T, Y), step=15.0)
+            # holding position 90 m from the runway centre line: two solid + two dashed bars
+            dx, dy = q[0] - p[0], q[1] - p[1]
+            Ls = math.hypot(dx, dy)
+            ux, uy = dx / Ls, dy / Ls
+            ang = math.atan2(uy, ux) + math.pi / 2
+            for k, d in enumerate((88.0, 88.9, 90.8, 91.7)):
+                hx, hy = p[0] + ux * d, p[1] + uy * d
+                W.rect(mk, hx, hy, 23.0 if k < 2 else 21.0, 0.3, ang, z_mk, Y)
+            for d in range(-5, 6):
+                hx, hy = p[0] + ux * 86 - uy * d * 2.0, p[1] + uy * 86 + ux * d * 2.0
+                W.add_light("stopbar", (hx, hy, 0.25), "#ff2020", 0.9)
+    for (x0, x1, y0, y1) in L["aprons"]:
+        W.rect(pav, (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, 0, z_pav + 0.002, AP)
+    for s in L["stands"]:
+        f = s["face"]
+        lane_y = s["lane"][1]
+        W.rect(mk, s["x"], (lane_y + s["nose"]) / 2, 0.3, abs(s["nose"] - lane_y), 0, z_mk, Y)
+        for dy, wbar in ((0.0, 8.0), (-3.0, 5.0), (-9.5, 5.0)):
+            W.rect(mk, s["x"], s["nose"] + f * (dy - 1.0), wbar, 0.5, 0, z_mk, Y)
+        for sx in (-1, 1):
+            y_a, y_b = s["nose"], lane_y + f * 18
+            W.rect(mk, s["x"] + sx * 38, (y_a + y_b) / 2, 0.25, abs(y_a - y_b), 0, z_mk, WH)
+        W.text_mesh(mk, s["id"], s["x"] + 12, lane_y + f * 40, z_mk, 6.0, 0.0 if f > 0 else math.pi, number_mat)
+
+
+def stand_furniture(tb, s, face_y, mi):
+    """jet bridge to door L1, stair tower, docking board and gate number of an ops stand"""
+    f = s["face"]
+    xs, nose = s["x"], s["nose"]
+    door = (xs - f * 2.95, nose - f * 6.95)
+    rot = (xs - f * 16.0, face_y - f * 9.0)
+    K.jet_bridge(tb, (rot[0], face_y), (0, -f), rot, door, 5.25 - 0.93, door_out=(-f * 1.0, 0.0))
+    K.stair_tower(tb, xs + f * 26.0, face_y - f * 2.3, 6.0, (0, -f))
+    K.vdgs(tb, xs, face_y - f * 0.4, 8.2, (0, -f))
+    K.vtext(tb, s["id"], xs + f * 9.0, face_y - f * 0.35, 10.6, 2.2, -f * math.pi / 2, mi("sign_yellow"), extrude=0.15)
+
+
+def ops_terminal(tb, t, stands, mi, rng, add_light):
+    """the big terminal a group of ops stands belongs to (Blender frame)"""
+    x0, x1, f = t["x0"], t["x1"], t["face"]
+    face_y = t["y0"] if f > 0 else t["y1"]
+    back_y = t["y1"] if f > 0 else t["y0"]
+    lo, hi = min(face_y, back_y), max(face_y, back_y)
+    if t["kind"] == "pier_ext":
+        # the pier continues past the shuttle stands (x beyond +-470): glazed gate lounges
+        for sx in (-1, 1):
+            a, b = sorted((sx * 470.0, sx * (x1 + 20.0)))
+            K.box(tb, a, b, lo, hi, 0, 0.6, mi("concrete"))
+            K.solid_wall_with_doors(tb, (a, face_y), (b, face_y), 0.6, 5.2, (0, -f))
+            K.curtain_wall(tb, (a, face_y), (b, face_y), 5.2, 13.0, (0, -f), floor=7.8)
+            K.curtain_wall(tb, (b, back_y), (a, back_y), 0.6, 13.0, (0, f), floor=6.2)
+            K.box(tb, a, b, lo + 0.4, hi - 0.4, 0.6, 12.9, mi("dark"), uv=0.1)
+            W.obstacle(a, lo, b, hi, 17.0)
+        for sx in (-1, 1):
+            e = sx * (x1 + 20.0)
+            K.curtain_wall(tb, (e, lo if sx > 0 else hi), (e, hi if sx > 0 else lo), 0.6, 13.0, (sx, 0), floor=6.2)
+    elif t["kind"] == "hnd_t2":
+        # Haneda T2-style: a 2.3 km gate pier (glass, arched roof on columns) with the main hall
+        # behind its centre; the apron is to the north
+        K.box(tb, x0, x1, lo, hi, 0, 0.6, mi("concrete"))
+        K.solid_wall_with_doors(tb, (x1, face_y), (x0, face_y), 0.6, 5.6, (0, -f))
+        K.curtain_wall(tb, (x1, face_y), (x0, face_y), 5.6, 17.0, (0, -f), floor=5.6)
+        K.curtain_wall(tb, (x0, back_y), (x1, back_y), 0.6, 17.0, (0, f), floor=5.6)
+        K.curtain_wall(tb, (x0, lo), (x0, hi), 0.6, 17.0, (-1, 0), floor=5.6)
+        K.curtain_wall(tb, (x1, hi), (x1, lo), 0.6, 17.0, (1, 0), floor=5.6)
+        K.box(tb, x0 + 0.5, x1 - 0.5, lo + 0.5, hi - 0.5, 0.6, 16.9, mi("dark"), uv=0.1)
+        vault_roof(tb, x0 - 14, x1 + 14, lo - 6, hi + 10, 17.2, 6.0, mi("roof"), n=260, end_taper=0.3)
+        K.eave_columns(tb, np.arange(x0 + 20, x1 - 10, 42.0), face_y + 8.0, 17.4)
+        W.obstacle(x0, lo, x1, hi, 24.0)
+        hx0, hx1, hy0, hy1 = -320.0, 320.0, lo - 190.0, lo
+        K.box(tb, hx0, hx1, hy0, hy1, 0, 0.6, mi("concrete"))
+        for (a, b, o) in (((hx0, hy0), (hx1, hy0), (0, -1)), ((hx0, hy1), (hx0, hy0), (-1, 0)), ((hx1, hy0), (hx1, hy1), (1, 0))):
+            K.curtain_wall(tb, a, b, 0.6, 30.0, o, floor=6.0)
+        K.box(tb, hx0 + 0.5, hx1 - 0.5, hy0 + 0.5, hy1 - 0.5, 0.6, 29.9, mi("dark"), uv=0.1)
+        vault_roof(tb, hx0 - 16, hx1 + 16, hy0 - 24, hy1 + 4, 30.0, 12.0, mi("roof"), n=70, m=20, end_taper=0.3)
+        K.eave_columns(tb, np.arange(hx0, hx1 + 1, 40.0), hy0 - 20.0, 31.0)
+        W.obstacle(hx0, hy0, hx1, hy1, 42.0)
+        # departures curb on a viaduct in front of the hall
+        K.box(tb, hx0 - 60, hx1 + 60, hy0 - 26, hy0 - 4, 8.2, 9.0, mi("concrete"))
+        for xc in np.arange(hx0 - 50, hx1 + 51, 40.0):
+            K.cyl(tb, (xc, hy0 - 15, 0), (xc, hy0 - 15, 8.2), 0.8, mi("concrete"), n=12)
+    elif t["kind"] == "kix_t2":
+        # Kansai terminal 2 on the second island: a long low pier under a gently curved roof
+        K.box(tb, x0, x1, lo, hi, 0, 0.6, mi("concrete"))
+        K.solid_wall_with_doors(tb, (x0, face_y), (x1, face_y), 0.6, 5.2, (0, -f))
+        K.curtain_wall(tb, (x0, face_y), (x1, face_y), 5.2, 14.0, (0, -f), floor=4.4)
+        K.curtain_wall(tb, (x1, back_y), (x0, back_y), 0.6, 14.0, (0, f), floor=4.6)
+        K.curtain_wall(tb, (x0, hi), (x0, lo), 0.6, 14.0, (-1, 0), floor=4.6)
+        K.curtain_wall(tb, (x1, lo), (x1, hi), 0.6, 14.0, (1, 0), floor=4.6)
+        K.box(tb, x0 + 0.5, x1 - 0.5, lo + 0.5, hi - 0.5, 0.6, 13.9, mi("dark"), uv=0.1)
+        aerofoil_roof(tb, x0 - 12, x1 + 12, lo - 8, hi + 6, 22.0, 15.0, 0.75, 1.0, mi("roof"), n=240)
+        K.eave_columns(tb, np.arange(x0 + 20, x1 - 10, 45.0), face_y - 7.0, 15.0)
+        W.obstacle(x0, lo, x1, hi, 22.0)
+    # jet bridges, stair towers, docking boards; floodlights along the apron edge
+    for s in stands:
+        stand_furniture(tb, s, face_y, mi)
+    lane_y = stands[0]["lane"][1] if stands else face_y - f * 170
+    for xm in np.arange(min(s["x"] for s in stands) - 40, max(s["x"] for s in stands) + 41, 168.0):
+        K.flood_mast(tb, xm, face_y - f * 6.0, 28.0, face=-math.pi / 2 * f, lights=add_light, group="apron_flood")
+
+
+def ops_export(L):
+    """ops_layout -> world.json / airportN.json 'ops' (three.js local frame: x, z = -y)"""
+    T = lambda p: [round(p[0], 1), round(-p[1], 1)]
+    rws = []
+    for r in L["runways"]:
+        rws.append(dict(id=r["id"], names=r["names"], c=T(r["c"]), dir=[round(math.cos(r["ang"]), 5), round(-math.sin(r["ang"]), 5)],
+                        len=r["len"], wid=r["wid"], use=r["use"], main=bool(r.get("main")),
+                        conns=[dict(s=c["s"], rwy=T(c["rwy"]), twy=T(c["twy"])) for c in r["conns"]]))
+    return dict(
+        runways=rws,
+        lines=[dict(p=[T(p) for p in line["pts"]], o=1 if line["oneway"] else 0) for line in L["lines"]],
+        stands=[dict(id=s["id"], x=s["x"], z=round(-s["y"], 1), face=s["face"], lane=T(s["lane"]), group=s["group"]) for s in L["stands"]],
+    )

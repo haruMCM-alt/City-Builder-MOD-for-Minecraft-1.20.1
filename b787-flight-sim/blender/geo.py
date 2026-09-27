@@ -276,11 +276,12 @@ CITIES = {
 # terrain flat zones (airport frame Blender coordinates: x along the runway, y to the terminal)
 #   hard=True: sea wall (island airports), else a 3 km blend into the natural terrain
 FLATS = {
-    1: [dict(x0=-2700, x1=3200, y0=-1500, y1=2900, hard=False),          # C / A runways, terminals, cargo
+    1: [dict(x0=-3600, x1=3200, y0=-1500, y1=2900, hard=False),          # C / A / B runways, terminals, cargo
         dict(x0=-3400, x1=-1600, y0=-4300, y1=-1400, hard=True)],        # D runway island in the bay
     2: [dict(x0=-2600, x1=2600, y0=-780, y1=1150, hard=True),            # island 1 (runway A, T1)
         dict(x0=-2900, x1=2900, y0=-3050, y1=-1750, hard=True),          # island 2 (runway B)
-        dict(x0=-400, x1=400, y0=-1780, y1=-760, hard=True)],            # link between the islands
+        dict(x0=-2240, x1=-2060, y0=-1780, y1=-760, hard=True),         # taxiway links between the islands,
+        dict(x0=2060, x1=2240, y0=-1780, y1=-760, hard=True)],           # round the ends of runway A
     3: [dict(x0=-3000, x1=3000, y0=-1900, y1=1600, hard=False)],
     4: [dict(x0=-2600, x1=2600, y0=-500, y1=1500, hard=False),           # runway 18L/36R, terminal
         dict(x0=-2400, x1=2400, y0=-1700, y1=-460, hard=True)],          # reclaimed runway 18R/36L
@@ -289,7 +290,7 @@ FLATS = {
 # secondary runways (visual + flat), airport frame: centre x, y, heading (compass), length, width, name pair
 EXTRA_RWYS = {
     1: [dict(cx=150, cy=1700, hdg=337, len=3000, wid=60, names=("34L", "16R")),
-        dict(cx=-2150, cy=900, hdg=40, len=2500, wid=60, names=("04", "22")),
+        dict(cx=-2700, cy=1400, hdg=40, len=2500, wid=60, names=("04", "22")),
         dict(cx=-2500, cy=-2850, hdg=50, len=2500, wid=60, names=("05", "23"))],
     2: [dict(cx=0, cy=-2400, hdg=58, len=4000, wid=60, names=("06L", "24R"))],
     3: [dict(cx=0, cy=-1350, hdg=8, len=3000, wid=60, names=("01L", "19R"))],

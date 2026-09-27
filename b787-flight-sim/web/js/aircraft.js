@@ -43,7 +43,7 @@ export class AircraftVisual {
     };
     this.flex = 0; this.flexVel = 0;
     this.livU = meta.livery ? liveryUniforms(meta.livery) : null;
-    this.finU = meta.livery ? finUniforms(meta.livery) : null;
+    this.finU = meta.livery ? finUniforms(meta.livery, { value: 0 }) : null;
     this.parts = {};
     for (const p of meta.parts) {
       const o = this.root.getObjectByName(p.name);
@@ -423,6 +423,8 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     const strobe = L.strobe && ((t % 1.25) < 0.05 || ((t % 1.25) > 0.12 && (t % 1.25) < 0.17));
     const beacon = L.beacon && (t % 1.1) < 0.18;
     const camPos = env.camera.position;
+    // logo lights also floodlight the fin (livery.js fin shader)
+    if (this.finU) this.finU.uLogoLight.value = L.logo ? clamp((night - 0.15) / 0.5, 0, 1) : 0;
     for (const l of this.lights) {
       let on = 0;
       if (l.kind === 'nav') on = L.nav ? 1 : 0;

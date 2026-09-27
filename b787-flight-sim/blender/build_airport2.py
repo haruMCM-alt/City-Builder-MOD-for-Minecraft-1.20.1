@@ -58,7 +58,10 @@ SERVICE_Y = 398.0                           # GSE road in front of the terminal
 STANDS = [-360.0 + 120.0 * k for k in range(7)]
 STAND_CG_Y = 352.0                          # 787-9 CG on the stand (three.js z = -352)
 S_CG_FROM_NOSE = 31.85
-LINKS = {2: [-300.0, 300.0], 3: [-1200.0, 1200.0], 4: [-1100.0, 1100.0]}[AID]   # taxiways to runway 2
+import ops_layout as OL  # noqa: E402
+OPS = OL.layout(AID)                        # all-runway taxiways, extra stands, terminals
+PIER_X = {2: 880.0, 3: 1210.0, 4: 1210.0}[AID]                 # the main pier's extended length
+BLD_X = PIER_X + 250.0                                          # tower / hangar / cargo beyond it
 LAND_DY = {2: 30.0, 3: 15.0, 4: 10.0}[AID]     # landside roads / car parks moved out past the bigger halls
 PIER_Y = 410.0                              # airside face of the terminal
 Z_PAV, Z_MK = 0.12, 0.16                    # a little higher than at home: far from the origin
@@ -90,8 +93,8 @@ def build_airfield(M, col):
     # apron + link to the taxiway, maintenance / cargo aprons
     x0, x1, y0, y1 = APRON
     rect(pav, (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, 0, Z_PAV + 0.002, 3)
-    rect(pav, 790, 250, 260, 120, 0, Z_PAV + 0.002, 3)
-    rect(pav, -700, 260, 260, 140, 0, Z_PAV + 0.002, 3)
+    rect(pav, BLD_X + 90, 250, 260, 120, 0, Z_PAV + 0.002, 3)
+    rect(pav, -BLD_X - 130, 260, 260, 140, 0, Z_PAV + 0.002, 3)
     rect(pav, -420, (TWY_Y + y0) / 2, 60, y0 - TWY_Y + 10, 0, Z_PAV - 0.003, 2)
     rect(pav, 420, (TWY_Y + y0) / 2, 60, y0 - TWY_Y + 10, 0, Z_PAV - 0.003, 2)
     # --- runway markings (real names: "24L" at the threshold flown towards +x) ---
@@ -100,12 +103,15 @@ def build_airfield(M, col):
     for er in G.EXTRA_RWYS[AID]:
         R.extra_runway(pav, mk, er["cx"], er["cy"], R.local_ang(AID, er["hdg"]), er["len"], er["wid"], er["names"],
                        Z_PAV, Z_MK, mats=(0, 1, 0))
-        ty = er["cy"] + TWY_Y
-        R.taxi_link(pav, mk, (-er["len"] / 2, ty), (er["len"] / 2, ty), Z_PAV, Z_MK, mats=(2, 1))
-        for xl in LINKS:
-            R.taxi_link(pav, mk, (xl, TWY_Y), (xl, er["cy"]), Z_PAV, Z_MK, mats=(2, 1))
-        for xc in (-er["len"] / 2 + 20, 0.0, er["len"] / 2 - 20):
-            R.taxi_link(pav, mk, (xc, ty), (xc, er["cy"]), Z_PAV, Z_MK, mats=(2, 1), lights=False)
+    # taxiways to it round the ends of the main runway, the extended apron and stands; the
+    # segments that already exist (taxiway B, the apron taxilane and its links) are not redrawn
+    def existing(p, q):
+        if p[1] == q[1] == TWY_Y and max(abs(p[0]), abs(q[0])) <= RWY_LEN / 2 + 30:
+            return True
+        if p[1] == q[1] == LANE_Y and max(abs(p[0]), abs(q[0])) <= 420:
+            return True
+        return p[0] == q[0] and abs(p[0]) == 420 and {p[1], q[1]} == {TWY_Y, LANE_Y}
+    R.draw_ops(OPS, pav, mk, Z_PAV, Z_MK, mats=(2, 1, 3, 0), skip=existing)
     # --- taxiway markings: centre lines, holding positions, apron guidance ---
     rect(mk, 0, TWY_Y, RWY_LEN + 40, 0.3, 0, Z_MK, 1)
     for xc in CONNS:
@@ -217,16 +223,17 @@ def terminal_architecture(tb, px0, px1, py0, py1, rng):
         # stands, under one roof that curves down towards both tips -- and the main building
         # whose roof rises like an aerofoil from the airside to the landside canyon
         for sx in (-1, 1):
-            a, b = sorted((sx * px1, sx * 860.0))
+            a, b = sorted((sx * px1, sx * (PIER_X + 20.0)))
             K.box(tb, a, b, py0, py1, 0, 0.6, mi("concrete"))
             K.curtain_wall(tb, (a, py0), (b, py0), 0.6, 9.0, (0, -1), floor=4.5)
             K.curtain_wall(tb, (b, py1), (a, py1), 0.6, 9.0, (0, 1), floor=4.5)
             K.box(tb, a, b, py0 + 0.4, py1 - 0.4, 0.6, 8.9, mi("dark"), uv=0.1)
             K.eave_columns(tb, np.arange(a + 15, b, 45.0), py0 - 6.0, 10.0)
             W.obstacle(a, py0, b, py1, 14.0)
-        K.curtain_wall(tb, (-860.0, py1), (-860.0, py0), 0.6, 9.0, (-1, 0), floor=4.5)
-        K.curtain_wall(tb, (860.0, py0), (860.0, py1), 0.6, 9.0, (1, 0), floor=4.5)
-        R.aerofoil_roof(tb, -872.0, 872.0, py0 - 9, py1 + 4, 19.0, 11.5, 0.8, 1.0, mi("roof"), n=220)
+        e = PIER_X + 20.0
+        K.curtain_wall(tb, (-e, py1), (-e, py0), 0.6, 9.0, (-1, 0), floor=4.5)
+        K.curtain_wall(tb, (e, py0), (e, py1), 0.6, 9.0, (1, 0), floor=4.5)
+        R.aerofoil_roof(tb, -e - 12, e + 12, py0 - 9, py1 + 4, 19.0, 11.5, 0.8, 1.0, mi("roof"), n=220)
         K.eave_columns(tb, np.arange(px0 + 20, px1 - 10, 60.0), py0 - 7.0, 13.4)
         W.obstacle(px0, py0, px1, py1, 17.0)
         hx0, hx1, hy0, hy1 = -300.0, 300.0, py1, 560.0
@@ -239,7 +246,7 @@ def terminal_architecture(tb, px0, px1, py0, py1, rng):
     if AID == 3:
         # New Chitose: domestic terminal under a long arched roof; the international terminal
         # (arched too) to the east of the tower
-        R.vault_roof(tb, px0 - 12, px1 + 12, py0 - 9, py1 + 4, 13.2, 4.5, mi("roof"), n=100, end_taper=0.3)
+        R.vault_roof(tb, -PIER_X - 32, PIER_X + 32, py0 - 9, py1 + 4, 13.2, 4.5, mi("roof"), n=240, end_taper=0.3)
         K.eave_columns(tb, np.arange(px0 + 20, px1 - 10, 60.0), py0 - 7.0, 13.4)
         W.obstacle(px0, py0, px1, py1, 18.0)
         hx0, hx1, hy0, hy1 = -300.0, 300.0, py1, 545.0
@@ -255,7 +262,7 @@ def terminal_architecture(tb, px0, px1, py0, py1, rng):
         return hx0, hx1, hy0, hy1, 20.0
     # Naha: a vaulted hall behind a big curbside canopy, the pier under a low vault; the
     # international / domestic link building to the west
-    R.vault_roof(tb, px0 - 12, px1 + 12, py0 - 9, py1 + 4, 13.2, 3.0, mi("roof"), n=100, end_taper=0.2)
+    R.vault_roof(tb, -PIER_X - 32, PIER_X + 32, py0 - 9, py1 + 4, 13.2, 3.0, mi("roof"), n=240, end_taper=0.2)
     K.eave_columns(tb, np.arange(px0 + 20, px1 - 10, 60.0), py0 - 7.0, 13.4)
     W.obstacle(px0, py0, px1, py1, 16.5)
     hx0, hx1, hy0, hy1 = -280.0, 280.0, py1, 540.0
@@ -305,6 +312,17 @@ def build_terminal(M, col):
         K.vdgs(tb, xs, py0 - 0.4, 8.2, (0, -1))
         K.vtext(tb, GL + str(k + 1), xs + 9.0, py0 - 0.35, 10.6, 2.2, -math.pi / 2, mi("sign_yellow"), extrude=0.15)
         stands.append(dict(id=GL + str(k + 1), x=xs, noseY=nose_y, heading=0.0, cg=[xs, 0.0, -STAND_CG_Y]))
+    # the extended pier (walls: the Kansai wing above has its own) and Kansai terminal 2, with
+    # jet bridges for the extra stands (ops_layout.py)
+    for t in OPS["terminals"]:
+        sts = [s for s in OPS["stands"] if s["group"] == ("T2" if t["kind"] == "kix_t2" else "pier")]
+        if t["kind"] == "pier_ext" and AID == 2:
+            for s in sts:
+                R.stand_furniture(tb, s, PIER_Y, mi)
+            for xm in list(np.arange(-PIER_X, -470.0, 140.0)) + list(np.arange(PIER_X, 470.0, -140.0)):
+                K.flood_mast(tb, xm, 404.0, 26.0, face=-math.pi / 2, lights=W.add_light, group="apron_flood")
+            continue
+        R.ops_terminal(tb, t, sts, mi, rng, W.add_light)
     tb.build("A2_Terminal", K.kit_materials(M), col=col)
     return stands, signs
 
@@ -312,18 +330,19 @@ def build_terminal(M, col):
 def build_airport_buildings(M, col):
     b = C.MeshBuilder()
     # control tower
-    top = K.control_tower(b, 600.0, 440.0, cab_z=TOWER_CAB, lights=W.add_light)
-    W.obstacle(574, 424, 626, 456, 12.0)
-    W.obstacle(587, 427, 613, 453, top)
-    # maintenance hangar + annex (doors face the taxiway)
-    K.hangar(b, 700.0, 880.0, 280.0, 400.0, 22.0, 32.0, door_side="S")
-    W.obstacle(700, 280, 894, 400, 32.0)
+    tx = BLD_X + 60.0
+    top = K.control_tower(b, tx, 480.0, cab_z=TOWER_CAB, lights=W.add_light)
+    W.obstacle(tx - 26, 464, tx + 26, 496, 12.0)
+    W.obstacle(tx - 13, 467, tx + 13, 493, top)
+    # maintenance hangar + annex (doors face the taxiway), past the extended pier
+    K.hangar(b, BLD_X, BLD_X + 180.0, 280.0, 400.0, 22.0, 32.0, door_side="S")
+    W.obstacle(BLD_X, 280, BLD_X + 194, 400, 32.0)
     # fire station with bays facing the runway
     K.terminal_block(b, 180.0, 260.0, 120.0, 150.0, levels=2, floor=5.0, airside="S", eave=(1, 1, 3, 1))
     W.obstacle(180, 120, 260, 150, 11.0)
     # cargo shed + office
-    K.hangar(b, -830.0, -570.0, 330.0, 420.0, 14.0, 17.0, door_side="S", annex=False)
-    W.obstacle(-830, 330, -570, 420, 17.0)
+    K.hangar(b, -BLD_X - 260.0, -BLD_X, 330.0, 420.0, 14.0, 17.0, door_side="S", annex=False)
+    W.obstacle(-BLD_X - 260, 330, -BLD_X, 420, 17.0)
     # multi-storey car park (open decks) landside
     for lvl in range(5):
         z = lvl * 3.2
@@ -347,11 +366,10 @@ def build_airport_buildings(M, col):
         for sx in (-1, 1):
             K.ils_localizer(b, er["cx"] + sx * (er["len"] / 2 + 300.0), er["cy"], axis_ang=0.0 if sx > 0 else math.pi)
         K.windsock(b, er["cx"] - er["len"] / 2 + 350, er["cy"] - 90)
-        for xc in (-er["len"] / 2 + 20, 0.0, er["len"] / 2 - 20):
-            K.taxi_sign(b, xc + 20, er["cy"] + 68, 0.0, er["names"][0] + "-" + er["names"][1], mat_bg="red_white")
+        for c in OPS["runways"][1]["conns"]:
+            K.taxi_sign(b, c["twy"][0] + 20, er["cy"] + 68, 0.0, er["names"][0] + "-" + er["names"][1], mat_bg="red_white")
     K.glideslope_mast(b, -RWY_LEN / 2 + 300.0, -120.0)
     K.glideslope_mast(b, RWY_LEN / 2 - 300.0, 120.0)
-    K.blast_fence(b, -RWY_LEN / 2 - 220, -RWY_LEN / 2 - 100, 150, face=1)
     for xc, name in zip(CONNS, (GL + "1", GL + "2", GL + "3")):
         K.taxi_sign(b, xc + 20, 60, 0.0, K09 + "-" + K27, mat_bg="red_white")
         K.taxi_sign(b, xc - 20, TWY_Y - 20, 0.0, name)
@@ -510,6 +528,7 @@ def main():
               "placed at the airport's world position (geo_data.js)",
         runway=dict(length=RWY_LEN, width=RWY_W, idents=["09", "27"], names=[K09, K27]),
         extraRunways=G.EXTRA_RWYS[AID],
+        ops=R.ops_export(OPS),
         landmarks=landmarks,
         stands=stands, signs=signs,
         lights=W.LIGHTS,

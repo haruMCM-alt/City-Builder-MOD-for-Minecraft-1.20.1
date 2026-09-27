@@ -333,8 +333,16 @@ export function setLiveryUniforms(u, a) {
   u.uLivTitle.value = a.title; u.uLivTitleRect.value.copy(a.titleRect);
 }
 
-export function finUniforms(layout) {
-  return { uFinLogo: { value: null }, uFinRect: { value: new THREE.Vector4() }, uFinSCG: { value: layout.sCG } };
+// logo lights: two floodlights on top of the horizontal stabilisers shine up onto the fin at
+// night.  One shared intensity for the AI fleet (on at night, parked or flying, as most
+// airlines do); the player's aircraft passes its own (LOGO switch).
+export const AI_LOGO_LIGHT = { value: 0 };
+export function finUniforms(layout, logoLight = AI_LOGO_LIGHT) {
+  const T = layout.tail || {}, F = T.fin || [[T.z0 ?? 2, 0, 0], [T.z1 ?? 11, 0, 0]];
+  const z0 = F[0][0], H = F[F.length - 1][0] - z0;
+  const [ls] = T.logo || [[(T.s0 + T.s1) / 2 || 55, 0]];
+  return { uFinLogo: { value: null }, uFinRect: { value: new THREE.Vector4() }, uFinSCG: { value: layout.sCG },
+    uLogoLight: logoLight, uFinLL: { value: new THREE.Vector4(z0, H, ls[0], (T.s1 - T.s0) || 16) } };
 }
 export function setFinUniforms(u, a) { u.uFinLogo.value = a.finLogo; u.uFinRect.value.copy(a.finRect); }
 // localExpr: vertex position in the aircraft root frame (x = sCG - s, y = z, z = -y)
@@ -344,7 +352,17 @@ export function patchFinShader(sh, uniforms, localExpr) {
     .replace('#include <common>', '#include <common>\nvarying vec3 vFinP;')
     .replace('#include <begin_vertex>', `#include <begin_vertex>\nvFinP = ${localExpr};`);
   sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vFinP;\nuniform sampler2D uFinLogo; uniform vec4 uFinRect; uniform float uFinSCG;')
+    .replace('#include <common>', '#include <common>\nvarying vec3 vFinP;\nuniform sampler2D uFinLogo; uniform vec4 uFinRect; uniform float uFinSCG;\nuniform float uLogoLight; uniform vec4 uFinLL;')
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+if (uLogoLight > 0.001) {
+  // floodlit fin: brightest low on the fin above the lamps, fading towards the tip and the
+  // leading / trailing edges; only the fin skin (above the fuselage crown), both sides
+  float s = uFinSCG - vFinP.x, h = (vFinP.y - uFinLL.x) / uFinLL.y;
+  float up = smoothstep(-0.08, 0.06, h) * pow(clamp(1.0 - h * 0.78, 0.0, 1.0), 1.4);
+  float along = exp(-pow((s - uFinLL.z) / (0.55 * uFinLL.w), 2.0));
+  float side = smoothstep(0.02, 0.25, abs(vFinP.z) + 0.2);
+  totalEmissiveRadiance += diffuseColor.rgb * uLogoLight * up * (0.4 + 0.6 * along) * side * 6.0;
+}`)
     .replace('#include <map_fragment>', `#include <map_fragment>
 {
   float s = uFinSCG - vFinP.x, z = vFinP.y;

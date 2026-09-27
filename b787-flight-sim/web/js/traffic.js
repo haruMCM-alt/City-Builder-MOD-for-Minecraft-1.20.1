@@ -10,7 +10,7 @@ import { World, HDR, glowTexture } from './world.js';
 import { Path, Mover } from './path.js';
 import { hdg3, AIRPORT, aptName } from './atc.js';
 import { PlayerATC } from './playeratc.js';
-import { dressParked, logoById } from './livery.js';
+import { dressParked, logoById, AI_LOGO_LIGHT } from './livery.js';
 import { REMOTES, runwayWords } from './airports.js';
 import { GEO } from './geo_data.js';
 import { weatherModel, weatherGSE } from './shading.js';
@@ -426,7 +426,7 @@ class Vehicle {
 // --------------------------------------------------------------------------- AI aircraft
 let CALLSEQ = 0;
 
-class AIAircraft {
+export class AIAircraft {
   constructor(traffic, stand, liv, rnd, tm) {
     this.t = traffic; this.stand = stand; this.liv = liv;
     this.tm = tm || traffic._pickType();
@@ -571,7 +571,27 @@ export class Traffic {
   _release(art) { art.obj.visible = false; art.tm.pool.push(art); }
 
   // ------------------------------------------------------------------ setup per scenario
+  // ops: AirportOps of every airport (ops.js), created by main.js
+  setOps(ops) { this.ops = ops; }
+
+  // a shuttle on the ground keeps clear of the extra traffic at its airport
+  _opsLimit(ac) {
+    let lim = Infinity;
+    const c = Math.cos(ac.a) * (ac.dirSign || 1), sn = Math.sin(ac.a) * (ac.dirSign || 1);
+    for (const o of this.ops || []) {
+      if (!o.active || (ac.rap && o.ap.id !== ac.rap.id)) continue;
+      for (const b of o.groundAircraft()) {
+        const dx = b.x - ac.x, dz = b.z - ac.z;
+        if (Math.abs(dx) > 140 || Math.abs(dz) > 140) continue;
+        const along = dx * c + dz * sn, lat = Math.abs(-dx * sn + dz * c);
+        if (along > 0 && along < 115 && lat < 42) lim = Math.min(lim, Math.max(0, (along - 72) * 0.35));
+      }
+    }
+    return lim;
+  }
+
   reset({ stands, skipStand, randomLivery, runway, windDir, windKt, playerStand, playerCallsign }) {
+    for (const o of this.ops || []) o.reset();
     for (const ac of this.aircraft.concat(this.remote || [])) { this.scene.remove(ac.static); if (ac.art) this._release(ac.art); }
     this.remote = [];
     this.aiEmerg = null; this.nextAIEmerg = 420 + Math.random() * 600;
@@ -873,6 +893,7 @@ export class Traffic {
     switch (ac.state) {
       case 'R_OUT': case 'R_BACK': this._routeFly(ac, dt); break;
       case 'R_TAXI': case 'R_TAXIOUT': case 'R_PUSH': {
+        if (ac.state !== 'R_PUSH') ac.mover.limit = this._opsLimit(ac);
         const p = ac.mover.update(dt);
         ac.x = p.x; ac.z = p.z; ac.a = p.a; ac.v = ac.mover.v;
         ac.spoiler = ac.state === 'R_TAXI' && ac.v > 20 ? 1 : 0;
@@ -904,7 +925,7 @@ export class Traffic {
           this._a2Say(ap, 'GND', `${ac.callsign}, taxi to holding point runway ${rw} via Bravo.`, 7);
         } else {
           // the player holds this airport's runway (cleared to land / take off): wait
-          if (this.pc.runwayClaim(ap.id)) { ac.v = 0; break; }
+          if (this.pc.runwayClaim(ap.id) || (this.ops || []).some((o) => o.ap.id === ap.id && o.runways.some((r) => r.main && r.occ))) { ac.v = 0; break; }
           ac.mover = new Mover(new Path([{ x: ac.x, z: ap.z }, { x: ap.x + sx * ap.len / 2, z: ap.z }], 0, 3), { vmax: 999 });
           ac.state = 'R_TKOF'; ac.v = 0; ac.dirSign = 1;
           this._a2Say(ap, 'TWR', `${ac.callsign}, ${n2} Tower, runway ${rw}, cleared for takeoff.`);
@@ -1388,12 +1409,15 @@ export class Traffic {
         if (d < 60000) ac.place(dt);
       }
     }
+    // the extra traffic on the other runways (ops.js)
+    for (const o of this.ops || []) o.update(dt, env.camera.position);
     // lights and visibility culling
     const cam = env.camera.position;
     const L = this.lights;
     L.begin();
     for (const ac of this.aircraft) ac.lights(L, this.time);
     for (const ac of this.remote) if (Math.hypot(ac.x - cam.x, ac.z - cam.z) < 40000) ac.lights(L, this.time);
+    for (const o of this.ops || []) o.lights(L, cam);
     for (const v of this.vehicles) {
       const d = Math.hypot(v.x - cam.x, v.z - cam.z, cam.y);
       v.obj.visible = d < 2600;
@@ -1402,6 +1426,7 @@ export class Traffic {
     }
     L.end();
     L.uniforms.uNight.value = env.night;
+    AI_LOGO_LIGHT.value = clamp((env.night - 0.15) / 0.5, 0, 1);
     L.uniforms.uScreen.value = window.innerHeight / (2 * Math.tan(env.camera.fov * DEG / 2));
     L.uniforms.uPR.value = Math.min(window.devicePixelRatio, 2);
     void T;
@@ -1410,7 +1435,7 @@ export class Traffic {
   // sound from the nearest AI aircraft (for the audio engine)
   sound(cam) {
     let roar = 0, whine = 0;
-    for (const ac of this.aircraft) {
+    for (const ac of this.aircraft.concat(...(this.ops || []).map((o) => (o.active ? o.list : [])))) {
       if (ac.n1 < 5) continue;
       const d = Math.max(30, Math.hypot(ac.x - cam.x, ac.alt + 5 - cam.y, ac.z - cam.z));
       const k = (60 / d) ** 1.6;

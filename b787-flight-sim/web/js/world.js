@@ -617,9 +617,11 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
           this.emissiveMats.push(m);
         }
         if (m.name === 'W_GlassTower' || m.name === 'W_Sign') this.emissiveMats.push(m);
+        // terminal glazing: the halls and gate lounges are lit all night (warm white)
+        if (m.name === 'W_Curtain') { m.emissive = new THREE.Color(1.0, 0.86, 0.66); m.userData.allLit = true; this.emissiveMats.push(m); }
         if (m.map) m.map.anisotropy = 8;
         if (['W_Asphalt', 'W_TaxiAsphalt', 'W_Shoulder', 'W_MarkWhite', 'W_MarkYellow', 'W_Concrete', 'W_Road'].includes(m.name)) patchPavement(m);
-        if (m.name.startsWith('W_facade_') || m.name === 'W_GlassTower' || m.name === 'W_Curtain') patchFacade(m);
+        if (m.name.startsWith('W_facade_') || m.name === 'W_GlassTower' || m.name === 'W_Curtain') patchFacade(m, !!m.userData.allLit);
         if (m.name === 'W_Roof' || m.name === 'W_PaintWhite') m.color.multiplyScalar(0.72);
       }
       o.receiveShadow = true;
@@ -1168,7 +1170,7 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
     if (this.waterU) this.waterU.uWTime.value = this.time;
     // emissive windows at night
     const em = this.night;
-    for (const m of this.emissiveMats) m.emissiveIntensity = m.name === 'W_GlassTower' || m.name === 'W_Sign' ? em * 2 : em * 1.4;
+    for (const m of this.emissiveMats) m.emissiveIntensity = m.name === 'W_GlassTower' || m.name === 'W_Sign' ? em * 2 : m.name === 'W_Curtain' ? em * 2.6 : em * 1.4;
     if (this.signs) for (const m of this.signs.children) m.material.emissiveIntensity = em * 1.2;
     // lights
     if (this.lightUniforms) {

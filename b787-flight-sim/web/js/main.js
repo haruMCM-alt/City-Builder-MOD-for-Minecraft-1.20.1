@@ -18,6 +18,7 @@ import { PostFX } from './postfx.js';
 import { Rain } from './weatherfx.js';
 import { Vapor } from './vapor.js';
 import { Traffic } from './traffic.js';
+import { AirportOps } from './ops.js';
 import { Radio, setAirportNames, AIRPORT, aptName } from './atc.js';
 import { RemoteAirport, REMOTES, remoteById, nearestAirport, remoteLights, remoteObstacles, remoteRunways } from './airport2.js';
 import { HOME, applyHomeRunways } from './airports.js';
@@ -223,6 +224,13 @@ class App {
       radio: this.radio, quality: this.quality,
       types: typeIds.filter((k) => this.types[k].lod).map((k) => ({ meta: this.types[k].meta, lod: this.types[k].lod, weight: this.types[k].weight })),
     }) : null;
+    // every runway in use: the extra traffic of each airport (ops.js, layouts from blender/ops_layout.py)
+    if (this.traffic) {
+      const ops = [];
+      if (world.ops) ops.push(new AirportOps(this.traffic, { id: 1, x: 0, z: 0 }, world.ops));
+      REMOTES.forEach((ap, i) => { if (aptData[i]?.ops) ops.push(new AirportOps(this.traffic, ap, aptData[i].ops)); });
+      this.traffic.setOps(ops);
+    }
 
     // aircraft (the selected type; the others are loaded when picked in the menu)
     this.post = new PostFX(renderer, this.scene, this.camera);

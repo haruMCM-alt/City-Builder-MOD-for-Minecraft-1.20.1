@@ -56,12 +56,6 @@ PUSH_Y = 340.0                                 # push-back / departure taxilane
 SERVICE_Y = 415.0                              # GSE service road behind the parked tails
 GSE_DEPOTS = [(-690.0, 460.0), (690.0, 460.0)]  # ground-equipment parking at the apron ends
 S_CG_FROM_NOSE = 31.85
-# taxiways to runways A (north of the terminal), B and D (on its island, over the bridge)
-HND_TAXI = [((-1500.0, 185.0), (-1500.0, 1700.0)), ((1500.0, 185.0), (1500.0, 1700.0)), ((-1650.0, 1870.0), (1650.0, 1870.0)),
-            ((-1500.0, 1870.0), (-1500.0, 1700.0)), ((1500.0, 1870.0), (1500.0, 1700.0)),
-            ((-1750.0, 185.0), (-1750.0, -2000.0)), ((-1750.0, -2000.0), (-2454.0, -2418.0)),
-            ((-2702.0, -1605.0), (-1972.0, -3995.0))]
-
 LIGHTS = {}          # name -> dict(color, size, pos[], dir[] (optional), kind)
 
 
@@ -355,8 +349,10 @@ def build_airfield(M, col):
     for er in G.EXTRA_RWYS[1]:
         R.extra_runway(pav, mk, er["cx"], er["cy"], R.local_ang(1, er["hdg"]), er["len"], er["wid"], er["names"],
                        Z_PAV, Z_MK, mats=(0, 1, 0))
-    for p0, p1 in HND_TAXI:
-        R.taxi_link(pav, mk, p0, p1, Z_PAV, Z_MK, mats=(2, 1))
+    # taxiways to runways A, B and D, the new terminal's apron and stands (ops_layout.py):
+    # no taxiway crosses a runway (runway D is reached round the west end of C)
+    import ops_layout as OL
+    R.draw_ops(OL.layout(1), pav, mk, Z_PAV, Z_MK, mats=(2, 1, 3, 0))
     # --- taxiway markings (yellow) ------------------------------------------------
     rect(mk, 0, TWY_Y, RWY_LEN + 40, 0.3, 0, Z_MK, 1)
     for xc in conns:
@@ -584,6 +580,12 @@ def build_terminal(M, col):
         K.vtext(tb, str(k + 1), xs + 8.0, py0 - 0.35, 11.6, 3.0, -math.pi / 2, mi("sign_yellow"), extrude=0.15)
         stands.append(dict(id=k + 1, x=xs, noseY=STAND_NOSE_Y, heading=0.0,
                            cg=[xs, 0.0, -(STAND_NOSE_Y - S_CG_FROM_NOSE)]))
+    # terminal 2 facing runway A: 26 more contact stands (ops_layout.py, flown by web/js/ops.js)
+    import ops_layout as OL
+    import real_kit as R
+    L = OL.layout(1)
+    for t in L["terminals"]:
+        R.ops_terminal(tb, t, [s for s in L["stands"] if s["group"] == "T2"], mi, rng, add_light)
     tb.build("Terminal", K.kit_materials(M), col=col)
     return stands, signs
 
@@ -1037,6 +1039,7 @@ def main():
         landmarkTower=[sky[1], sky[3] + 634.0, -sky[2]],
         landmarks=placed,
         extraRunways=G.EXTRA_RWYS[1],
+        ops=R.ops_export(__import__("ops_layout").layout(1)),
         lights=LIGHTS,
         # ground movement network (three.js x, z = -design y)
         ground=dict(twyZ=-TWY_Y, taxilaneZ=-TAXILANE_Y, pushZ=-PUSH_Y, serviceZ=-SERVICE_Y, apronZ=[-APRON_Y1, -APRON_Y0],

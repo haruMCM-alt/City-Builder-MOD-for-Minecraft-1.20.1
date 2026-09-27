@@ -105,7 +105,8 @@ metalnessFactor = mix(metalnessFactor, 0.85, gxW * 0.6);`);
 
 // City facades: per-facade tint, rain streaks below the windows, dirt near the ground,
 // large-scale breakup of the tiled texture and randomised lit windows at night.
-export function patchFacade(m) {
+// allLit: every window lit (terminal glazing) instead of a random pattern of lit floors
+export function patchFacade(m, allLit = false) {
   m.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vFcP; varying vec3 vFcN;')
@@ -141,11 +142,11 @@ roughnessFactor = clamp(roughnessFactor * (0.85 + 0.3 * fcWet), 0.03, 1.0);`)
   float fl = floor(vFcP.y / 3.6);
   float h1 = shHash(vec3(fl, fcFace * 91.0, 3.1));
   float h2 = shHash(vec3(floor(dot(vFcP.xz, normalize(vec2(-vFcN.z, vFcN.x) + 1e-5)) / 7.0), fl, fcFace * 57.0));
-  float on = step(0.3, h1) * step(0.25, h2);
+  float on = ${allLit ? '0.85 + 0.15 * h2' : 'step(0.3, h1) * step(0.25, h2)'};
   vec3 warm = mix(vec3(1.0, 0.82, 0.6), vec3(0.8, 0.9, 1.05), step(0.7, h2));
   totalEmissiveRadiance *= on * warm * (0.6 + 0.8 * h1);
 }`);
   };
-  m.customProgramCacheKey = () => 'facade-wx';
+  m.customProgramCacheKey = () => (allLit ? 'facade-lit' : 'facade-wx');
   m.needsUpdate = true;
 }
