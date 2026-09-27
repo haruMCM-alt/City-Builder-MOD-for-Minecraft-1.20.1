@@ -71,14 +71,20 @@ def make_materials():
     M["belly"] = C.pbr_material("B787_Navy", color=C.hex_color("#0b2a5c"), roughness=0.3, clearcoat=0.5)
     M["nacelle"] = C.pbr_material("B787_Nacelle", color=C.hex_color("#0b2a5c"), roughness=0.28,
                                   base_tex=tex("nacelle_base.jpg"), clearcoat=0.6)
-    M["lip"] = C.pbr_material("B787_InletLip", color=C.hex_color("#cfd4d8"), roughness=0.32,
-                              metallic=1.0)
-    M["inlet"] = C.pbr_material("B787_InletLiner", color=C.hex_color("#6b7075"), roughness=0.6,
-                                metallic=0.2)
-    M["fan"] = C.pbr_material("B787_FanBlade", color=C.hex_color("#2b2f35"), roughness=0.35,
-                              metallic=0.45)
-    M["spinner"] = C.pbr_material("B787_Spinner", color=C.hex_color("#1c1f23"), roughness=0.25,
+    # polished (not mirror) aluminium lip, acoustic liner, composite fan blades with
+    # titanium leading edges
+    M["lip"] = C.pbr_material("B787_InletLip", color=C.hex_color("#c3c8cd"), roughness=0.34,
+                              metallic=0.8)
+    M["inlet"] = C.pbr_material("B787_InletLiner", color=C.hex_color("#474c52"), roughness=0.78,
+                                metallic=0.1)
+    M["fan"] = C.pbr_material("B787_FanBlade", color=C.hex_color("#1d2024"), roughness=0.42,
+                              metallic=0.15, clearcoat=0.4)
+    M["fan_le"] = C.pbr_material("B787_FanBladeLE", color=C.hex_color("#9aa0a6"), roughness=0.3,
+                                 metallic=0.9)
+    M["spinner"] = C.pbr_material("B787_Spinner", color=C.hex_color("#1c1f23"), roughness=0.36,
                                   metallic=0.3, base_tex=tex("spinner_base.jpg"))
+    M["turbine"] = C.pbr_material("B787_Turbine", color=C.hex_color("#4a4039"), roughness=0.55,
+                                  metallic=0.85)
     M["eng_dark"] = C.pbr_material("B787_EngineDark", color=C.hex_color("#121416"), roughness=0.7)
     M["core"] = C.pbr_material("B787_CoreCowl", color=C.hex_color("#a4a9ae"), roughness=0.35,
                                metallic=0.8)
@@ -90,8 +96,12 @@ def make_materials():
                                  metallic=1.0)
     M["tire"] = C.pbr_material("B787_Tire", color=C.hex_color("#151515"), roughness=0.88,
                                base_tex=tex("tire_base.jpg"))
-    M["hub"] = C.pbr_material("B787_WheelHub", color=C.hex_color("#b9bec3"), roughness=0.3,
-                              metallic=0.9)
+    M["hub"] = C.pbr_material("B787_WheelHub", color=C.hex_color("#a4aab0"), roughness=0.42,
+                              metallic=0.6)
+    M["brake"] = C.pbr_material("B787_Brake", color=C.hex_color("#3b3e42"), roughness=0.6,
+                                metallic=0.5)
+    M["wiper"] = C.pbr_material("B787_Wiper", color=C.hex_color("#101113"), roughness=0.45,
+                                metallic=0.3)
     M["bay"] = C.pbr_material("B787_GearBay", color=C.hex_color("#7d858c"), roughness=0.6)
     M["black"] = C.pbr_material("B787_Black", color=C.hex_color("#0d0e10"), roughness=0.5)
     M["antenna"] = C.pbr_material("B787_Antenna", color=C.hex_color("#e9ecef"), roughness=0.35)
@@ -640,8 +650,39 @@ def build_engine(M, root, col, side):
            (cen[0] + 1.25, cen[1] + (rbase + 0.26) * math.sin(sa), cen[2] + (rbase + 0.26) * math.cos(sa))]
     mb.add_poly(pts, mat=0)
     mb.add_poly(pts[::-1], mat=0)
+    if not LOD:
+        # last low-pressure turbine stage, seen through the core nozzle
+        for j in range(64):
+            a = 2 * math.pi * j / 64
+            q = []
+            for (aa, rr, tw) in ((6.18, 0.515, 0.0), (6.18, 0.625, 0.0), (6.30, 0.625, 0.09), (6.30, 0.515, 0.07)):
+                ang = a + tw
+                q.append((cen[0] + aa, cen[1] + rr * math.sin(ang), cen[2] + rr * math.cos(ang)))
+            mb.add_poly(q, mat=7)
+            mb.add_poly(q[::-1], mat=7)
+        # cowl split lines: inlet / fan cowl / thrust reverser translating sleeve
+        oa = np.array(G.NAC_OUTER)
+        for a_seam in (0.72, 2.35, 3.55):
+            r_seam = float(np.interp(a_seam, oa[:, 0], oa[:, 1])) + 0.003
+            thr = np.linspace(0, 2 * math.pi, n + 1)
+            Ps_ = np.stack([np.stack([np.full_like(thr, cen[0] + a_seam + da), cen[1] + r_seam * np.sin(thr),
+                                      cen[2] + r_seam * np.cos(thr)], -1) for da in (-0.009, 0.009)], 0)
+            Ns_ = np.stack([np.stack([0 * thr, np.sin(thr), np.cos(thr)], -1)] * 2, 0)
+            mb.add_grid(Ps_, N=Ns_, mat=4)
+        # fan cowl latches along the bottom
+        for a_l in (1.1, 1.5, 1.9):
+            r_l = float(np.interp(a_l, oa[:, 0], oa[:, 1]))
+            mb.add_box((cen[0] + a_l, cen[1], cen[2] - r_l - 0.004), (0.16, 0.05, 0.012), mat=4)
+        # drain mast under the core cowl
+        dm = [(cen[0] + 3.9, cen[1] - 0.012, cen[2] - 0.98), (cen[0] + 4.15, cen[1] - 0.012, cen[2] - 0.98),
+              (cen[0] + 4.2, cen[1] - 0.008, cen[2] - 1.16), (cen[0] + 4.08, cen[1] - 0.008, cen[2] - 1.16)]
+        dm = np.array(dm)
+        for dy in (0.0, 0.024):
+            q = dm.copy()
+            q[:, 1] += dy
+            mb.add_poly(q if dy else q[::-1], mat=3)
     ob = mb.build("Nacelle_" + L, [M["nacelle"], M["lip"], M["inlet"], M["core"], M["eng_dark"],
-                                   M["core"], M["exhaust"]], col=col)
+                                   M["core"], M["exhaust"], M["turbine"]], col=col)
     C.set_parent(ob, root)
 
     # ---- fan (spinner + blades) : separate object rotating about local X -----
@@ -655,7 +696,7 @@ def build_engine(M, root, col, side):
         Ns[0] = (-1, 0, 0)
     fb.add_grid(Ps, UVs, N=Ns, mat=1)
     nb = G.FAN_BLADES
-    nr, nc = RS(12, 3), RS(11, 4)
+    nr, nc = RS(18, 3), RS(15, 4)
     rr = np.linspace(0.46, 1.395, nr)
     for b in range(nb):
         th0 = 2 * math.pi * b / nb
@@ -677,15 +718,22 @@ def build_engine(M, root, col, side):
         loop = np.concatenate([surfs[0], surfs[1][:, ::-1][:, 1:]], 1)
         axis_pt = np.stack([loop[..., 0], np.full(loop.shape[:2], cen[1]), np.full(loop.shape[:2], cen[2])], -1)
         Nb, _ = fb.grid_normals(loop)
-        fb.add_grid(loop, N=Nb, outward=None, mat=0)
         # decide orientation using blade mid-surface offset
         mid = 0.5 * (surfs[0] + surfs[1])
         d = np.concatenate([surfs[0] - mid, (surfs[1] - mid)[:, ::-1][:, 1:]], 1)
-        if np.sum(fb.norms[-1].reshape(loop.shape) * d) < 0:
-            fb.norms[-1] = -fb.norms[-1]
+        if np.sum(Nb * d) < 0:
+            Nb = -Nb
+        if LOD:
+            fb.add_grid(loop, N=Nb, outward=None, mat=0)
+        else:
+            # titanium sheath on the leading edge (both ends of the wrapped loop)
+            k = 2
+            fb.add_grid(loop[:, :k + 1], N=Nb[:, :k + 1], mat=2)
+            fb.add_grid(loop[:, k:-k], N=Nb[:, k:-k], mat=0)
+            fb.add_grid(loop[:, -k - 1:], N=Nb[:, -k - 1:], mat=2)
         fb.add_poly(loop[-1], mat=0, outward=("dir", (0, 0, 0)) if False else None)
     Mf = pivot_matrix(TB(np.array([cen[0] + G.FAN_A * G.ENG_KA, cen[1], cen[2]])), (1, 0, 0))
-    fan = fb.build("Fan_" + L, [M["fan"], M["spinner"]], col=col, matrix=Mf)
+    fan = fb.build("Fan_" + L, [M["fan"], M["spinner"], M["fan_le"]], col=col, matrix=Mf)
     C.set_parent(fan, root)
     PARTS.append(dict(name="Fan_" + L, kind="fan", max=0))
 
@@ -859,6 +907,20 @@ def cyl(mb, p0, p1, r, mat, n=20, caps=True, r1=None):
         mb.add_poly(p1 + r1 * ring[:-1], mat=mat, outward=("dir", ax))
 
 
+def torque_links(mb, top, bottom, fwd, width, r, mat, pin_mat):
+    """Scissor (torque) link between the oleo cylinder collar (top) and the sliding piston
+    (bottom): two A-frame arms meeting at a pinned apex ahead of the strut."""
+    top = np.asarray(top, float)
+    bottom = np.asarray(bottom, float)
+    apex = 0.5 * (top + bottom) + np.array([fwd, 0, 0])
+    for end in (top, bottom):
+        for dy in (-width / 2, width / 2):
+            e = end + np.array([0, dy, 0])
+            cyl(mb, e, apex + np.array([0, dy * 0.35, 0]), r, mat, n=8)
+        cyl(mb, end + np.array([0, -width / 2 - r, 0]), end + np.array([0, width / 2 + r, 0]), r * 1.1, pin_mat, n=10)
+    cyl(mb, apex + np.array([0, -width * 0.25, 0]), apex + np.array([0, width * 0.25, 0]), r * 1.3, pin_mat, n=10)
+
+
 def wheel(mb, center, axis_y, D, W, mat_tire, mat_hub, n=48, outboard=1):
     n = RS(n, 12)
     """Tyre + hub around lateral axis at design centre."""
@@ -892,6 +954,13 @@ def wheel(mb, center, axis_y, D, W, mat_tire, mat_hub, n=48, outboard=1):
         if np.sum(Nh[..., 1]) * sgn < 0:
             Nh = -Nh
         mb.add_grid(Ph, N=Nh, mat=mat_hub)
+        if not LOD:
+            # rim flange and hub cap
+            y_f = cy + sgn * W / 2 * 0.9
+            cyl(mb, (cs, y_f, cz), (cs, y_f + sgn * 0.018, cz), rim * 1.035, mat_hub, n=RS(n, 12), caps=False)
+            cyl(mb, (cs, y_f + sgn * 0.018, cz), (cs, y_f + sgn * 0.019, cz), rim * 1.035, mat_hub, n=RS(n, 12),
+                caps=False, r1=rim * 0.97)
+            dome(mb, (cs, cy + sgn * W / 2 * 0.72, cz), (0, sgn, 0), rim * 0.16, mat_hub, n=16, h=rim * 0.07)
         # bolt ring
         for j in range(0 if LOD else 10):
             a = 2 * math.pi * j / 10
@@ -922,8 +991,25 @@ def build_gear(M, root, col):
     mb.add_box((sN + 0.05 * SN, 0, axle_z + 0.16 * SN), (0.36 * SN, min(0.30 * SN, 2 * G.NOSE_WHEEL_DY - 0.1),
                                                           0.22 * SN), mat=0)   # axle housing
     # torque links
-    mb.add_box((sN + 0.2 * SN, 0, zn(-3.95)), (0.34 * SN, 0.07 * SN, 0.07 * SN), mat=0)
-    mb.add_box((sN + 0.2 * SN, 0, zn(-4.2)), (0.30 * SN, 0.07 * SN, 0.07 * SN), mat=0)
+    if LOD:
+        mb.add_box((sN + 0.2 * SN, 0, zn(-3.95)), (0.34 * SN, 0.07 * SN, 0.07 * SN), mat=0)
+        mb.add_box((sN + 0.2 * SN, 0, zn(-4.2)), (0.30 * SN, 0.07 * SN, 0.07 * SN), mat=0)
+    else:
+        torque_links(mb, (sN + 0.1 * SN, 0, zn(-3.62)), (sN + 0.08 * SN, 0, axle_z + 0.24 * SN), 0.30 * SN,
+                     0.16 * SN, 0.022 * SN, 0, 1)
+        # steering actuators either side of the collar
+        for dy in (-1, 1):
+            cyl(mb, (sN - 0.05 * SN, dy * 0.2 * SN, zn(-3.40)), (sN - 0.55 * SN, dy * 0.26 * SN, zn(-3.05)),
+                0.045 * SN, 0, n=10)
+            cyl(mb, (sN - 0.3 * SN, dy * 0.23 * SN, zn(-3.22)), (sN - 0.62 * SN, dy * 0.27 * SN, zn(-3.0)),
+                0.025 * SN, 1, n=8)
+        # tow fitting and axle nuts
+        mb.add_box((sN - 0.28 * SN, 0, axle_z + 0.05 * SN), (0.16 * SN, 0.14 * SN, 0.10 * SN), mat=0)
+        cyl(mb, (sN - 0.36 * SN, -0.06 * SN, axle_z + 0.05 * SN), (sN - 0.36 * SN, 0.06 * SN, axle_z + 0.05 * SN),
+            0.035 * SN, 1, n=10)
+        # hydraulic lines down the strut
+        for dy in (-0.14, 0.14):
+            cyl(mb, (sN + 0.14 * SN, dy * SN, zn(-2.3)), (sN + 0.14 * SN, dy * SN, zn(-3.3)), 0.012 * SN, 1, n=6)
     # drag brace (forward)
     cyl(mb, (sN, 0, zn(-3.25)), (sN - 1.55 * SN, 0, zn(-2.45)), 0.065 * SN, 0)
     cyl(mb, (sN, 0.12 * SN, zn(-3.25)), (sN - 1.55 * SN, 0.25 * SN, zn(-2.45)), 0.045 * SN, 0)
@@ -1004,8 +1090,44 @@ def build_gear(M, root, col):
                 cyl(mb, (sM + ds, yM + dy * (WDY - 0.22 * SG), axle_z),
                     (sM + ds, yM + dy * (WDY - 0.30 * SG), axle_z), 0.36 * SG, 0, n=24)
         # torque links & brake rods
-        mb.add_box((sM + 0.18 * SG, yM, zm(-3.95)), (0.40 * SG, 0.10 * SG, 0.09 * SG), mat=0)
-        mb.add_box((sM + 0.18 * SG, yM, zm(-4.25)), (0.36 * SG, 0.10 * SG, 0.09 * SG), mat=0)
+        if LOD:
+            mb.add_box((sM + 0.18 * SG, yM, zm(-3.95)), (0.40 * SG, 0.10 * SG, 0.09 * SG), mat=0)
+            mb.add_box((sM + 0.18 * SG, yM, zm(-4.25)), (0.36 * SG, 0.10 * SG, 0.09 * SG), mat=0)
+        else:
+            torque_links(mb, (sM - 0.08 * SG, yM, zm(-3.64)), (sM - 0.05 * SG, yM, pivot_bog[2] + 0.34 * SG),
+                         0.42 * SG, 0.22 * SG, 0.03 * SG, 0, 1)
+            for ds in AX:
+                for dy in (-1, 1):
+                    # multi-piston brake housing on the inboard face of every wheel
+                    yb = yM + dy * (WDY - 0.30 * SG)
+                    for j in range(8):
+                        a = 2 * math.pi * (j + 0.5) / 8
+                        c0 = np.array([sM + ds + 0.26 * SG * math.cos(a), yb, axle_z + 0.26 * SG * math.sin(a)])
+                        cyl(mb, c0, c0 - np.array([0, dy * 0.07 * SG, 0]), 0.045 * SG, 7, n=8)
+                    cyl(mb, (sM + ds, yb, axle_z), (sM + ds, yb - dy * 0.05 * SG, axle_z), 0.18 * SG, 7, n=16)
+                # axle end caps
+                for dy in (-1, 1):
+                    ye = yM + dy * (WDY + 0.1 * SG)
+                    cyl(mb, (sM + ds, ye, axle_z), (sM + ds, ye + dy * 0.05 * SG, axle_z), 0.06 * SG, 1, n=10)
+            # retraction actuator (body + chrome rod) to the wing rear spar
+            ra = np.array([sM - 0.30 * SG, yM, zm(-2.55)])
+            rb = np.array([sM - 0.55 * SG, yM - side * 1.25 * SG, zm(-1.95)])
+            rm = ra + (rb - ra) * 0.45
+            cyl(mb, rb, rm, 0.075 * SG, 0, n=12)
+            cyl(mb, rm, ra, 0.042 * SG, 1, n=10)
+            # lock link: knuckled brace from the side brace to the strut
+            k0 = np.array([sM - 0.14 * SG, yM, zm(-3.2)])
+            k2 = np.array([sM - 0.18 * SG, yM + side * 0.9 * SG, zm(-2.55)])
+            k1 = 0.5 * (k0 + k2) + np.array([0, 0, -0.18 * SG])
+            cyl(mb, k0, k1, 0.035 * SG, 0, n=8)
+            cyl(mb, k1, k2, 0.035 * SG, 0, n=8)
+            cyl(mb, k1 - np.array([0.05 * SG, 0, 0]), k1 + np.array([0.05 * SG, 0, 0]), 0.05 * SG, 1, n=10)
+            # more hydraulic lines (brakes) running down the leg to the bogie
+            for off in (0.10, 0.16, 0.22):
+                cyl(mb, (sM + off * SG, yM - side * 0.2 * SG, zm(-2.2)), (sM + off * SG, yM - side * 0.2 * SG, zm(-3.5)),
+                    0.014 * SG, 1, n=6)
+                cyl(mb, (sM + off * SG, yM - side * 0.2 * SG, zm(-3.5)),
+                    (sM + off * SG + 0.2 * SG, yM - side * 0.16 * SG, axle_z + 0.3 * SG), 0.014 * SG, 1, n=6)
         if len(AX) > 1:
             for ds in (-1, 1):
                 cyl(mb, (sM - 0.1 * SG, yM + 0.2 * SG, axle_z + 0.35 * SG),
@@ -1027,10 +1149,19 @@ def build_gear(M, root, col):
         di = door.copy()
         di[:, 1] -= side * 0.03
         mb.add_poly(di, mat=6, outward=("dir", (0, -side, 0)))
+        if not LOD:
+            # door edge frame and inner stiffeners
+            for i in range(4):
+                a_, b_ = door[i], door[(i + 1) % 4]
+                cyl(mb, a_ - np.array([0, side * 0.015, 0]), b_ - np.array([0, side * 0.015, 0]), 0.02, 6, n=6)
+            for t_ in (0.3, 0.6):
+                a_ = door[0] + (door[3] - door[0]) * t_
+                b_ = door[1] + (door[2] - door[1]) * t_
+                cyl(mb, a_ - np.array([0, side * 0.045, 0]), b_ - np.array([0, side * 0.045, 0]), 0.022, 6, n=6)
         test = np.array([[sM, yM, axle_z]])
         inboard = (lambda a, b, side=side: np.abs(b[:, 1]).mean() < np.abs(a[:, 1]).mean())
         leg = add_part("MainGear_" + L, "gear", mb, [M["gear"], M["chrome"], M["tire"], M["hub"], M["hub"],
-                                               M["fuselage"], M["bay"]],
+                                               M["fuselage"], M["bay"], M["brake"]],
                  top, top + np.array([1.0, 0, 0]), test, inboard, 88, root, col,
                  extra=dict(contact=G.to_three([sM, yM, g]), radius=rM,
                             wheels=[G.to_three([sM + ds, yM + dy * WDY, g])
@@ -1108,6 +1239,84 @@ def fus_point(s, side_angle_deg):
     return np.array([s, float(y[0]), float(z[0])])
 
 
+def skin_point(y, z):
+    """Point + outward normal on the forward fuselage skin through (y, z) (left side y > 0)."""
+    import textures_b787 as T
+    def P(yy, zz):
+        return np.array([T.skin_s_at(abs(yy), zz), yy, zz])
+    p = P(y, z)
+    e = 0.03
+    dy = P(y + e, z) - P(y - e, z)
+    dz = P(y, z + e) - P(y, z - e)
+    n = np.cross(dy, dz)
+    n /= np.linalg.norm(n)
+    if n[0] > 0:            # outward = facing forward / sideways
+        n = -n
+    return p, n
+
+
+def build_skin_details(mb, SM, CS):
+    """Windshield wipers, air data probes, drain masts, ram-air inlets, static ports."""
+    import textures_b787 as T
+    FP = T.FRONT_PANE
+    (y0, z0), (y1, z1) = FP[0], FP[1]
+    for side in (1, -1):
+        # one wiper per front windshield, parked along the lower frame, pivot outboard
+        def edge(t, dz=0.0):
+            return y0 + (y1 - y0) * t, z0 + (z1 - z0) * t + dz
+        pts = []
+        for t in np.linspace(0.84, 0.16, 9):
+            yy, zz = edge(t, 0.045)
+            p, nrm = skin_point(yy, zz)
+            pts.append(p + nrm * 0.025)
+        pts = np.array(pts)
+        pts[:, 1] *= side
+        yy, zz = edge(0.92, -0.05)
+        piv, nrm = skin_point(yy, zz)
+        piv[1] *= side
+        nrm = nrm * np.array([1, side, 1])
+        cyl(mb, piv - nrm * 0.01, piv + nrm * 0.05, 0.035, 3, n=12)                 # pivot boss
+        cyl(mb, piv + nrm * 0.04, pts[2], 0.012, 3, n=6)                            # arm
+        for a_, b_ in zip(pts[:-1], pts[1:]):
+            cyl(mb, a_, b_, 0.009, 3, n=6, caps=False)                               # blade
+            cyl(mb, a_ - nrm * 0.012, b_ - nrm * 0.012, 0.005, 3, n=5, caps=False)   # rubber
+        # total air temperature probe and ice detector under the nose
+        for (s_, ang, h) in ((CS(4.9), 128, 0.12), (CS(5.6), 118, 0.09)):
+            p = fus_point(s_, side * ang)
+            nrm = np.array([0, p[1], p[2] - float(G.fus_profile(s_)[3])])
+            nrm /= np.linalg.norm(nrm)
+            cyl(mb, p - nrm * 0.01, p + nrm * h, 0.02, 1, n=8)
+            cyl(mb, p + nrm * h, p + nrm * h + np.array([-0.07, 0, 0]), 0.018, 1, n=8)
+        # flush static ports (dark discs with a plate)
+        for s_ in (CS(6.8), CS(7.2)):
+            p = fus_point(s_, side * 100)
+            nrm = np.array([0, p[1], p[2] - float(G.fus_profile(s_)[3])])
+            nrm /= np.linalg.norm(nrm)
+            dome(mb, p + nrm * 0.001, nrm, 0.07, 1, n=16, h=0.004)
+            dome(mb, p + nrm * 0.004, nrm, 0.018, 2, n=10, h=0.002)
+    # drain masts under the belly
+    for s_ in (SM(21.5), SM(40.5)):
+        p = fus_point(s_, 180)
+        z = p[2] + 0.02
+        for dy in (-0.012, 0.012):
+            q = np.array([(s_ - 0.14, dy, z), (s_ + 0.12, dy, z), (s_ + 0.16, dy * 0.7, z - 0.2), (s_ + 0.02, dy * 0.7, z - 0.2)])
+            mb.add_poly(q if dy > 0 else q[::-1], mat=1, outward=("dir", (0, np.sign(dy), 0)))
+    # ram-air inlets on the belly fairing ahead of the wing (dark recessed scoops)
+    if G.TYPE != "b738":
+        for side in (1, -1):
+            s_ = SM(24.2)
+            for ang in (148,):
+                pa = fus_point(s_ - 0.5, side * ang)
+                pb = fus_point(s_ + 0.5, side * ang)
+                n_ = np.array([0, pa[1], pa[2] - float(G.fus_profile(s_)[3])])
+                n_ /= np.linalg.norm(n_)
+                t_ = np.cross(n_, np.array([1.0, 0, 0]))
+                t_ /= np.linalg.norm(t_)
+                w = 0.22
+                q = np.array([pa - t_ * w * 0.4, pa + t_ * w * 0.4, pb + t_ * w, pb - t_ * w]) + n_ * 0.006
+                mb.add_poly(q, mat=2, outward=("dir", tuple(n_)))
+
+
 def build_details(M, root, col):
     mb = C.MeshBuilder(TB)
     # blade antennas top / bottom
@@ -1148,7 +1357,8 @@ def build_details(M, root, col):
         for yy in np.array([6.0, 8.0, 9.4]) * G.HT_SEMI / 9.72:
             te = G.ht_point(np.array(yy), np.array(1.0), np.array(True), side)
             cyl(mb, te, te + np.array([0.36, 0, 0]), 0.008, 1, n=5, caps=False)
-    ob = mb.build("Details", [M["antenna"], M["chrome"]], col=col)
+    build_skin_details(mb, SM, CS)
+    ob = mb.build("Details", [M["antenna"], M["chrome"], M["black"], M["wiper"]], col=col)
     C.set_parent(ob, root)
 
     # ---- lights: each its own object so the simulator can drive them ---------

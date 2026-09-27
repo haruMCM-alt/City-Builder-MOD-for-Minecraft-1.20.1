@@ -241,6 +241,14 @@ class App {
     this.events = [];
     this.buildMenu();
     window.addEventListener('resize', () => this.resize());
+    // hide the on-screen chrome (view buttons, radio prompt, cursor) when the mouse rests
+    const wake = () => {
+      document.body.classList.remove('idle');
+      clearTimeout(this._idleT);
+      if (!window.matchMedia('(pointer: coarse)').matches) this._idleT = setTimeout(() => document.body.classList.add('idle'), 3500);
+    };
+    ['mousemove', 'mousedown', 'touchstart'].forEach((ev) => window.addEventListener(ev, wake, { passive: true }));
+    wake();
     this.resize();
     // warm-up render (compiles shaders while the menu is shown)
     this.startScenario('rwy27', false);
@@ -397,16 +405,28 @@ class App {
     document.querySelectorAll('.failBtn').forEach((b) => { b.onclick = () => { this.resume(); this.command('failure:' + b.dataset.fail); }; });
     // MCP
     document.querySelectorAll('.mcpbtn').forEach((b) => { b.onclick = () => this.command(b.dataset.cmd === 'ap' ? 'ap' : b.dataset.cmd === 'at' ? 'at' : b.dataset.cmd); });
+    const turn = (f, dir, big) => {
+      const s = this.sys.mcp;
+      if (f === 'spd') s.spd = clamp(s.spd + dir * (big ? 10 : 1), 100, 350);
+      if (f === 'hdg') s.hdg = wrap360(s.hdg + dir * (big ? 10 : 1)) || 360;
+      if (f === 'alt') s.alt = clamp(s.alt + dir * (big ? 1000 : 100), 0, 43000);
+      if (f === 'vs') s.vs = clamp(s.vs + dir * 100, -6000, 6000);
+      this.updateMCP(true);
+    };
+    // MCP knobs: wheel or drag up / down to turn, click to sync with the current value
+    document.querySelectorAll('.knob').forEach((k) => {
+      k.addEventListener('wheel', (e) => { e.preventDefault(); turn(k.dataset.field, e.deltaY < 0 ? 1 : -1, e.shiftKey); }, { passive: false });
+      let y0 = null, moved = false;
+      k.addEventListener('pointerdown', (e) => { y0 = e.clientY; moved = false; k.setPointerCapture(e.pointerId); });
+      k.addEventListener('pointermove', (e) => {
+        if (y0 === null) return;
+        const d = Math.trunc((y0 - e.clientY) / 6);
+        if (d) { turn(k.dataset.field, Math.sign(d), e.shiftKey); y0 -= Math.sign(d) * 6; moved = true; }
+      });
+      k.addEventListener('pointerup', () => { if (!moved) k.parentElement.querySelector('.num')?.click(); y0 = null; });
+    });
     document.querySelectorAll('.num').forEach((n) => {
-      n.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        const f = n.dataset.field, s = this.sys.mcp, dir = e.deltaY < 0 ? 1 : -1, big = e.shiftKey;
-        if (f === 'spd') s.spd = clamp(s.spd + dir * (big ? 10 : 1), 100, 350);
-        if (f === 'hdg') s.hdg = wrap360(s.hdg + dir * (big ? 10 : 1)) || 360;
-        if (f === 'alt') s.alt = clamp(s.alt + dir * (big ? 1000 : 100), 0, 43000);
-        if (f === 'vs') s.vs = clamp(s.vs + dir * 100, -6000, 6000);
-        this.updateMCP(true);
-      }, { passive: false });
+      n.addEventListener('wheel', (e) => { e.preventDefault(); turn(n.dataset.field, e.deltaY < 0 ? 1 : -1, e.shiftKey); }, { passive: false });
       n.addEventListener('click', (e) => {
         const f = n.dataset.field, s = this.sys.mcp, o = this.fm.out;
         if (f === 'hdg') s.hdg = Math.round(o.hdg) || 360;
@@ -1282,6 +1302,9 @@ class App {
     $('mcpHdg').textContent = String(Math.round(s.mcp.hdg) % 360 || 360).padStart(3, '0');
     $('mcpAlt').textContent = Math.round(s.mcp.alt);
     $('mcpVs').textContent = (s.mcp.vs > 0 ? '+' : '') + Math.round(s.mcp.vs);
+    // knob pointers follow the selected values
+    const rot = { spd: s.mcp.spd * 9, hdg: s.mcp.hdg, vs: s.mcp.vs * 0.03, alt: s.mcp.alt * 0.036 };
+    document.querySelectorAll('.knob').forEach((k) => k.style.setProperty('--rot', (rot[k.dataset.field] % 360).toFixed(1) + 'deg'));
     const set = (cmd, on, arm) => {
       const b = document.querySelector(`.mcpbtn[data-cmd="${cmd}"]`);
       if (!b) return;
@@ -1590,12 +1613,18 @@ class App {
     const o = this.fm.out, s = this.sys;
     const f = FLAPS[s.flapLever].name;
     const gear = this.fm.ctl.gearPos < 0.01 ? 'DN' : this.fm.ctl.gearPos > 0.99 ? 'UP' : '▲▼';
-    $('status').textContent =
-      `${VIEW_NAMES[this.rig.view]}   ${Math.round(this.fps)} fps\n` +
-      `IAS ${Math.round(o.ias)} kt  GS ${Math.round(o.gs)}  M ${o.mach.toFixed(2)}\n` +
-      `ALT ${Math.round(o.altFt)} ft  RA ${o.raFt < 2500 ? Math.round(o.raFt) : '---'}  VS ${Math.round(o.vs / FPM)}\n` +
-      `HDG ${String(Math.round(o.hdg) % 360).padStart(3, '0')}  PITCH ${o.pitch.toFixed(1)}  BANK ${o.bank.toFixed(0)}\n` +
-      `FLAPS ${f}  GEAR ${gear}  THR ${Math.round(s.tla[0] * 100)}%  ${s.pilot.reverse ? 'REV ' : ''}${this.fm.ctl.parkingBrake ? 'PRK ' : ''}${s.mode}`;
+    const rd = (v) => Math.round(v);
+    const fd = (lab, val, unit = '') => `<div class="fd"><i>${lab}</i><b>${val}</b><u>${unit}</u></div>`;
+    const chip = (t, c = '') => `<span class="${c}">${t}</span>`;
+    const html = `<div class="fdh">${VIEW_NAMES[this.rig.view]}<small>${rd(this.fps)} FPS</small></div>` +
+      fd('IAS', rd(o.ias), 'KT') + fd('ALT', rd(o.altFt).toLocaleString('en-US'), 'FT') + fd('HDG', String(rd(o.hdg) % 360).padStart(3, '0'), '°') +
+      fd('GS', rd(o.gs), 'KT') + fd('V/S', (o.vs > 0 ? '+' : '') + rd(o.vs / FPM), 'FPM') + fd('RA', o.raFt < 2500 ? rd(o.raFt) : '----', 'FT') +
+      fd('MACH', o.mach.toFixed(2)) + fd('PITCH', o.pitch.toFixed(1), '°') + fd('BANK', o.bank.toFixed(0), '°') +
+      `<div class="fdc">${chip('FLAPS ' + f, s.flapLever ? 'g' : '')}${chip('GEAR ' + gear, gear === 'DN' ? 'g' : gear === 'UP' ? '' : 'a')}` +
+      `${chip('THR ' + rd(s.tla[0] * 100) + '%')}${s.pilot.reverse ? chip('REV', 'a') : ''}${this.fm.ctl.parkingBrake ? chip('PARK BRK', 'a') : ''}` +
+      `${s.mode ? chip(s.mode) : ''}</div>`;
+    const st = $('status');
+    if (st._html !== html) { st.innerHTML = html; st._html = html; }
     // damage status panel
     const D = this.fm.dmg;
     const dm = $('dmg');

@@ -519,6 +519,10 @@ def fuselage_textures(W=8192, H=2048):
     i1 = fm.col(CS(5.6))
     glass, frame, dwin = cockpit_window_masks(S[:, :i1], Y[:, :i1], Z[:, :i1], 0.009)
     sub = col[:, :i1]
+    # painted black surround ("mask") around the flight-deck glass, as on the real 787
+    mask = aa(dwin - 0.15, 0.02) if G.TYPE == "b789" else np.zeros_like(dwin)
+    blend(sub, srgb("#101216"), mask)
+    rough[:, :i1] = rough[:, :i1] * (1 - mask) + 0.22 * mask
     blend(sub, srgb("#1b2129"), frame)
     # slight vertical sky reflection gradient on the glass
     zz = Z[:, :i1]
