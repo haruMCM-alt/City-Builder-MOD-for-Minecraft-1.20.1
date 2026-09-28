@@ -227,8 +227,9 @@ SIX = G.TYPE in ("b738", "b763")
 if SIX:
     # No. 1: narrow flat panes on the top front of the nose (a slanted wedge seen from the side)
     FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
-                  [(0.07, 0.79), (0.74, 0.90), (0.78, 1.27), (0.07, 1.30)]]
-    SIDE_PANE_Z = (CZ(0.80), CZ(1.30))
+                  [(0.07, 0.76), (0.74, 0.80), (0.78, 1.29), (0.07, 1.31)]]
+    SIDE_PANE_Z = (CZ(0.80), CZ(1.29))
+    WIN_POST = 0.07      # width of the posts between the panes (m): the six panes read as one band
 else:
     FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
                   [(0.07, 0.70), (0.98, 0.55), (1.03, 1.25), (0.07, 1.36)]]   # front view (y, z), left
@@ -252,18 +253,71 @@ def skin_s_at(y_target, z_target, s_lo=None, s_hi=None):
     return best if best is not None else s_hi
 
 
+def skin_y_at(s, z_target):
+    """half-width of the skin at station s and height z"""
+    phi, arcn, C = G.section_arc(s, 720)
+    y, z = G.fus_section(s, phi)
+    half = len(phi) // 2
+    yl, zl = np.abs(y[half:]), z[half:]
+    return float(np.interp(z_target, zl[::-1], yl[::-1]))
+
+
+# Side-view proportions of the band, measured from photographs (units of h, the band height at
+# the No. 1 outer corner): the top edge is one straight line; post 1 (No. 1 / No. 2) rakes aft
+# by rake1 per unit height (737 ~55 deg, 767 ~75 deg); No. 2 is w2 long at the top and its sill
+# drops d2 aft; post 2 rakes by rake2; No. 3 is w3 long at the top with a vertical aft edge and
+# its sill ending at e3 (737: rising steeply aft, 767: level).
+# ytop: half-width of No. 1 at its top outer corner (m); the corners are found on the skin
+# from it and the post rake, so post 1 is a straight line on the side of the nose.
+WIN6 = {"b738": dict(ytop=0.42, rake1=0.70, w2=1.10, d2=0.30, rake2=0.25, w3=1.35, e3=-0.02),
+        "b763": dict(ytop=0.70, rake1=0.27, w2=1.15, d2=0.22, rake2=0.05, w3=0.90, e3=-0.22)}
+_SIX_CACHE = {}
+
+
+def six_layout():
+    """post-1 line and the No. 2 / No. 3 polygons in (s, z)"""
+    if "L" in _SIX_CACHE:
+        return _SIX_CACHE["L"]
+    P = WIN6[G.TYPE]
+    zb, zt = FRONT_PANE[1][1], FRONT_PANE[2][1]
+    h = zt - zb
+    st = next(s for s in np.linspace(CS(1.0), CS(6.0), 500) if skin_y_at(s, zt) >= P["ytop"])
+    sb = st - P["rake1"] * h                          # post 1: bottom (No. 1 outer bottom corner)
+    t2 = st + WIN_POST
+    b2 = sb + WIN_POST
+    t2a = t2 + P["w2"] * h
+    zb2a = zb - P["d2"] * h
+    b2a = t2a - P["rake2"] * (zt - zb2a)
+    no2 = [(b2, zb), (b2a, zb2a), (t2a, zt), (t2, zt)]
+    t3, b3 = t2a + WIN_POST, b2a + WIN_POST
+    t3a = t3 + P["w3"] * h
+    zb3 = zb2a + 0.03 * h
+    no3 = [(b3, zb3), (t3a, zb + P["e3"] * h), (t3a, zt), (t3, zt)]
+    _SIX_CACHE["L"] = ((sb, st, zb, zt), no2, no3)
+    return _SIX_CACHE["L"]
+
+
+if SIX:
+    # No. 1 reaches out to post 1; its top outer corner is where the skin is at the top of the
+    # post (a trapezoid narrower at the top, as on the aircraft)
+    _sb, _st, _zb, _zt = six_layout()[0]
+    FRONT_PANE[1] = (skin_y_at(_sb, _zb) + 0.03, _zb)
+    FRONT_PANE[2] = (skin_y_at(_st, _zt) + 0.03, _zt)
+
+
 def side_panes():
     """side windows as polygons in (s, z)"""
     if not SIX:
         return [side_pane_poly()]
-    ks = G.CK[0] * G.WIN_SIDE_K.get(G.TYPE, 1.0)
-    zb, zt = SIDE_PANE_Z
-    sA = skin_s_at(FRONT_PANE[1][0] + 0.10, 0.5 * (zb + zt)) + 0.02
-    h = zt - zb
-    no2 = [(sA, zb), (sA + 0.62 * ks, zb + 0.13 * h), (sA + 0.55 * ks, zt - 0.03 * h), (sA + 0.03 * ks, zt)]
-    no3 = [(sA + 0.77 * ks, zb + 0.30 * h), (sA + 1.16 * ks, zb + 0.58 * h), (sA + 1.03 * ks, zt - 0.08 * h),
-           (sA + 0.73 * ks, zt - 0.04 * h)]
+    _, no2, no3 = six_layout()
     return [no2, no3]
+
+
+def post1_sd(S, Z):
+    """signed distance to the aft edge of No. 1 (negative forward of post 1)"""
+    sb, st, zb, zt = six_layout()[0]
+    k = (st - sb) / (zt - zb)
+    return (S - (sb + k * (Z - zb))) / np.sqrt(1 + k * k)
 
 
 def side_pane_poly():
@@ -281,14 +335,16 @@ def cockpit_window_masks(S, Y, Z, px):
     frame = np.zeros(S.shape, np.float32)
     sps = side_panes()
     s_side0 = min(p[0] for p in sps[0])
-    front = (S < CS(4.3)) if not SIX else (S < s_side0 + 0.05)
-    d_front = sd_round_poly(ay, Z, FRONT_PANE, 0.07 if not SIX else 0.05)
-    d_front = np.where(front, d_front, 9.0)
+    if SIX:
+        d_front = np.maximum(sd_round_poly(ay, Z, FRONT_PANE, 0.04), post1_sd(S, Z))
+        d_front = np.where(S < six_layout()[0][1] + 0.3, d_front, 9.0)
+    else:
+        d_front = np.where(S < CS(4.3), sd_round_poly(ay, Z, FRONT_PANE, 0.07), 9.0)
     d_side = np.full(S.shape, 9.0)
     for sp in sps:
-        ds = sd_round_poly(S, Z, sp, 0.08 if not SIX else 0.045)
+        ds = sd_round_poly(S, Z, sp, 0.08 if not SIX else 0.03)
         d_side = np.minimum(d_side, ds)
-    d_side = np.where((ay > (0.95 * G.CK[2] if not SIX else FRONT_PANE[1][0] + 0.05)) & (S < CS(5.3) + (0.6 if SIX else 0.0)), d_side, 9.0)
+    d_side = np.where((ay > (0.95 * G.CK[2] if not SIX else 0.2)) & (S < CS(5.3) + (0.6 if SIX else 0.0)), d_side, 9.0)
     d = np.minimum(d_front, d_side)
     glass = aa(d, px)
     frame = aa(np.abs(d + 0.012) - 0.018, px) * (1 - glass * 0.0)
@@ -554,7 +610,15 @@ def fuselage_textures(W=8192, H=2048):
     mask = aa(dwin - 0.15, 0.02) if G.TYPE == "b789" else np.zeros_like(dwin)
     blend(sub, srgb("#101216"), mask)
     rough[:, :i1] = rough[:, :i1] * (1 - mask) + 0.22 * mask
-    blend(sub, srgb("#1b2129"), frame)
+    if SIX:
+        # unpainted metal window frame around the whole band; the thin posts between the panes
+        # are covered by it, so the six panes read as one strip of glass (as on 737 / 767)
+        band = aa(dwin - 0.045, 0.012)
+        blend(sub, srgb("#aab0b6"), band)
+        rough[:, :i1] = rough[:, :i1] * (1 - band) + 0.38 * band
+        blend(sub, srgb("#262b31"), aa(np.abs(dwin) - 0.005, 0.009) * 0.85)
+    else:
+        blend(sub, srgb("#1b2129"), frame)
     # slight vertical sky reflection gradient on the glass
     zz = Z[:, :i1]
     refl = np.clip((zz - CZ(0.5)) / 1.0, 0, 1)[..., None]

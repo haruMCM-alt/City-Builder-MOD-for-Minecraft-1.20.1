@@ -554,7 +554,6 @@ NACELLES = {
 }
 WS_ZONES = {"b738": ((1.3, 1.6, 2.45, 3.0), 1.62), "b763": ((0.6, 0.85, 1.45, 2.1), 1.72)}
 # side windows (No. 2 / No. 3) length scale: the 767's window band is ~2.4 m long in photos
-WIN_SIDE_K = {"b738": 1.1, "b763": 1.45}
 
 
 def apply_type(t):
@@ -764,6 +763,7 @@ def inner_limit(p, margin=0.035):
         y, z = fus_section(s, phi)
         yl, zl = np.abs(y[:half + 1]), z[:half + 1]          # bottom -> right side -> top
         o = np.argsort(zl)
+        flat[m, 2] = np.clip(flat[m, 2], zl.min() + margin, zl.max() - margin)   # under the crown
         w = np.interp(flat[m, 2], zl[o], yl[o], left=0.0, right=0.0)
         lim = np.maximum(w - margin, 0.0)
         yy = flat[m, 1]
