@@ -67,6 +67,8 @@ WebGL2 対応ブラウザ（Chrome / Edge / Firefox / Safari 最新版）で動�
 
   ![737-800 / 767-300ER / 787-9: cockpit windows, engine inlets, nacelles (Blender)](docs/images/types_compare.jpg)
 
+  機首・窓・エンジンの形は Wikimedia Commons の実機写真から寸法を読み取って合わせています（写真へのリンクは `docs/SPECS.md`）
+
 * AI 交通の機種は毎回ランダム（3 機種が偏らないようシャッフルした順に割り当て）（767・787 は無線で "heavy" を付けて交信）。駐機位置は機種ごとに前脚の停止位置をそろえ、ケータリング車・ベルトローダー・給油車・タグの位置もドアと貨物ドアの位置から決定
 
 ### 2. 実在の地理と 4 空港（`blender/geo.py`, `city_gen.py`, `real_kit.py`）

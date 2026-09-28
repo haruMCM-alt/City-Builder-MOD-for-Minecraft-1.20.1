@@ -98,6 +98,17 @@
 [Aircraft Commerce — CF6-80C2 specifications](https://www.aircraft-commerce.com/wp-content/uploads/aircraft-commerce-docs1/Aircraft%20guides/CF6-80C2/ISSUE%2048-CF6-80C2%20SPECS.pdf)、
 [Dimensions.com — Boeing 737-800](https://www.dimensions.com/element/boeing-737-800)
 
+#### 実機写真との照合 / Checked against photographs (Wikimedia Commons)
+機首の輪郭（上下の線・先端の高さ）、操縦室の窓の位置と大きさ、エンジンの形は、次の写真から寸法を読み取って合わせました（胴体高さ・L1 ドア幅を物差しに使用）。
+
+| 写真 | 読み取ったもの |
+|---|---|
+| [KLM PH-BXC 737-800（真横）](https://commons.wikimedia.org/wiki/File:PH-BXC_KLM_Boeing_737-800_taxiing_at_Schiphol_(AMS_-_EHAM),_The_Netherlands,_18may2014,_pic-2.JPG) | 737 の機首先端の高さ（中心線の約 0.5 m 下）、上面は約 7.5 m かけて胴体上端へ、窓帯は先端から約 1.5〜3.1 m・高さ約 0.35〜0.8 m |
+| [Norwegian LN-NGK](https://commons.wikimedia.org/wiki/File:LN-NGK_Boeing_737_Norwegian_Nose_(9526078504).jpg)・[GOL PR-GGP](https://commons.wikimedia.org/wiki/File:PR-GGP_Boeing_737_GOL_Nose_(8164121014).jpg)・[Southwest N8301J](https://commons.wikimedia.org/wiki/File:N8301J_Boeing_737_Southwest_Nose_(8978649095).jpg)・[Qantas VH-VYE](https://commons.wikimedia.org/wiki/File:Cockpit_window_of_Qantas_Boeing_737_(VH-VYE)_taxiing_prior_to_takeoff_at_SYD.jpg) | 737 の 6 枚窓の形（No.1 は横から見ると細い傾いた楔形、No.3 の下縁が後ろへ上がる） |
+| [CFM56-7B（Qantas VH-XZP）](https://commons.wikimedia.org/wiki/File:CFM_International_CFM56-7B24E_engine_mounted_on_Qantas_(VH-XZP)_Boeing_737-838(WL).jpg)・[同 VH-VZY 後方](https://commons.wikimedia.org/wiki/File:CFM_International_CFM56-7B26_fitted_to_Qantas_(VH-VZY)_Boeing_737-838_(WL)_at_the_Canberra_Airport_open_day.jpg) | 下が平らなインテークと無塗装の厚いリップ、短いコアカウルと鋭く突き出た排気コーン |
+| [Qantas VH-OGN 767-338ER](https://commons.wikimedia.org/wiki/File:VH-OGN_%27Partnership%27_Boeing_767-338(ER)_Qantas_(6600506185).jpg)・[Hawaiian N592HA](https://commons.wikimedia.org/wiki/File:Hawaiian_Airlines_(N592HA)_Boeing_767-300ER_at_Sydney_Airport.jpg)・[Australian VH-OGL](https://commons.wikimedia.org/wiki/File:Boeing_767-338-ER,_Australian_Airlines_AN0858967.jpg) | 767 の丸く太い機首（先端は中心線のすぐ下、短いレドーム、風防は先端から約 1.3 m）、窓帯の長さ約 2.4 m |
+| [Delta N183DN](https://commons.wikimedia.org/wiki/File:N183DN_(11498622076).jpg)・[SAS 767](https://commons.wikimedia.org/wiki/File:Engine_and_tail_of_SAS_767.jpg)・[CF6-80C2（A310）](https://commons.wikimedia.org/wiki/File:10%2B27_German_Air_Force_Luftwaffe_Airbus_A310-304_MRTT_General_Electric_CF6-80C2_engine_ILA_Berlin_2016_01.jpg) | 767 のナセル：樽形のファンカウル、その約 0.45 倍の長さのほぼ円筒のコアカウル、主翼より前・下に吊り下げ |
+
 ### 形状の作り方と近似 / Modelling notes
 * 機首：737 は専用の断面表（尖った Section 41）、767 は専用の断面表（丸い 757/767 型の機首と風防上の「おでこ」）。どちらも風防の区間で上側断面を丸から「V」字の平面寄りに変え、平面ガラスの No.1 風防と中央支柱を表現（`WS_ZONES`）。
 * 操縦室の窓：737 / 767 は 6 枚窓（`textures_b787.side_panes`）、787 は 4 枚窓。窓位置はパイロットの目の位置に合わせて配置。

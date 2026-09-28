@@ -467,7 +467,7 @@ TYPES = {
         WING_C0=7.0, Y_KINK=4.3, Y_TIP=16.95, LE=28.0, TE_IN=0.0, TE_OUT=14.5, WING_Z0=-1.35,
         TC=[0.155, 0.145, 0.125, 0.105, 0.100], TWIST=[3.5, 3.2, 1.5, -1.0, -1.5],
         WINGLET=dict(r=0.6, theta=72.0, h=2.49, c_tip=0.6, sweep=40.0),
-        ENG_Y=4.87, ENG_Z=-1.80, ENG_FWD=3.3, ENG_KA=0.59, ENG_KR=0.55, FAN_BLADES=24, ENG_FLAT=0.16,
+        ENG_Y=4.87, ENG_Z=-1.80, ENG_FWD=3.3, ENG_KA=0.59, ENG_KR=0.55, FAN_BLADES=24, ENG_FLAT=0.20,
         # tail: fin tip trailing edge ~1 m ahead of the tail cone end, stabiliser tips at the APU
         # exhaust (areas ~ 26 m^2 fin, ~33 m^2 stabiliser as published)
         HT_S_LE0=33.6, HT_C0=3.7, HT_SEMI=7.17, HT_LE=33.0, HT_TIP_C=1.15, HT_Z0=0.45,
@@ -488,7 +488,7 @@ TYPES = {
         WING_C0=12.0, Y_KINK=7.6, Y_TIP=23.785, LE=34.0, TE_IN=0.0, TE_OUT=20.0, WING_Z0=-1.75,
         TC=[0.150, 0.140, 0.115, 0.100, 0.095], TWIST=[4.0, 3.6, 1.6, -1.0, -1.8],
         WINGLET=None,
-        ENG_Y=7.6, ENG_Z=-2.75, ENG_FWD=3.9, ENG_KA=0.75, ENG_KR=0.78, FAN_BLADES=38, ENG_FLAT=0.0,
+        ENG_Y=7.6, ENG_Z=-2.90, ENG_FWD=4.5, ENG_KA=0.75, ENG_KR=0.78, FAN_BLADES=38, ENG_FLAT=0.0,
         HT_S_LE0=43.9, HT_C0=5.6, HT_SEMI=9.31, HT_LE=34.0, HT_TIP_C=1.7, HT_Z0=0.9,
         VT_Z0=1.8, VT_S_LE0=41.3, VT_C0=8.2, VT_TIP_C=2.9, VT_LE=40.0, VT_FIL=(1.5, 2.8),
         NOSE_TIRE=(0.94, 0.33, 0.28), MAIN_TIRE=(1.17, 0.44, 0.57), MAIN_AXLE_DS=0.71,
@@ -496,33 +496,37 @@ TYPES = {
         EXITS=[(24.0, 0.51, -0.30, 0.68)],
         WIN=(0.30, 0.25, 0.38, 0.508), WIN_S=(8.0, 48.5),
         CARGO=[(12.3, 3.40, -2.35, -0.95), (40.8, 1.78, -2.25, -0.95), (44.1, 0.97, -1.95, -1.0)],
-        LABEL="767-300ER", REG="JA763C", CK=(0.855, 0.0, 0.92, 0.906, 0.0),
+        LABEL="767-300ER", REG="JA763C", CK=(0.855, -1.0, 0.92, 0.906, 0.15),
         SPEC=dict(S=283.3, b=47.57, c=6.99, OEW=90010, MTOW=186880, MLW=145150, MZFW=133810,
                   fuelCapacity=73100, thrustSL=267000, VMO=360, MMO=0.86),
         ENGINE="GE CF6-80C2B6",
     ),
 }
 
-# 737-800: sharper nose (explicit profile, type coordinates) - top / bottom / half width / centre
+# 737-800 nose, measured from side-on photos (KLM PH-BXC, Norwegian LN-NGK, GOL PR-GGP,
+# Southwest N8301J; Wikimedia Commons): the pointed Section 41 -- the tip ~0.5 m below the
+# centre line, the crown sloping down over ~7.5 m ahead of the cabin (the cockpit windows sit
+# just under it as a narrow band), a straight chin.  Type coordinates: top / bottom / half width / centre
 NOSE_B738 = dict(
-    top=([0, .04, .2, .5, 1, 1.5, 2, 2.5, 3, 3.6, 4.5, 5.5, 7],
-         [-.60, -.42, -.22, 0, .28, .62, 1.0, 1.32, 1.58, 1.78, 1.93, 1.99, 2.005]),
-    bot=([0, .04, .2, .5, 1, 1.6, 2.4, 3.4, 4.6, 6, 7],
-         [-.60, -.76, -.92, -1.10, -1.33, -1.55, -1.75, -1.90, -1.97, -2.0, -2.005]),
-    hw=([0, .04, .2, .5, 1, 1.6, 2.4, 3.4, 4.6, 6, 7],
-        [0, .17, .36, .56, .84, 1.12, 1.40, 1.64, 1.80, 1.87, 1.88]),
-    zw=([0, 1.5, 3.5, 6, 7], [-.6, -.45, -.18, -.02, 0]),
+    top=([0, .04, .2, .5, 1.0, 1.22, 1.9, 2.6, 3.26, 4.0, 4.6, 5.3, 6.0, 7.0],
+         [-.52, -.42, -.28, -.09, .16, .28, .74, 1.04, 1.29, 1.50, 1.64, 1.78, 1.88, 2.0]),
+    bot=([0, .04, .2, .5, 1.0, 1.6, 2.6, 3.6, 4.6, 6.0, 7.0],
+         [-.52, -.64, -.80, -1.01, -1.24, -1.44, -1.67, -1.83, -1.94, -2.0, -2.005]),
+    hw=([0, .04, .2, .5, 1.0, 1.6, 2.6, 3.6, 4.6, 6.0, 7.0],
+        [0, .12, .27, .47, .74, 1.00, 1.36, 1.60, 1.75, 1.86, 1.88]),
+    zw=([0, 1.0, 2.6, 4.6, 7.0], [-.52, -.50, -.32, -.14, 0]),
 )
-# 767-300ER: the 757 / 767 nose -- rounder and deeper than the 737's, the windshield set
-# high behind a short radome, a distinct brow above it (type coordinates; fuselage 5.03 x 5.41 m)
+# 767-300ER nose, measured from photos (Qantas VH-OGN close-up, Hawaiian N592HA, Australian
+# VH-OGL): blunt and round -- the tip just below the centre line, a short radome, the
+# windshield starting ~1.3 m from the tip and the crown reaching almost full height by ~4 m
 NOSE_B763 = dict(
-    top=([0, .04, .22, .52, 1.05, 1.75, 2.18, 2.62, 3.05, 3.49, 3.93, 4.36, 4.8, 5.24, 6.11, 6.98, 8.29, 9.6],
-         [-.50, -.31, -.09, .09, .30, .52, .71, .92, 1.15, 1.40, 1.63, 1.82, 1.97, 2.10, 2.33, 2.51, 2.66, 2.705]),
-    bot=([0, .04, .22, .52, 1.05, 1.75, 2.6, 3.7, 4.8, 6.1, 7.4, 9.6],
-         [-.50, -.69, -.92, -1.20, -1.54, -1.88, -2.19, -2.43, -2.58, -2.67, -2.70, -2.705]),
-    hw=([0, .04, .22, .52, 1.05, 1.75, 2.6, 3.7, 4.8, 6.1, 7.4, 9.6],
-        [0, .19, .43, .69, .98, 1.30, 1.63, 1.95, 2.20, 2.38, 2.47, 2.515]),
-    zw=([0, 1.75, 4.4, 7.4, 9.6], [-.50, -.38, -.16, 0, 0]),
+    top=([0, .05, .2, .5, .93, 1.3, 2.0, 3.0, 4.2, 5.3, 6.4, 8.0, 9.6],
+         [-.20, .02, .25, .55, .90, 1.18, 1.72, 2.10, 2.45, 2.60, 2.67, 2.70, 2.705]),
+    bot=([0, .05, .2, .5, .93, 2.0, 3.1, 4.7, 6.4, 8.0, 9.6],
+         [-.20, -.45, -.70, -.98, -1.20, -1.72, -2.05, -2.38, -2.60, -2.69, -2.705]),
+    hw=([0, .05, .2, .5, .93, 2.0, 3.1, 4.7, 6.4, 8.0, 9.6],
+        [0, .30, .52, .74, .98, 1.60, 1.93, 2.25, 2.45, 2.51, 2.515]),
+    zw=([0, 1.0, 2.5, 4.0, 9.6], [-.20, -.15, -.05, 0, 0]),
 )
 NOSE = {"b738": NOSE_B738, "b763": NOSE_B763}
 
@@ -534,17 +538,23 @@ NACELLES = {
     "b738": dict(
         outer=[(0.00, 1.500), (0.03, 1.600), (0.10, 1.680), (0.25, 1.745), (0.55, 1.795), (1.00, 1.820),
                (1.60, 1.825), (2.40, 1.810), (3.10, 1.760), (3.70, 1.660), (4.20, 1.540)],
+        # Qantas VH-XZP / VH-VZY photos: a short silver core cowl and a long, sharply pointed
+        # exhaust cone well out of the core nozzle
         nozzle=4.20, core=[(3.4, 1.00), (4.0, 1.04), (4.6, 1.00), (5.3, 0.88), (5.95, 0.70)],
-        core_lip=5.95, plug=[(5.45, 0.55), (5.9, 0.53), (6.25, 0.45), (6.6, 0.28), (6.9, 0.02)]),
+        core_lip=5.95, plug=[(5.45, 0.56), (5.9, 0.55), (6.4, 0.44), (7.0, 0.24), (7.55, 0.02)]),
     # CF6-80C2B6: the fan cowl and reverser end well ahead of the turbine -- a long exposed
     # core cowl, a large core nozzle and exhaust plug
     "b763": dict(
-        outer=[(0.00, 1.515), (0.03, 1.600), (0.10, 1.665), (0.25, 1.720), (0.55, 1.765), (1.00, 1.790),
-               (1.60, 1.795), (2.30, 1.775), (3.00, 1.720), (3.60, 1.630), (4.05, 1.540)],
-        nozzle=4.05, core=[(3.2, 1.04), (4.0, 1.08), (4.9, 1.03), (5.9, 0.90), (6.95, 0.72)],
-        core_lip=6.95, plug=[(6.40, 0.57), (6.9, 0.55), (7.35, 0.46), (7.8, 0.28), (8.15, 0.02)]),
+        outer=[(0.00, 1.500), (0.03, 1.605), (0.10, 1.680), (0.25, 1.740), (0.55, 1.780), (1.00, 1.800),
+               (1.80, 1.805), (2.60, 1.795), (3.30, 1.760), (3.90, 1.680), (4.40, 1.570)],
+        # Delta N183DN / SAS 767 photos: a long barrel fan cowl, then a nearly cylindrical core
+        # cowl ~0.45 of its length with a big core nozzle; the plug barely shows
+        nozzle=4.40, core=[(3.6, 1.06), (4.3, 1.09), (5.0, 1.07), (5.7, 1.02), (6.35, 0.96)],
+        core_lip=6.35, plug=[(5.95, 0.72), (6.4, 0.70), (6.75, 0.56), (7.05, 0.30), (7.25, 0.02)]),
 }
-WS_ZONES = {"b738": ((0.65, 1.0, 1.9, 2.6), 1.62), "b763": ((1.9, 2.25, 3.35, 4.1), 1.72)}
+WS_ZONES = {"b738": ((1.3, 1.6, 2.45, 3.0), 1.62), "b763": ((0.6, 0.85, 1.45, 2.1), 1.72)}
+# side windows (No. 2 / No. 3) length scale: the 767's window band is ~2.4 m long in photos
+WIN_SIDE_K = {"b738": 1.1, "b763": 1.45}
 
 
 def apply_type(t):

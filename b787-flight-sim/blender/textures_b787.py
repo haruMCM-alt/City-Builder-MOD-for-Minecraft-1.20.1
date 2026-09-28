@@ -225,9 +225,10 @@ def side_feature(fm, s_c, z_c, hs, ha, side, r, pad=0.05):
 # the pilots' eyes are.
 SIX = G.TYPE in ("b738", "b763")
 if SIX:
+    # No. 1: narrow flat panes on the top front of the nose (a slanted wedge seen from the side)
     FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
-                  [(0.07, 0.64), (0.80, 0.77), (0.84, 1.29), (0.07, 1.35)]]
-    SIDE_PANE_Z = (CZ(0.80), CZ(1.33))
+                  [(0.07, 0.79), (0.74, 0.90), (0.78, 1.27), (0.07, 1.30)]]
+    SIDE_PANE_Z = (CZ(0.80), CZ(1.30))
 else:
     FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
                   [(0.07, 0.70), (0.98, 0.55), (1.03, 1.25), (0.07, 1.36)]]   # front view (y, z), left
@@ -255,9 +256,9 @@ def side_panes():
     """side windows as polygons in (s, z)"""
     if not SIX:
         return [side_pane_poly()]
-    ks = G.CK[0]
+    ks = G.CK[0] * G.WIN_SIDE_K.get(G.TYPE, 1.0)
     zb, zt = SIDE_PANE_Z
-    sA = skin_s_at(FRONT_PANE[1][0] + 0.13, 0.5 * (zb + zt)) + 0.02
+    sA = skin_s_at(FRONT_PANE[1][0] + 0.10, 0.5 * (zb + zt)) + 0.02
     h = zt - zb
     no2 = [(sA, zb), (sA + 0.62 * ks, zb + 0.13 * h), (sA + 0.55 * ks, zt - 0.03 * h), (sA + 0.03 * ks, zt)]
     no3 = [(sA + 0.77 * ks, zb + 0.30 * h), (sA + 1.16 * ks, zb + 0.58 * h), (sA + 1.03 * ks, zt - 0.08 * h),
