@@ -623,16 +623,18 @@ def build_engine(M, root, col, side):
         mb.add_poly(pts, mat=4)
         mb.add_poly(pts[::-1], mat=4)
     # ---- core cowl, nozzle, plug ----------------------------------------------
-    core = np.array([(3.6, 0.98), (4.3, 1.02), (5.0, 0.98), (5.8, 0.86), (6.62, 0.67)])
+    core = np.array(G.CORE_PROF)
+    cl = G.CORE_LIP                                     # core nozzle exit
     Pk, Nk, UVk = revolve_grid(core, cen, 96)
     if Nk[2, 0, 2] < 0:
         Nk = -Nk
     mb.add_grid(Pk, UVk, N=Nk, mat=5)
-    lipc = np.array([(6.62, 0.67), (6.64, 0.64), (6.30, 0.60)])
+    rc = core[-1][1]
+    lipc = np.array([(cl, rc), (cl + 0.02, rc - 0.03), (cl - 0.32, rc - 0.07)])
     Pl, Nl, UVl = revolve_grid(lipc, cen, 96)
     Nl, _ = mb.grid_normals(Pl, wrap_v=True)
     mb.add_grid(Pl, UVl, N=None, outward=cen + np.array([7.5, 0, 0]), mat=6)
-    plug = np.array([(6.10, 0.52), (6.6, 0.50), (7.0, 0.43), (7.4, 0.27), (7.72, 0.02)])
+    plug = np.array(G.PLUG_PROF)
     Pp, Np_, UVp = revolve_grid(plug, cen, 96)
     if Np_[1, 0, 2] < 0:
         Np_ = -Np_
@@ -655,7 +657,7 @@ def build_engine(M, root, col, side):
         for j in range(64):
             a = 2 * math.pi * j / 64
             q = []
-            for (aa, rr, tw) in ((6.18, 0.515, 0.0), (6.18, 0.625, 0.0), (6.30, 0.625, 0.09), (6.30, 0.515, 0.07)):
+            for (aa, rr, tw) in ((cl - 0.44, 0.515, 0.0), (cl - 0.44, rc - 0.045, 0.0), (cl - 0.32, rc - 0.045, 0.09), (cl - 0.32, 0.515, 0.07)):
                 ang = a + tw
                 q.append((cen[0] + aa, cen[1] + rr * math.sin(ang), cen[2] + rr * math.cos(ang)))
             mb.add_poly(q, mat=7)

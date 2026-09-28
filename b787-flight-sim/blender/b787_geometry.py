@@ -87,6 +87,10 @@ def _bump(s, a, b, c, d):
 
 BUMP = (19.0, 25.5, 36.5, 43.5)     # wing-to-body fairing extent (stations)
 BUMP_W, BUMP_D = 0.105, 0.30
+# flat-glass windshield (737 / 767): the upper nose section turns from round to a blunt
+# "V" -- two flat No. 1 panes meeting at the centre post -- over these stations
+WS_ZONE = None                      # (s start, s full, s end full, s end)
+WS_N = 2.0                          # superellipse exponent of the upper lobe there (2 = round)
 
 
 def fus_section(s, phi):
@@ -102,6 +106,12 @@ def fus_section(s, phi):
     lower = cp > 0
     n_side_top, n_side_bot = 2.0, 2.15
     ex_top, ex_bot = 2.0, 2.3
+    if WS_ZONE is not None:
+        # only the cap around the No. 1 windshields and the centre post goes flat; the sides
+        # (No. 2 / No. 3 windows) keep the round section
+        w = _bump(s, *WS_ZONE) * np.clip((np.abs(cp) - 0.45) / 0.35, 0, 1) ** 2 * (cp < 0)
+        n_side_top = 2.0 + (WS_N - 2.0) * w
+        ex_top = 2.0 + (WS_N - 2.0) * w
     n_y = np.where(lower, n_side_bot, n_side_top)
     n_z = np.where(lower, ex_bot, ex_top)
     y = -hw * np.sign(sp) * np.abs(sp) ** (2.0 / n_y)
@@ -303,6 +313,9 @@ NOZZLE_A = 5.10            # fan nozzle exit (mean)
 CHEVRONS = 18
 CORE_A0, CORE_A1 = 5.10, 6.62
 PLUG_A1 = 7.72
+CORE_PROF = [(3.6, 0.98), (4.3, 1.02), (5.0, 0.98), (5.8, 0.86), (6.62, 0.67)]
+CORE_LIP = 6.62
+PLUG_PROF = [(6.10, 0.52), (6.6, 0.50), (7.0, 0.43), (7.4, 0.27), (7.72, 0.02)]
 
 ENG_FWD = 5.0              # inlet highlight ahead of the wing leading edge
 ENG_S_HL = float(WING_S_LE0 + ENG_Y * TAN(LE_SWEEP)) - ENG_FWD   # inlet highlight station
@@ -454,7 +467,7 @@ TYPES = {
         WING_C0=7.0, Y_KINK=4.3, Y_TIP=16.95, LE=28.0, TE_IN=0.0, TE_OUT=14.5, WING_Z0=-1.35,
         TC=[0.155, 0.145, 0.125, 0.105, 0.100], TWIST=[3.5, 3.2, 1.5, -1.0, -1.5],
         WINGLET=dict(r=0.6, theta=72.0, h=2.49, c_tip=0.6, sweep=40.0),
-        ENG_Y=4.87, ENG_Z=-1.95, ENG_FWD=2.9, ENG_KA=0.59, ENG_KR=0.55, FAN_BLADES=24, ENG_FLAT=0.16,
+        ENG_Y=4.87, ENG_Z=-1.80, ENG_FWD=3.3, ENG_KA=0.59, ENG_KR=0.55, FAN_BLADES=24, ENG_FLAT=0.16,
         # tail: fin tip trailing edge ~1 m ahead of the tail cone end, stabiliser tips at the APU
         # exhaust (areas ~ 26 m^2 fin, ~33 m^2 stabiliser as published)
         HT_S_LE0=33.6, HT_C0=3.7, HT_SEMI=7.17, HT_LE=33.0, HT_TIP_C=1.15, HT_Z0=0.45,
@@ -500,6 +513,38 @@ NOSE_B738 = dict(
         [0, .17, .36, .56, .84, 1.12, 1.40, 1.64, 1.80, 1.87, 1.88]),
     zw=([0, 1.5, 3.5, 6, 7], [-.6, -.45, -.18, -.02, 0]),
 )
+# 767-300ER: the 757 / 767 nose -- rounder and deeper than the 737's, the windshield set
+# high behind a short radome, a distinct brow above it (type coordinates; fuselage 5.03 x 5.41 m)
+NOSE_B763 = dict(
+    top=([0, .04, .22, .52, 1.05, 1.75, 2.18, 2.62, 3.05, 3.49, 3.93, 4.36, 4.8, 5.24, 6.11, 6.98, 8.29, 9.6],
+         [-.50, -.31, -.09, .09, .30, .52, .71, .92, 1.15, 1.40, 1.63, 1.82, 1.97, 2.10, 2.33, 2.51, 2.66, 2.705]),
+    bot=([0, .04, .22, .52, 1.05, 1.75, 2.6, 3.7, 4.8, 6.1, 7.4, 9.6],
+         [-.50, -.69, -.92, -1.20, -1.54, -1.88, -2.19, -2.43, -2.58, -2.67, -2.70, -2.705]),
+    hw=([0, .04, .22, .52, 1.05, 1.75, 2.6, 3.7, 4.8, 6.1, 7.4, 9.6],
+        [0, .19, .43, .69, .98, 1.30, 1.63, 1.95, 2.20, 2.38, 2.47, 2.515]),
+    zw=([0, 1.75, 4.4, 7.4, 9.6], [-.50, -.38, -.16, 0, 0]),
+)
+NOSE = {"b738": NOSE_B738, "b763": NOSE_B763}
+
+# nacelle outlines per type in the 787 (GEnx) units the engine is modelled in, scaled by
+# (ENG_KA, ENG_KR): outer cowl, fan nozzle exit, core cowl, core nozzle, plug
+NACELLES = {
+    # CFM56-7B: short, barrel-like fan cowl, a thick lip, the fan nozzle ~2 fan diameters
+    # behind the highlight; short core cowl and plug (separate flow)
+    "b738": dict(
+        outer=[(0.00, 1.500), (0.03, 1.600), (0.10, 1.680), (0.25, 1.745), (0.55, 1.795), (1.00, 1.820),
+               (1.60, 1.825), (2.40, 1.810), (3.10, 1.760), (3.70, 1.660), (4.20, 1.540)],
+        nozzle=4.20, core=[(3.4, 1.00), (4.0, 1.04), (4.6, 1.00), (5.3, 0.88), (5.95, 0.70)],
+        core_lip=5.95, plug=[(5.45, 0.55), (5.9, 0.53), (6.25, 0.45), (6.6, 0.28), (6.9, 0.02)]),
+    # CF6-80C2B6: the fan cowl and reverser end well ahead of the turbine -- a long exposed
+    # core cowl, a large core nozzle and exhaust plug
+    "b763": dict(
+        outer=[(0.00, 1.515), (0.03, 1.600), (0.10, 1.665), (0.25, 1.720), (0.55, 1.765), (1.00, 1.790),
+               (1.60, 1.795), (2.30, 1.775), (3.00, 1.720), (3.60, 1.630), (4.05, 1.540)],
+        nozzle=4.05, core=[(3.2, 1.04), (4.0, 1.08), (4.9, 1.03), (5.9, 0.90), (6.95, 0.72)],
+        core_lip=6.95, plug=[(6.40, 0.57), (6.9, 0.55), (7.35, 0.46), (7.8, 0.28), (8.15, 0.02)]),
+}
+WS_ZONES = {"b738": ((0.65, 1.0, 1.9, 2.6), 1.62), "b763": ((1.9, 2.25, 3.35, 4.1), 1.72)}
 
 
 def apply_type(t):
@@ -520,9 +565,9 @@ def apply_type(t):
     def table(kn, vals, scale, key):
         kn = np.asarray(kn, dtype=np.float64)
         vals = np.asarray(vals, dtype=np.float64) * scale
-        if t == "b738":
+        if t in NOSE:
             keep = kn > 11.0
-            ns, nv = NOSE_B738[key]
+            ns, nv = NOSE[t][key]
             s = np.r_[ns, SMAP(kn[keep])]
             v = np.r_[nv, vals[keep]]
         else:
@@ -559,9 +604,15 @@ def apply_type(t):
         g[name] = d
     g["SPOILERS"] = [(float(WY(a)), float(WY(b))) for a, b in SPOILERS]
     g["SLAT_SPLITS"] = [float(WY(v)) for v in SLAT_SPLITS]
-    # --- engines ----------------------------------------------------------------
+    # --- windshield, engines -----------------------------------------------------
+    if t in WS_ZONES:
+        g["WS_ZONE"], g["WS_N"] = WS_ZONES[t]
     g["FAN_R"] = 1.41 * T["ENG_KR"]
     g["CHEVRONS"] = 0
+    NA = NACELLES[t]
+    g["NAC_OUTER"] = NA["outer"]
+    g["NOZZLE_A"] = NA["nozzle"]
+    g["CORE_PROF"], g["CORE_LIP"], g["PLUG_PROF"] = NA["core"], NA["core_lip"], NA["plug"]
     g["ENG_S_HL"] = float(wing_le(T["ENG_Y"])) - T["ENG_FWD"]
     # --- empennage ---------------------------------------------------------------
     g["HT_LE_SWEEP"] = T["HT_LE"] * D2R
@@ -666,22 +717,58 @@ class ScaledTB:
     def __call__(self, p):
         d = np.asarray(p, dtype=np.float64) - self.c
         if self.flat:
+            # CFM56-7 "hamster pouch": the gearbox sits at the sides, so the lower cowl and the
+            # inlet lip are flat and the lower sides bulge.  Outer cowl (r > 1.5) everywhere;
+            # the inlet (r 1.38 .. 1.5) near the highlight, back to round at the fan face
             d = d.copy()
             r = np.hypot(d[..., 1], d[..., 2])
-            f = np.clip((-d[..., 2] / np.maximum(r, 1e-9) - 0.3) / 0.7, 0, 1) ** 2
-            g = np.clip((r - 1.47) / 0.2, 0, 1)
-            d[..., 2] *= 1 - self.flat * f * g
+            a = d[..., 0]
+            w = np.where(r >= 1.5, 1.0, np.clip((r - 1.38) / 0.12, 0, 1) * np.clip(1.0 - a / 1.1, 0, 1))
+            w = w * np.clip((5.2 - a) / 1.0, 0, 1)
+            down = np.clip(-d[..., 2] / np.maximum(r, 1e-9), 0, 1)
+            lim = r * (1.0 - self.flat)             # flat floor at this depth below the axis
+            zc = -d[..., 2]
+            k = np.maximum(0.06 * r, 1e-6)
+            zs = -k * np.logaddexp(-zc / k, -lim / k)          # smooth min(zc, lim)
+            zs = np.minimum(zs, zc)
+            d[..., 2] = np.where(zc > 0, -(zc + (zs - zc) * w), d[..., 2])
+            d[..., 1] *= 1.0 + 0.10 * self.flat / 0.16 * w * np.sin(np.pi * down) ** 2
         return to_blender(self.c + d * self.k)
 
     def normal(self, N):
         return vec_to_blender(np.asarray(N) / self.k)
 
 
+def inner_limit(p, margin=0.035):
+    """pull points (s, y, z) that would poke through the fuselage skin back inside it"""
+    p = np.asarray(p, dtype=np.float64).copy()
+    flat = p.reshape(-1, 3)
+    phi = np.linspace(0.0, 2 * math.pi, 721)
+    half = len(phi) // 2
+    keys = np.round(flat[:, 0] / 0.04).astype(np.int64)
+    for k in np.unique(keys):
+        m = keys == k
+        s = float(k) * 0.04
+        if s <= 0.05 or s > LENGTH * 0.25:
+            continue
+        y, z = fus_section(s, phi)
+        yl, zl = np.abs(y[:half + 1]), z[:half + 1]          # bottom -> right side -> top
+        o = np.argsort(zl)
+        w = np.interp(flat[m, 2], zl[o], yl[o], left=0.0, right=0.0)
+        lim = np.maximum(w - margin, 0.0)
+        yy = flat[m, 1]
+        flat[m, 1] = np.sign(yy) * np.minimum(np.abs(yy), lim)
+    return flat.reshape(p.shape)
+
+
 class CockpitTB:
     """787 flight-deck layout coordinates -> this type's flight deck (Blender frame)."""
 
     def __call__(self, p):
-        return to_blender(ck(p))
+        q = ck(p)
+        if TYPE != "b789":
+            q = inner_limit(q)
+        return to_blender(q)
 
     def normal(self, N):
         ks, ds, ky, kz, dz = CK

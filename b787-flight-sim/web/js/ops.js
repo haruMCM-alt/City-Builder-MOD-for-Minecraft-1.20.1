@@ -165,17 +165,29 @@ export class AirportOps {
     this.time = 0;
     const [fx, fz] = this._flow();
     for (const r of this.runways) { r.setFlow(fx, fz); r.occ = null; r.nextArr = 20 + this.t.rnd() * 60; }
-    // the middle of the day: most stands taken, turnarounds at every stage, a few arrivals
+    // the middle of the day: most stands taken, turnarounds at every stage (a few aircraft push
+    // back straight away), an arrival rolling out on every landing runway and more on final
+    const parked = [];
     for (const st of this.stands) {
       if (this.t.rnd() > 0.72) continue;
       const ac = this._newAircraft(st);
       this._parkAt(ac, st);
-      ac.state = 'PARK'; ac.timer = 0; ac.parkFor = 40 + this.t.rnd() * 900;
+      ac.state = 'PARK'; ac.timer = 0; ac.parkFor = 60 + this.t.rnd() * 840;
       ac.place(0);
       this.list.push(ac);
+      parked.push(ac);
     }
+    for (let i = parked.length - 1; i > 0; i--) { const j = Math.floor(this.t.rnd() * (i + 1)); [parked[i], parked[j]] = [parked[j], parked[i]]; }
+    parked.slice(0, 5).forEach((ac, i) => { ac.parkFor = 1 + i * 14; ac.timer = 0; });
     for (const r of this.runways.filter((q) => q.use !== 'dep')) {
-      for (const d of [9000, 17000]) this._spawnArrival(r, d);
+      const ac = this._spawnArrival(r, 1000);
+      if (ac) {
+        // already on the ground, slowing down in the second half of the runway
+        const f = 0.45 * r.len;
+        ac.x = r.thrX + r.lx * f; ac.z = r.thrZ + r.lz * f; ac.alt = 0; ac.vs = 0; ac.v = 30; ac.pitch = 0;
+        ac.gear = 0; ac.flap = 30; ac.state = 'ROLL'; r.occ = ac;
+      }
+      for (const d of [5000, 12000]) this._spawnArrival(r, d);
     }
   }
 

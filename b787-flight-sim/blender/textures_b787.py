@@ -217,9 +217,21 @@ def side_feature(fm, s_c, z_c, hs, ha, side, r, pad=0.05):
 # ---------------------------------------------------------------------------
 # Cockpit window outlines
 # ---------------------------------------------------------------------------
-FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
-              [(0.07, 0.70), (0.98, 0.55), (1.03, 1.25), (0.07, 1.36)]]   # front view (y, z), left
-SIDE_PANE_Z = (CZ(0.57), CZ(1.30))
+# 787: four large panes -- two front windshields and one big side window per side.
+# 737 / 767 (and 707 / 727 / 757): the classic Boeing six-window flight deck -- No. 1
+# windshield (flat glass, the bottom edges forming a shallow "V" at the centre post), No. 2
+# sliding side window, No. 3 small fixed aft window with its sill rising steeply aft.
+# Layout coordinates are the 787 flight deck's, mapped to the type (CK) so the panes sit where
+# the pilots' eyes are.
+SIX = G.TYPE in ("b738", "b763")
+if SIX:
+    FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
+                  [(0.07, 0.64), (0.80, 0.77), (0.84, 1.29), (0.07, 1.35)]]
+    SIDE_PANE_Z = (CZ(0.80), CZ(1.33))
+else:
+    FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
+                  [(0.07, 0.70), (0.98, 0.55), (1.03, 1.25), (0.07, 1.36)]]   # front view (y, z), left
+    SIDE_PANE_Z = (CZ(0.57), CZ(1.30))
 
 
 def skin_s_at(y_target, z_target, s_lo=None, s_hi=None):
@@ -239,6 +251,20 @@ def skin_s_at(y_target, z_target, s_lo=None, s_hi=None):
     return best if best is not None else s_hi
 
 
+def side_panes():
+    """side windows as polygons in (s, z)"""
+    if not SIX:
+        return [side_pane_poly()]
+    ks = G.CK[0]
+    zb, zt = SIDE_PANE_Z
+    sA = skin_s_at(FRONT_PANE[1][0] + 0.13, 0.5 * (zb + zt)) + 0.02
+    h = zt - zb
+    no2 = [(sA, zb), (sA + 0.62 * ks, zb + 0.13 * h), (sA + 0.55 * ks, zt - 0.03 * h), (sA + 0.03 * ks, zt)]
+    no3 = [(sA + 0.77 * ks, zb + 0.30 * h), (sA + 1.16 * ks, zb + 0.58 * h), (sA + 1.03 * ks, zt - 0.08 * h),
+           (sA + 0.73 * ks, zt - 0.04 * h)]
+    return [no2, no3]
+
+
 def side_pane_poly():
     ky, kz = G.CK[2], G.CK[3]
     s_fb = skin_s_at(FRONT_PANE[1][0] + 0.10 * ky, SIDE_PANE_Z[0]) + 0.02
@@ -252,12 +278,16 @@ def cockpit_window_masks(S, Y, Z, px):
     ay = np.abs(Y)
     glass = np.zeros(S.shape, np.float32)
     frame = np.zeros(S.shape, np.float32)
-    front = (S < CS(4.3))
-    d_front = sd_round_poly(ay, Z, FRONT_PANE, 0.07)
+    sps = side_panes()
+    s_side0 = min(p[0] for p in sps[0])
+    front = (S < CS(4.3)) if not SIX else (S < s_side0 + 0.05)
+    d_front = sd_round_poly(ay, Z, FRONT_PANE, 0.07 if not SIX else 0.05)
     d_front = np.where(front, d_front, 9.0)
-    sp = side_pane_poly()
-    d_side = sd_round_poly(S, Z, sp, 0.08)
-    d_side = np.where((ay > 0.95 * G.CK[2]) & (S < CS(5.3)), d_side, 9.0)
+    d_side = np.full(S.shape, 9.0)
+    for sp in sps:
+        ds = sd_round_poly(S, Z, sp, 0.08 if not SIX else 0.045)
+        d_side = np.minimum(d_side, ds)
+    d_side = np.where((ay > (0.95 * G.CK[2] if not SIX else FRONT_PANE[1][0] + 0.05)) & (S < CS(5.3) + (0.6 if SIX else 0.0)), d_side, 9.0)
     d = np.minimum(d_front, d_side)
     glass = aa(d, px)
     frame = aa(np.abs(d + 0.012) - 0.018, px) * (1 - glass * 0.0)

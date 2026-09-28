@@ -72,11 +72,39 @@
 | Mmo | 0.82 | 0.86 |
 | 座席（モデルの客室） | 164（2-2 ×12・3-3 ×152） | 240（2-2-2 ×24・2-3-2 ×216） |
 
+### 機種ごとの外観の特徴（調査結果）/ Type recognition features
+
+| | 737-800 | 767-300ER | 787-9（比較） |
+|---|---|---|---|
+| 機首 | 707・727 から受け継いだ「Section 41」の尖った機首。レドームの先端が低く、上面はぐっと立ち上がる | 757 と共通設計の丸く太い機首。短めのレドームの上に風防が高い位置にあり、上に「おでこ」 | 風防が機首の曲面に溶け込んだ滑らかな機首 |
+| 操縦室の窓 | 伝統の 6 枚窓：No.1 前面風防（平面ガラス。左右の下縁が中央支柱で浅い「V」字）、No.2 側面スライド窓、No.3 後方固定窓（下縁が後ろへ急に上がる）。707〜767 は同じ窓ガラスを使用。NG は 2005 年以降「眉毛窓（eyebrow）」なし | 737 と同じ 6 枚窓（No.1 風防 / No.2 スライド窓 / No.3 固定窓）。窓が相対的に小さく見える | 大きな 4 枚窓（複合材胴体のため窓枠を減らした） |
+| エンジン | CFM56-7B（ファン径 61 in = 1.55 m）。地上高を稼ぐため補機ギアボックスを 9 時方向へ移し、ナセル下面とインテーク下唇が平らな「ハムスターポーチ」形。主翼より大きく前・上に張り出し、パイロンが短い | CF6-80C2（ファン径 93 in = 2.36 m）。短いファンカウル（逆推力装置）の後ろにコアカウルが長く露出し、大きなコアノズルと排気プラグ | GEnx（ファン径 2.82 m）、細長い複合材ナセル、シェブロン付きノズル |
+| 主脚 | 2 輪、脚扉なし（タイヤの外側がシールに収まりホイールキャップが見える） | 4 輪ボギー（格納時は前上がりに傾く） | 4 輪ボギー |
+| その他 | ブレンデッド・ウイングレット、垂直尾翼前縁のドーサルフィン、角ばったテールコーンの APU 排気口 | 丸く左右対称のテールコーン、短く太い「葉巻」型胴体 | レイクド・ウイングチップ |
+
+調査に使った資料：
+[Simple Flying — 737 eyebrow windows](https://simpleflying.com/737-cockpit-eyebrow-windows/)、
+[Simple Flying — How Airbus noses differ to Boeing's](https://simpleflying.com/how-airbus-noses-differ-to-boeings/)、
+[Aircraft Recognition Guide — Boeing 737](https://www.aircraftrecognitionguide.com/boeing-737)、
+[Aircraft Recognition Guide — Boeing 767](https://www.aircraftrecognitionguide.com/boeing-767)、
+[Jalopnik — Why the 787 has four cockpit windows](https://www.jalopnik.com/2004883/why-boeing-787-has-four-cockpit-windows/)、
+[airplaneacademy.com — Why are 737 engines flat on the bottom?](https://airplaneacademy.com/why-are-737-engines-flat-on-the-bottom/)、
+[b737.org.uk — The Boeing 737 powerplant](http://www.b737.org.uk/powerplant.htm)、
+[b737.org.uk — Landing gear](http://www.b737.org.uk/landinggear.htm)、
+[PPG — 767 cockpit windows (No.1 windshield / No.2 sliding / No.3 fixed)](https://www.ppg.com/en-US/aerospace/product/Cockpit%20windows%20767%20airplanes/PLP0000016241)、
+[oat.aero — 737NG window heating (window numbering)](https://oat.aero/2023/04/29/boeing-737ng-general-familiarisation-window-heating/)、
+[Airliners.net — cockpit window sizes 707–767](https://www.airliners.net/forum/viewtopic.php?t=759645)、
+[Simple Flying — 757 vs 767 (common cockpit)](https://simpleflying.com/striking-differences-pilots-boeing-757-767/)、
+[Aircraft Commerce — CF6-80C2 specifications](https://www.aircraft-commerce.com/wp-content/uploads/aircraft-commerce-docs1/Aircraft%20guides/CF6-80C2/ISSUE%2048-CF6-80C2%20SPECS.pdf)、
+[Dimensions.com — Boeing 737-800](https://www.dimensions.com/element/boeing-737-800)
+
 ### 形状の作り方と近似 / Modelling notes
-* 胴体の機首・尾部の曲線は 787-9 の曲線を各機種の胴体幅・高さと「機首長・テールコーン長」に合わせて写像（737 の機首は専用の断面表で尖った形に）。
+* 機首：737 は専用の断面表（尖った Section 41）、767 は専用の断面表（丸い 757/767 型の機首と風防上の「おでこ」）。どちらも風防の区間で上側断面を丸から「V」字の平面寄りに変え、平面ガラスの No.1 風防と中央支柱を表現（`WS_ZONES`）。
+* 操縦室の窓：737 / 767 は 6 枚窓（`textures_b787.side_panes`）、787 は 4 枚窓。窓位置はパイロットの目の位置に合わせて配置。
+* エンジン：機種ごとのナセル外形（`NACELLES`）。737 はずんぐりした CFM56-7B 型で、ナセル下面とインテーク下唇を平らにし下側面をふくらませた「ハムスターポーチ」、主翼より前・上へ移動。767 は短いファンカウルと長く露出したコアカウル・大きな排気プラグの CF6-80C2 型。
+* 胴体の尾部の曲線は 787-9 の曲線を各機種の胴体幅・高さと「テールコーン長」に合わせて写像。
 * 主翼平面形（翼根弦・キンク位置・前後縁後退角）は機種ごとの値。重心位置は主脚の 1.6 m 前（25 % MAC）になるよう主翼の前後位置を決定。フラップ・スポイラー・スラットの分割位置は 787 の配置を翼幅比で写像。
-* エンジンは 787 の GEnx ナセル形状を軸方向・半径方向に縮尺（737 はナセル下面を平らに潰した「ハムスターポーチ」形状、シェブロン無し）。
-* コックピットの内装は 787 のレイアウトを各機種の機首に合わせて縮尺したもの（実機の 737NG / 767 の計器配置ではありません）。操縦窓の輪郭も同じ近似です。
+* コックピットの内装は 787 のレイアウトを各機種の機首に合わせて縮尺したもの（実機の 737NG / 767 の計器配置ではありません）。（操縦窓は上記のとおり機種ごと）
 * 飛行特性：翼面積・スパン・MAC・重量・推力・Mmo を機種ごとに切替え、脚のばね定数と慣性モーメントは重量・寸法で比例縮尺。空力係数は 787 と共通の推定値です。
 
 ### 出典（737-800 / 767-300ER）
