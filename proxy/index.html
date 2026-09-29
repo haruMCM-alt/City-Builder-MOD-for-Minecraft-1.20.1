@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web Proxy</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --text: #1d2330;
+    --muted: #6b7280;
+    --border: #d6d9df;
+    --accent: #2f6fed;
+    --accent-text: #ffffff;
+    --error: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14161b;
+      --panel: #1d2028;
+      --text: #e6e8ec;
+      --muted: #9aa1ad;
+      --border: #333844;
+      --accent: #5b8dff;
+      --accent-text: #0b0d12;
+      --error: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  form#nav { display: flex; flex: 1 1 320px; gap: 8px; min-width: 0; }
+  input {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: default; }
+  details { width: 100%; }
+  summary { cursor: pointer; color: var(--muted); }
+  .settings { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: center; }
+  .settings label { color: var(--muted); }
+  .hint { width: 100%; margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+  #status { width: 100%; margin: 0; font-size: 12px; color: var(--muted); min-height: 1em; }
+  #status.error { color: var(--error); }
+  main { position: relative; flex: 1; }
+  iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+  #empty {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    text-align: center;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<header>
+  <form id="nav" autocomplete="off">
+    <button type="button" id="back" title="戻る" aria-label="戻る">←</button>
+    <input id="url" type="text" inputmode="url" placeholder="URL または検索ワードを入力" aria-label="URL">
+    <button type="submit" class="primary">開く</button>
+    <button type="button" id="newtab" title="新しいタブで開く">別タブ</button>
+  </form>
+  <details id="settings-panel">
+    <summary>設定</summary>
+    <div class="settings">
+      <label for="worker">中継サーバー URL</label>
+      <input id="worker" type="url" placeholder="https://your-proxy.example.workers.dev">
+      <button type="button" id="save">保存</button>
+      <p class="hint">proxy/worker.js をデプロイした URL を入力します。ACCESS_KEY を設定した場合は末尾に /キー を付けてください (例: https://xxx.workers.dev/mykey)。</p>
+    </div>
+  </details>
+  <p id="status" role="status"></p>
+</header>
+<main>
+  <div id="empty">URL を入力して「開く」を押してください。</div>
+  <iframe id="view" title="プロキシ表示" referrerpolicy="no-referrer" hidden></iframe>
+</main>
+<script>
+(() => {
+  const STORAGE_KEY = "proxy.workerUrl";
+  const $ = (id) => document.getElementById(id);
+  const urlInput = $("url");
+  const workerInput = $("worker");
+  const frame = $("view");
+  const status = $("status");
+  const history = [];
+
+  const storage = {
+    get() { try { return localStorage.getItem(STORAGE_KEY) || ""; } catch { return ""; } },
+    set(v) { try { localStorage.setItem(STORAGE_KEY, v); } catch {} },
+  };
+
+  function setStatus(message, isError = false) {
+    status.textContent = message;
+    status.classList.toggle("error", isError);
+  }
+
+  function workerBase() {
+    return workerInput.value.trim().replace(/\/+$/, "");
+  }
+
+  function normalizeTarget(input) {
+    const value = input.trim();
+    if (!value) return null;
+    if (/^https?:\/\//i.test(value)) return value;
+    // スペースを含まずドットを含むものはドメインとみなす
+    if (!/\s/.test(value) && /^[^\s/]+\.[^\s/]{2,}/.test(value)) return "https://" + value;
+    return "https://www.bing.com/search?q=" + encodeURIComponent(value);
+  }
+
+  function proxiedUrl(target) {
+    return `${workerBase()}/proxy/${target}`;
+  }
+
+  function checkReady() {
+    if (!workerBase()) {
+      $("settings-panel").open = true;
+      workerInput.focus();
+      setStatus("先に「設定」で中継サーバー URL を入力してください。", true);
+      return false;
+    }
+    try {
+      new URL(workerBase());
+    } catch {
+      setStatus("中継サーバー URL が不正です。", true);
+      return false;
+    }
+    return true;
+  }
+
+  function open(target, { push = true } = {}) {
+    if (!checkReady()) return;
+    const normalized = normalizeTarget(target);
+    if (!normalized) return;
+    urlInput.value = normalized;
+    if (push) history.push(normalized);
+    $("back").disabled = history.length < 2;
+    $("empty").hidden = true;
+    frame.hidden = false;
+    frame.src = proxiedUrl(normalized);
+    setStatus("読み込み中…");
+  }
+
+  frame.addEventListener("load", () => setStatus(""));
+
+  $("nav").addEventListener("submit", (e) => {
+    e.preventDefault();
+    open(urlInput.value);
+  });
+
+  $("back").addEventListener("click", () => {
+    if (history.length < 2) return;
+    history.pop();
+    open(history[history.length - 1], { push: false });
+  });
+
+  $("newtab").addEventListener("click", () => {
+    if (!checkReady()) return;
+    const target = normalizeTarget(urlInput.value);
+    if (target) window.open(proxiedUrl(target), "_blank", "noopener");
+  });
+
+  $("save").addEventListener("click", () => {
+    storage.set(workerBase());
+    setStatus("保存しました。");
+    $("settings-panel").open = false;
+  });
+
+  workerInput.value = storage.get();
+  $("back").disabled = true;
+  if (!workerInput.value) $("settings-panel").open = true;
+
+  // index.html?url=https://example.com で直接開ける
+  const initial = new URLSearchParams(location.search).get("url");
+  if (initial) open(initial);
+})();
+</script>
+</body>
+</html>
