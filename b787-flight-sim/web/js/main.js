@@ -5,7 +5,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { FlightModel, FLAPS, SPEC } from './flightmodel.js';
 import { Systems, AUTOBRAKE } from './systems.js';
 import { configureTerrain, terrainHeight } from './terrain.js';
-import { World, HDR } from './world.js';
+import { World, HDR, LIGHT } from './world.js';
 import { AircraftVisual } from './aircraft.js';
 import { Instruments } from './instruments.js';
 import { CameraRig, VIEW_NAMES } from './camera.js';
@@ -136,8 +136,10 @@ class App {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.75;
+    // AgX: a film-like curve that keeps hues (ACES pushes skies to cyan, grass to lime and
+    // bright paint to a blue-white); the contrast "look" is added in the lens pass
+    renderer.toneMapping = THREE.AgXToneMapping;
+    renderer.toneMappingExposure = 1.35;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     this.scene = new THREE.Scene();
@@ -1499,7 +1501,7 @@ class App {
     const hdr = !!this.post && this.quality !== 'low';
     HDR.uLin.value = hdr ? 1 : 0;
     // clouds / smoke: lit like white surfaces; point lights: bright enough to bloom at night
-    HDR.uGain.value = this.world.sun.intensity * 0.85 + 0.45;
+    HDR.uGain.value = (this.world.sun.intensity / (LIGHT.dayK || 1) * 0.85 + 0.45) / (this.world.expK || 1);
     HDR.uGainL.value = 1.1 / Math.max(this.renderer.toneMappingExposure, 0.3);
     if (hdr) {
       const rainAmt = this.world.rain || 0;
@@ -1518,7 +1520,7 @@ class App {
     o.dir.copy(w.sunDir);
     o.color.copy(w.sun.color);
     const el = Math.asin(THREE.MathUtils.clamp(w.sunDir.y, -1, 1)) * 180 / Math.PI;
-    o.strength = THREE.MathUtils.clamp(w.sun.intensity / 3.4, 0, 1) * THREE.MathUtils.smoothstep(el, -1.5, 2);
+    o.strength = THREE.MathUtils.clamp(w.sun.intensity / (LIGHT.dayK || 1) / 3.4, 0, 1) * THREE.MathUtils.smoothstep(el, -1.5, 2);
     return o;
   }
 

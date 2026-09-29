@@ -150,3 +150,46 @@ roughnessFactor = clamp(roughnessFactor * (0.85 + 0.3 * fcWet), 0.03, 1.0);`)
   m.customProgramCacheKey = () => (allLit ? 'facade-lit' : 'facade-wx');
   m.needsUpdate = true;
 }
+
+// Airport structures (jet bridges, terminal cladding, hangars, masts): nothing outdoors stays
+// factory-clean. World-space weathering: rain streaks running down vertical faces from the
+// top edges, dust on upward faces, grime splashed up from the apron at the foot of walls,
+// and slightly uneven paint / panel tone and gloss.
+export function patchStructure(m) {
+  if (!m || m.userData.structure) return;
+  m.userData.structure = true;
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (sh, r) => {
+    if (prev) prev(sh, r);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vStP; varying vec3 vStN;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+vStP = (modelMatrix * vec4(transformed, 1.0)).xyz;
+vStN = normalize(mat3(modelMatrix) * objectNormal);`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\nvarying vec3 vStP; varying vec3 vStN;\n${NOISE_GLSL}\nfloat stMott = 0.5;`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+{
+  vec3 q = vStP;
+  vec3 n = normalize(vStN);
+  float px = length(fwidth(q));
+  float fine = 1.0 - smoothstep(0.05, 0.6, px);
+  stMott = shNoise(q * 0.35) * 0.55 + shNoise(q * 1.7) * 0.3 + shNoise(q * 7.0) * 0.15 * fine;
+  float vert = 1.0 - abs(n.y);
+  // streaks: long in y, narrow across; stronger just below ledges (period ~ storey height)
+  vec2 hz = abs(n.x) > abs(n.z) ? q.zy : q.xy;
+  float st = shNoise(vec3(hz.x * 2.2, hz.y * 0.12, 3.1)) * 0.7 + shNoise(vec3(hz.x * 7.0, hz.y * 0.3, 8.4)) * 0.3;
+  float ledge = 0.55 + 0.45 * smoothstep(0.35, 0.0, fract(q.y / 4.2));
+  float streak = smoothstep(0.52, 0.85, st) * vert * ledge;
+  float dust = smoothstep(0.3, 0.9, n.y) * (0.5 + 0.5 * shNoise(q * 0.8));
+  float splash = vert * smoothstep(1.2, 0.0, q.y - floor(q.y / 400.0) * 0.0) * (0.6 + 0.4 * shNoise(q * 3.0));
+  float g = 0.07 * (stMott - 0.5) * 2.0 + 0.16 * streak + 0.1 * dust + 0.14 * splash;
+  diffuseColor.rgb *= clamp(1.0 - g, 0.6, 1.08);
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.02, 0.99, 0.94), 0.5 * dust + 0.4 * streak);
+}`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+roughnessFactor = clamp(roughnessFactor * (0.85 + 0.35 * stMott), 0.05, 1.0);`);
+  };
+  m.customProgramCacheKey = ((k) => () => (k ? k() : '') + '|structure')(m.customProgramCacheKey?.bind(m));
+  m.needsUpdate = true;
+}

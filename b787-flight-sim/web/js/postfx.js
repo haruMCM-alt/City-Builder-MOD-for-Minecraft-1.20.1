@@ -124,11 +124,17 @@ const LensShader = {
         col = clamp((col + (n + s + e + w) * wt) / (1.0 + 4.0 * wt), 0.0, 1.0);
       }
       if (uGrade > 0.0) {
-        // gentle filmic grade: a touch more saturation, cool shadows, warm highlights
-        float lg = dot(col, vec3(0.2126, 0.7152, 0.0722));
-        vec3 g = mix(vec3(lg), col, 1.0 + 0.12 * uGrade);
-        g += (vec3(-0.012, -0.002, 0.014) * (1.0 - lg) + vec3(0.012, 0.004, -0.01) * lg) * uGrade;
-        g = mix(g, g * g * (3.0 - 2.0 * g), 0.18 * uGrade);
+        // photographic "look" on top of AgX (which is deliberately flat): a film S-curve with a
+        // soft toe (deep, not crushed, shadows), a little saturation back, neutral mid-greys,
+        // slightly cool shadows and warm highlights as in daylight photographs
+        vec3 g = col;
+        g = mix(g, g * g * (3.0 - 2.0 * g), 0.42 * uGrade);
+        g = pow(max(g, 0.0), vec3(mix(1.0, 1.06, uGrade)));
+        float lg = dot(g, vec3(0.2126, 0.7152, 0.0722));
+        g = mix(vec3(lg), g, 1.0 + 0.16 * uGrade);
+        g += (vec3(-0.008, -0.002, 0.01) * (1.0 - lg) + vec3(0.01, 0.004, -0.008) * lg) * uGrade;
+        // daylight white balance: the camera neutralises the blue of the sky fill a little
+        g *= mix(vec3(1.0), vec3(1.025, 1.0, 0.955), uGrade);
         col = clamp(g, 0.0, 1.0);
       }
       // natural vignette (cos^4 falloff approximation)
@@ -184,7 +190,7 @@ export class PostFX {
     this.ultra = on;
     this.ssao.enabled = this.rays.enabled = this.flare.enabled = on;
     this.lens.uniforms.uSharp.value = on ? 0.55 : 0;
-    this.lens.uniforms.uGrade.value = on ? 1 : 0;
+    this.lens.uniforms.uGrade.value = 1;          // the look belongs to the tone curve: every quality
     const gl = this.renderer.getContext();
     const samples = on ? Math.min(8, gl.getParameter(gl.MAX_SAMPLES) || 4) : 4;
     for (const rt of [this.composer.renderTarget1, this.composer.renderTarget2]) {

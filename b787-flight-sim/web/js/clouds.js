@@ -121,13 +121,25 @@ float heightFrac(float y) { return clamp((y - uBase) / max(uTop - uBase, 1.0), 0
 
 float density(vec3 p, bool cheap) {
   float h = heightFrac(p.y);
-  // cumulus profile: rounded bottom, anvil-less taper at the top
-  float prof = smoothstep(0.0, 0.12, h) * smoothstep(1.0, 0.55, h);
   vec3 q = p + vec3(uWind.x, 0.0, uWind.y) * uTime;
+  // weather map: every cloud gets its own size and height (small fair-weather cumulus next to
+  // towering ones), so the field does not read as one repeated puff
+  float wm = texture(uShape, vec3(q.x / 23000.0, 0.21, q.z / 23000.0)).r;
+  float wm2 = texture(uShape, vec3(q.z / 9100.0 + 0.5, 0.63, -q.x / 9100.0)).r;
+  float top = mix(0.28, 1.0, smoothstep(0.2, 0.85, wm * 0.65 + wm2 * 0.35));
+  float hh = h / top;
+  // cumulus profile: flat, sharp base (the condensation level), cauliflower top
+  float prof = smoothstep(0.0, 0.035, h) * smoothstep(1.0, 0.45, hh);
+  // two shape octaves at unrelated scales and orientations break the texture tiling
   float s = texture(uShape, q * vec3(1.0 / 7000.0, 1.0 / 3400.0, 1.0 / 7000.0)).r;
+  vec3 r = vec3(q.x * 0.8 - q.z * 0.6, q.y, q.x * 0.6 + q.z * 0.8);
+  float s2 = texture(uShape, r * vec3(1.0 / 16300.0, 1.0 / 5200.0, 1.0 / 16300.0) + 0.41).r;
+  s = s * 0.62 + s2 * 0.38;
   // large-scale coverage variation (cloud streets / gaps)
   float cov = texture(uShape, q * vec3(1.0 / 38000.0, 0.0, 1.0 / 38000.0) + 0.37).r;
   float c = mix(clamp(uCover * (0.55 + 0.9 * cov), 0.0, 1.0), 1.0, smoothstep(0.85, 1.0, uCover));   // decks have no holes
+  float deckK = smoothstep(0.85, 1.0, uCover);
+  prof = mix(prof, smoothstep(0.0, 0.08, h) * smoothstep(1.0, 0.6, h), deckK);
   float base = remap(s * prof, 1.0 - c, 1.0, 0.0, 1.0);
   if (base <= 0.0 || cheap) return max(base, 0.0) * uDensity;
   float d = texture(uDetail, q * (1.0 / 900.0) + vec3(0.0, uTime * 0.004, 0.0)).r;
@@ -199,11 +211,14 @@ void main() {
       if (firstHit < 0.0) firstHit = t;
       float od = lightMarch(p);
       // multiple scattering approximated by extra, weaker-extinction octaves
-      float beer = exp(-od) + 0.35 * exp(-od * 0.25) + 0.12 * exp(-od * 0.06);
+      // (octaves: Wrenninge et al.; the higher ones carry the light deep into the cloud, which
+      // is what keeps real cumulus white instead of grey)
+      float beer = exp(-od) + 0.5 * exp(-od * 0.25) * mix(0.75, 1.0, phase * 0.25) + 0.25 * exp(-od * 0.06);
       float powder = 1.0 - exp(-d * ds * 2.0);
       float sun = beer * mix(1.0, powder, 0.3) * phase;
       float h = heightFrac(p.y);
-      vec3 amb = mix(uAmbBot, uAmbTop, h);
+      // sky light: bright from above, darker (ground-bounce) under the flat base
+      vec3 amb = mix(uAmbBot, uAmbTop, smoothstep(0.0, 0.6, h)) * (0.75 + 0.25 * exp(-od * 0.15));
       vec3 S = (uSunCol * sun + amb) * d;
       float a = exp(-d * ds);
       // energy-conserving integration of in-scattered light over the step

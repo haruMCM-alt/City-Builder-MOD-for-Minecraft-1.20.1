@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL, terrainHeight } from './terrain.js';
-import { patchFacade } from './shading.js';
+import { patchFacade, patchStructure } from './shading.js';
 import { GROUND_GLSL } from './ground.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
 import { clamp, smoothstep, lerp, mulberry32, DEG, northAt } from './util.js';
@@ -28,6 +28,12 @@ export const WEATHER = {
 
 // runway / ground wetness (0 dry .. 1 soaked), shared by the pavement shaders
 export const WET = { uWet: { value: 0 } };
+
+// Daylight balance. On a clear day the direct sun gives ~5x the illuminance of the whole sky;
+// the old balance (sun 3.4 against the sky IBL + a hemisphere fill) was closer to 1 : 1, which
+// is what made shadows faint and everything bluish-white. The sun is raised, the fill cut and
+// the exposure lowered to match, so a sunlit white surface stays where it was on screen.
+export const LIGHT = { SUN_K: 2.5, EXP_K: 0.58, HEMI_K: 0.35, dayK: 1 };
 
 // ------------------------------------------------------------------ textures
 function noiseCanvas(size, seed, channels = 3, scales = [8, 32, 4]) {
@@ -211,7 +217,10 @@ uniform float uWet;`)
   float slab = gHash(sl);
   float newer = step(0.93, gHash(sl + 7.0));
   vec2 fj = abs(fr - 0.5) * 7.5;
-  float joint = 1.0 - smoothstep(0.012, 0.03 + px * 0.5, 3.75 - max(fj.x, fj.y));
+  // 2 cm sealed joint: coverage scales with the pixel footprint, so from a distance the joints
+  // fade to a faint grid instead of drawing thick black lines
+  float jd = 3.75 - max(fj.x, fj.y);
+  float joint = (1.0 - smoothstep(0.01, 0.01 + px, jd)) * min(1.0, 0.03 / max(px, 1e-4));
   float broom = gNoise(vec2(p.x * 1.3, p.y * 60.0)) * 0.6 + gNoise(vec2(p.x * 3.1, p.y * 140.0)) * 0.4;
   float sand = gNoise(p * 120.0);
   float blot = gFbm(p * 0.06);
@@ -230,7 +239,7 @@ uniform float uWet;`)
   col = mix(col, vec3(0.08, 0.075, 0.07), oil * 0.55);
   col = mix(col, vec3(0.30, 0.21, 0.14), rust * 0.35);
   col *= 1.0 - 0.18 * tyre;
-  col = mix(col, vec3(0.05, 0.05, 0.05), max(joint * 0.85 * mm, ccr * 0.8));
+  col = mix(col, vec3(0.07, 0.068, 0.064), max(joint * 0.8, ccr * 0.8));
   diffuseColor.rgb = col;
   rwRubber = 0.5 * oil;
   gH = (broom - 0.5) * 0.0012 * aa + (sand - 0.5) * 0.0006 * aa - joint * 0.008 * mm - ccr * 0.003;
@@ -623,6 +632,9 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
         if (['W_Asphalt', 'W_TaxiAsphalt', 'W_Shoulder', 'W_MarkWhite', 'W_MarkYellow', 'W_Concrete', 'W_Road'].includes(m.name)) patchPavement(m);
         if (m.name.startsWith('W_facade_') || m.name === 'W_GlassTower' || m.name === 'W_Curtain') patchFacade(m, !!m.userData.allLit);
         if (m.name === 'W_Roof' || m.name === 'W_PaintWhite') m.color.multiplyScalar(0.72);
+        if (/^W_(PaintWhite|PaintGrey|MetalPanel|Steel|Roof|Tank|BridgeWhite|HangarDoor|PAPIBox|TowerOrange|SignYellow|Granite|Skytree)$/.test(m.name)) patchStructure(m);
+        // openings (jet bridge cab, hangar interiors) are dim, not a pure black hole
+        if (m.name === 'W_Dark') { m.color.setRGB(0.045, 0.046, 0.048); m.roughness = 0.8; }
       }
       o.receiveShadow = true;
       const n = o.name;
@@ -958,6 +970,7 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
   // state for the volumetric cloud pass (null = sprite clouds)
   volumetricState(on) {
     const W = this.weather;
+    this._volOn = on;
     if (this.clouds) this.clouds.visible = !on;
     if (this.deck) this.deck.visible = !on;
     if (!on) return null;
@@ -968,12 +981,33 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
     v.base = W.base; v.top = W.top + (W.overcast > 0.5 ? 0 : 900);
     v.cover = Math.min(1, W.cover * 0.95 + 0.05);
     v.sunDir.copy(this.sunDir || new THREE.Vector3(0, 1, 0));
-    v.sunCol.copy(this.sun.color); v.sunI = this.sun.intensity * 1.6;
-    v.ambTop.copy(h.color).multiplyScalar(h.intensity * 3.0 + this.moon.intensity * 0.5);
-    v.ambBot.copy(h.groundColor).lerp(h.color, 0.6).multiplyScalar(h.intensity * 2.4);
+    // the sky fill on the clouds is not reduced with the ground fill (compensated for the
+    // lower exposure)
+    const ek = 1 / (this.expK || 1);
+    // sunlit sides: the real sun (same light as the ground), so the evening colour survives
+    // instead of burning out to white
+    v.sunCol.copy(this.sun.color); v.sunI = this.sun.intensity * 1.25;
+    const hi = this.hemiBase ?? h.intensity;
+    // at night the tops only get moon/starlight: dim grey shapes, not white ones
+    // the sky dims much faster than the hemisphere fill around sunset: clouds would glow white
+    // against a dark sky; instead they take the sky's level and the evening colour of the horizon
+    const el = this.elDeg ?? 30;
+    const nk = lerp(1, 0.3, this.night) * lerp(0.3, 1, smoothstep(-3, 12, el));
+    v.ambTop.copy(h.color).multiplyScalar((hi * 3.0 + this.moon.intensity * 0.5) * ek * nk);
+    v.ambBot.copy(h.groundColor).lerp(h.color, 0.6).multiplyScalar(hi * 2.4 * ek * nk);
+    const dusk = smoothstep(14, 2, el) * smoothstep(-7, -1, el);
+    if (dusk > 0) {
+      const fc = this.scene.fog.color, fl = Math.max(0.05, (fc.r + fc.g + fc.b) / 3);
+      const tint = this._tint || (this._tint = new THREE.Color());
+      for (const c of [v.ambTop, v.ambBot]) {
+        const l = (c.r + c.g + c.b) / 3;
+        tint.setRGB(fc.r / fl * l, fc.g / fl * l, fc.b / fl * l);
+        c.lerp(tint, 0.6 * dusk);
+      }
+    }
     // light pollution from the city lights up the cloud base at night
-    v.ambBot.r += 0.05 * this.night; v.ambBot.g += 0.038 * this.night; v.ambBot.b += 0.028 * this.night;
-    v.ambTop.r += 0.012 * this.night; v.ambTop.g += 0.012 * this.night; v.ambTop.b += 0.016 * this.night;
+    v.ambBot.r += 0.03 * this.night; v.ambBot.g += 0.022 * this.night; v.ambBot.b += 0.015 * this.night;
+    v.ambTop.r += 0.004 * this.night; v.ambTop.g += 0.004 * this.night; v.ambTop.b += 0.006 * this.night;
     v.haze.copy(this.scene.fog.color);
     v.vis = W.vis * 0.9;
     v.density = 0.02 + 0.03 * W.overcast;
@@ -1113,6 +1147,7 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
     const sd = this.sunDirection(this.tod, camera.position.x, camera.position.z);
     this.sunDir = sd.v;
     const elDeg = sd.el / DEG;
+    this.elDeg = elDeg;
     const day = smoothstep(-6, 8, elDeg);
     this.night = 1 - smoothstep(-4, 6, elDeg);
     const golden = smoothstep(25, 2, elDeg) * day;
@@ -1121,16 +1156,31 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
     su.sunPosition.value.copy(sd.v);
     su.turbidity.value = 1.9 + 7 * W.overcast + golden * 2;
     su.rayleigh.value = 0.95 + golden * 1.4 + (1 - day) * 1.5;
+    // the sky shader's own flat cloud layer (three's default coverage 0.4 drew it in every
+    // weather, a second, painted-looking layer): only as the low-quality stand-in for the
+    // volumetric clouds, and then following the weather
+    if (su.cloudCoverage) { su.cloudCoverage.value = this._volOn ? 0 : W.cover * 0.7; su.cloudDensity.value = this._volOn ? 0 : 0.4; }
     // sun light
     const sunCol = new THREE.Color().setRGB(1, lerp(0.96, 0.62, golden), lerp(0.92, 0.38, golden));
     this.sun.color.copy(sunCol);
-    this.sun.intensity = 3.4 * day * (1 - 0.7 * W.overcast);
+    // clear-sky balance only while the sun is up and not hidden by an overcast
+    const kSun = lerp(1, LIGHT.SUN_K, day * (1 - W.overcast));
+    LIGHT.dayK = kSun;
+    // atmospheric extinction along the sun's path (Kasten-Young air mass, Meinel transmittance,
+    // normalised to the sun overhead): ~0.9 at 45 deg, 0.45 at 10 deg, 0.25 at 5 deg - the
+    // evening light is weaker as well as redder, so sunlit clouds keep their colour
+    const elC = Math.max(elDeg, 0.3);
+    const am = 1 / (Math.sin(elC * DEG) + 0.50572 * Math.pow(elC + 6.07995, -1.6364));
+    const tSun = Math.pow(0.7, Math.pow(am, 0.678)) / 0.7;
+    this.sunT = tSun;
+    this.sun.intensity = 3.4 * day * (1 - 0.7 * W.overcast) * kSun * tSun;
     const f = this._shadowFocus(camera, focus || camera.position, sd.v);
     const sr = this._shadowExt;
     this.sun.position.set(f.x + sd.v.x * sr.dist, f.y + sd.v.y * sr.dist, f.z + sd.v.z * sr.dist);
     this.sun.target.position.copy(f);
     this.sun.target.updateMatrixWorld();
-    this.hemi.intensity = lerp(0.07, 0.55, day) * (1 + 0.4 * W.overcast);
+    this.hemiBase = lerp(0.07, 0.55, day) * (1 + 0.4 * W.overcast);
+    this.hemi.intensity = this.hemiBase * lerp(1, LIGHT.HEMI_K, (kSun - 1) / (LIGHT.SUN_K - 1));
     this.hemi.color.setRGB(lerp(0.25, 0.75, day), lerp(0.3, 0.83, day), lerp(0.45, 1.0, day));
     this.hemi.groundColor.setRGB(lerp(0.04, 0.22, day), lerp(0.04, 0.2, day), lerp(0.05, 0.15, day));
     this.moon.intensity = this.night * 0.25;
@@ -1155,7 +1205,12 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
     if (key !== this._envKey) {
       this._envKey = key;
       if (this.envRT) this.envRT.dispose();
+      // the sun is the DirectionalLight (with shadows): keep its disc out of the sky light, or
+      // it leaks into every shadow as "ambient" and flattens the whole image
+      const su2 = this.sky.material.uniforms;
+      if (su2.showSunDisc) su2.showSunDisc.value = 0;
       this.envRT = this.pmrem.fromScene(this.envScene, 0.02);
+      if (su2.showSunDisc) su2.showSunDisc.value = 1;
       this.scene.environment = this.envRT.texture;
       this.scene.environmentIntensity = lerp(0.12, 1.0, day) * (1 - 0.3 * W.overcast);
     }
@@ -1204,6 +1259,9 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
       this.deck.material.color.setRGB(0.62 * day + 0.03, 0.65 * day + 0.03, 0.7 * day + 0.04);
       this.deck.material.map.offset.set(camera.position.x / 3500, -camera.position.z / 3500);
     }
-    this.renderer.toneMappingExposure = lerp(0.95, 0.32, day);
+    // AgX (ACES had a built-in x1/0.6); lower in the stronger clear-day sun
+    this.expK = lerp(1, LIGHT.EXP_K, (kSun - 1) / (LIGHT.SUN_K - 1));
+    // the eye / camera adapts only part of the way to the dimmer low sun
+    this.renderer.toneMappingExposure = lerp(0.95, 0.32, day) * 1.8 * this.expK * Math.pow(lerp(1, this.sunT, day), -0.55);
   }
 }
