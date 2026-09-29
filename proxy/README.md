@@ -1,46 +1,69 @@
 # Web プロキシ
 
-URL を入力すると、中継サーバー経由でページを表示する Web プロキシです。
+`index.html` ひとつで動く Web プロキシです。サーバーの準備は不要で、ファイルを開くだけで使えます。
 
 | ファイル | 役割 |
 | --- | --- |
-| `index.html` | 閲覧用ページ (URL バー + 表示フレーム)。ローカルで開くか GitHub Pages などに置いて使う |
-| `worker.js` | 中継サーバー (Cloudflare Workers)。ページを取得し、リンク・画像・CSS などの URL をプロキシ経由に書き換える |
-| `wrangler.toml` | Workers のデプロイ設定 |
+| `index.html` | プロキシ本体 (これだけで動作) |
+| `relay-worker.js`, `wrangler.toml` | 任意。公開中継サーバーが不安定なときに使う自前の中継サーバー (Cloudflare Workers) |
 
-ブラウザの制限 (CORS / X-Frame-Options) により HTML だけでは他サイトを取得できないため、中継サーバーが必要です。
+## しくみ
 
-## セットアップ
+ブラウザは他サイトの HTML を直接読み込めない (CORS 制限) ため、公開されている CORS 中継サーバー経由でページを取得します。取得した HTML のリンク・画像・CSS を書き換えて、サンドボックス化した iframe に表示します。
 
-1. [Cloudflare](https://dash.cloudflare.com/) の無料アカウントを作成
-2. このフォルダでデプロイ
+- 中継サーバーは上から順に試し、失敗したら自動で次に切り替えます
+- ページ内のリンクのクリックやフォーム送信も、中継経由で開き直します
+- Shift_JIS / EUC-JP などの日本語ページにも対応しています
 
-   ```bash
-   npx wrangler login
-   npx wrangler deploy
-   ```
+## YouTube
 
-   表示された `https://web-proxy.<アカウント>.workers.dev` が中継サーバー URL です。
-3. (推奨) 他人に使われないようアクセスキーを設定
+YouTube の URL (`youtube.com`, `youtu.be`, `/shorts/` など) を開くと、専用の画面に切り替わります。
 
-   ```bash
-   npx wrangler secret put ACCESS_KEY
-   ```
+- **検索**: YouTube の検索結果を中継経由で取得して一覧表示します (ショートを含む)
+- **再生**: 動画をクリックすると埋め込みプレイヤーで再生します
+  - 既定は `youtube-nocookie.com` の埋め込みです
+  - 設定で「Invidious 経由」を選び、インスタンス URL を入れると、動画データを Invidious サーバー経由で再生します
+- 動画 URL を直接開いた場合は、タイトルで検索した結果を関連動画として表示します
 
-   設定後は `https://web-proxy.<アカウント>.workers.dev/<キー>` を中継サーバー URL として使います。
-4. `index.html` をブラウザで開き、「設定」に中継サーバー URL を入力して「保存」
+> **注意**: `index.html` をダブルクリックして `file://` で開くと、YouTube の埋め込みが「エラー 153」になることがあります。GitHub Pages などに置いて `https://` で開くか、Invidious 経由に切り替えてください。
 
 ## 使い方
 
-- URL (`example.com` など) を入力して「開く」。URL でない文字列は Bing で検索します
-- 「別タブ」でフレームを使わず新しいタブに表示します (フレーム内で崩れるサイト向け)
-- `index.html?url=https://example.com` で直接開くこともできます
-- 中継サーバーへ直接アクセスする場合は `<中継サーバー URL>/proxy/https://example.com/`
+1. `index.html` をブラウザで開きます (GitHub Pages に置くのがおすすめです)
+2. URL (`example.com` など) か検索ワードを入れて「開く」を押します。URL でない文字列は Bing で検索します
+3. `index.html?url=https://example.com` の形で、開くページを直接指定することもできます
+
+### 設定
+
+| 項目 | 内容 |
+| --- | --- |
+| 中継サーバー | 「自動」は上から順に試します。特定の中継サーバーに固定することもできます |
+| カスタム中継 | 自分の中継サーバーの URL テンプレートです。`{url}` か `{enc}` (URL エンコード) を含めます |
+| 画像・CSS も中継経由 | オフにすると、画像や CSS は元のサイトから直接読み込みます (速いが、ブロックされていると表示されない) |
+| JavaScript を実行 | オンにすると、ページのスクリプトを実行します。動くサイトが増える一方、崩れるサイトもあります |
+| YouTube 再生 | 埋め込み (youtube-nocookie) か Invidious 経由かを選べます |
+
+## 公開中継サーバーが使えないとき
+
+無料の公開中継サーバーは、混雑や制限で止まることがよくあります。安定して使いたい場合は `relay-worker.js` を自分でデプロイして、カスタム中継に設定してください (Cloudflare の無料アカウントで使えます)。
+
+```bash
+cd proxy
+npx wrangler login
+npx wrangler deploy
+# (任意) 他人に使われないようにキーを設定
+npx wrangler secret put ACCESS_KEY
+```
+
+カスタム中継に設定する値:
+
+- キーなし: `https://cors-relay.<アカウント>.workers.dev/?url={enc}`
+- キーあり: `https://cors-relay.<アカウント>.workers.dev/?key=<キー>&url={enc}`
 
 ## 制限事項
 
-- JavaScript が実行時に送る通信 (fetch / XHR / WebSocket) は書き換えないため、動的なサイト (YouTube、SNS など) は正しく動かないことがあります
-- ログインが必要なサイトの Cookie は基本的に引き継がれません
-- 閲覧先サイトからは Cloudflare の IP でアクセスしているように見えます。通信内容は中継サーバーを通るため、自分でデプロイしたサーバー以外は使わないでください
-- ローカルネットワーク (`localhost`, `192.168.x.x` など) への接続はブロックしています
+- 公開中継サーバーを使うと、閲覧したページの内容がその運営者を通ります。ログインやパスワードの入力には使わないでください
+- corsfix は `localhost` から開いたときだけ使えます
+- ログインが必要なサイトや、動的なサイト (SNS など) は正しく動かないことがあります
+- YouTube の埋め込み再生は YouTube のサーバーに直接つながります。YouTube 自体がネットワークでブロックされている環境では、Invidious 経由を使ってください
 - 学校・職場などのネットワークで使う場合は、その利用規約に従ってください
