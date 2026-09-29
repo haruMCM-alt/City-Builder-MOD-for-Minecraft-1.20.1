@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Web Proxy</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --text: #1d2330;
+    --muted: #6b7280;
+    --border: #d6d9df;
+    --accent: #2f6fed;
+    --accent-text: #ffffff;
+    --error: #c62828;
+    --card: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14161b;
+      --panel: #1d2028;
+      --text: #e6e8ec;
+      --muted: #9aa1ad;
+      --border: #333844;
+      --accent: #5b8dff;
+      --accent-text: #0b0d12;
+      --error: #ff6b6b;
+      --card: #1d2028;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  form { display: flex; gap: 8px; min-width: 0; }
+  #nav { flex: 1 1 320px; }
+  input[type="text"], input[type="url"], select {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .45; cursor: default; }
+  details { width: 100%; }
+  summary { cursor: pointer; color: var(--muted); }
+  .settings { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; margin-top: 8px; align-items: center; }
+  .settings label { color: var(--muted); }
+  .settings .full { grid-column: 1 / -1; }
+  .settings .check { color: var(--text); display: flex; gap: 6px; align-items: center; }
+  .hint { margin: 0; color: var(--muted); font-size: 12px; }
+  @media (max-width: 600px) {
+    .settings { grid-template-columns: 1fr; }
+  }
+  #status { width: 100%; margin: 0; font-size: 12px; color: var(--muted); min-height: 1em; white-space: pre-line; }
+  #status.error { color: var(--error); }
+  main { position: relative; flex: 1; min-height: 0; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+  .pane { position: absolute; inset: 0; overflow: auto; padding: 16px; }
+  #home { display: grid; place-content: center; gap: 16px; text-align: center; color: var(--muted); }
+  #home .links { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+
+  /* YouTube */
+  #yt-inner { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  #yt-search input { flex: 1; }
+  .player { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; overflow: hidden; }
+  .player iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #yt-title { margin: 8px 0 0; font-size: 18px; }
+  #yt-meta { margin: 2px 0 0; color: var(--muted); }
+  #yt-msg { margin: 0; color: var(--muted); white-space: pre-line; }
+  #yt-msg.error { color: var(--error); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    background: none;
+    text-align: left;
+    white-space: normal;
+    color: var(--text);
+  }
+  .card img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--border); }
+  .card .thumb { position: relative; }
+  .card .badge {
+    position: absolute; right: 6px; bottom: 6px;
+    padding: 1px 5px; border-radius: 4px;
+    background: rgba(0, 0, 0, .8); color: #fff; font-size: 12px;
+  }
+  .card .title { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card .sub { color: var(--muted); font-size: 12px; }
+  .card:hover .title { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <form id="nav" autocomplete="off">
+    <button type="button" id="back" title="戻る" aria-label="戻る">←</button>
+    <button type="button" id="forward" title="進む" aria-label="進む">→</button>
+    <button type="button" id="reload" title="再読み込み" aria-label="再読み込み">⟳</button>
+    <input id="url" type="text" inputmode="url" placeholder="URL または検索ワード" aria-label="URL">
+    <button type="submit" class="primary">開く</button>
+  </form>
+  <details id="settings-panel">
+    <summary>設定</summary>
+    <div class="settings">
+      <label for="relay-mode">中継サーバー</label>
+      <select id="relay-mode"></select>
+      <label for="custom-relay">カスタム中継</label>
+      <input id="custom-relay" type="text" placeholder="https://xxx.workers.dev/?url={enc}">
+      <p class="hint full">カスタム中継は {url} (そのまま) または {enc} (URL エンコード) を含むテンプレートで指定します。設定すると「自動」で最優先に使われます。</p>
+      <span></span>
+      <label class="check"><input id="opt-assets" type="checkbox"> 画像・CSS も中継経由で読み込む</label>
+      <span></span>
+      <label class="check"><input id="opt-js" type="checkbox"> ページの JavaScript を実行する (動かないサイトが増えることがあります)</label>
+      <label for="yt-player-mode">YouTube 再生</label>
+      <select id="yt-player-mode">
+        <option value="nocookie">YouTube 埋め込み (youtube-nocookie.com)</option>
+        <option value="invidious">Invidious 経由</option>
+      </select>
+      <label for="invidious">Invidious URL</label>
+      <input id="invidious" type="text" placeholder="https://yewtu.be">
+    </div>
+  </details>
+  <p id="status" role="status"></p>
+</header>
+<main>
+  <div id="home" class="pane">
+    <p>URL か検索ワードを入力して「開く」を押してください。</p>
+    <div class="links">
+      <button type="button" data-go="https://www.youtube.com/">YouTube</button>
+      <button type="button" data-go="https://ja.wikipedia.org/">Wikipedia</button>
+      <button type="button" data-go="https://news.yahoo.co.jp/">Yahoo!ニュース</button>
+    </div>
+  </div>
+  <iframe id="view" title="ページ表示" hidden
+    sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+  <section id="yt" class="pane" hidden>
+    <div id="yt-inner">
+      <form id="yt-search" autocomplete="off">
+        <input id="yt-q" type="text" placeholder="YouTube を検索" aria-label="YouTube を検索">
+        <button type="submit" class="primary">検索</button>
+      </form>
+      <div id="yt-watch" hidden>
+        <div class="player"><iframe id="yt-frame" title="YouTube プレイヤー"
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen
+          referrerpolicy="strict-origin-when-cross-origin"></iframe></div>
+        <h2 id="yt-title"></h2>
+        <p id="yt-meta"></p>
+      </div>
+      <p id="yt-msg"></p>
+      <div id="yt-results" class="grid"></div>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  "use strict";
+
+  // ---------------------------------------------------------------- 設定
+
+  // 公開 CORS 中継サーバー。{url} は対象 URL そのまま、{enc} は URL エンコード済み。
+  const BUILTIN_RELAYS = [
+    { id: "corsfix", name: "corsfix (localhost からのみ)", template: "https://proxy.corsfix.com/?{url}" },
+    { id: "allorigins", name: "allorigins", template: "https://api.allorigins.win/raw?url={enc}" },
+    { id: "codetabs", name: "codetabs", template: "https://api.codetabs.com/v1/proxy/?quest={enc}" },
+    { id: "corslol", name: "cors.lol", template: "https://api.cors.lol/?url={enc}" },
+    { id: "corseu", name: "cors.eu.org", template: "https://cors.eu.org/{url}" },
+  ];
+  // この応答が返ったら中継サーバー側の失敗とみなして次を試す
+  const RELAY_FAILURE_STATUS = new Set([400, 401, 403, 407, 408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526]);
+  const RELAY_TIMEOUT_MS = 15000;
+  const SEARCH_URL = "https://www.bing.com/search?q=";
+  const STORAGE_KEY = "proxy.settings.v2";
+
+  const defaults = {
+    relayMode: "auto",
+    customRelay: "",
+    relayAssets: true,
+    js: false,
+    ytPlayer: "nocookie",
+    invidious: "",
+  };
+  const settings = Object.assign({}, defaults, loadSettings());
+
+  function loadSettings() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; }
+  }
+  function saveSettings() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch {}
+  }
+
+  // ---------------------------------------------------------------- DOM
+
+  const $ = (id) => document.getElementById(id);
+  const urlInput = $("url");
+  const frame = $("view");
+  const status = $("status");
+  const panes = { home: $("home"), web: frame, yt: $("yt") };
+
+  function showPane(name) {
+    for (const [key, el] of Object.entries(panes)) el.hidden = key !== name;
+    if (name !== "yt") $("yt-frame").src = "about:blank";
+  }
+
+  function setStatus(message, isError = false) {
+    status.textContent = message;
+    status.classList.toggle("error", isError);
+  }
+
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+  // ---------------------------------------------------------------- 中継
+
+  function customRelay() {
+    const template = settings.customRelay.trim();
+    return /\{(url|enc)\}/.test(template) ? { id: "custom", name: "カスタム", template } : null;
+  }
+
+  function relayOrder() {
+    const custom = customRelay();
+    if (settings.relayMode === "custom") return custom ? [custom] : [];
+    if (settings.relayMode !== "auto") return BUILTIN_RELAYS.filter((r) => r.id === settings.relayMode);
+    const list = custom ? [custom, ...BUILTIN_RELAYS] : [...BUILTIN_RELAYS];
+    // 直近で成功した中継を先頭に
+    if (currentRelay) {
+      const i = list.findIndex((r) => r.id === currentRelay.id);
+      if (i > 0) list.unshift(...list.splice(i, 1));
+    }
+    return list;
+  }
+
+  let currentRelay = null;
+
+  function relayUrl(target, relay = currentRelay || relayOrder()[0]) {
+    if (!relay) return target;
+    return relay.template.replace("{enc}", encodeURIComponent(target)).replace("{url}", target);
+  }
+
+  async function relayFetch(target, init = {}) {
+    const order = relayOrder();
+    if (!order.length) throw new Error("中継サーバーが設定されていません (設定を確認してください)");
+    const errors = [];
+    for (const relay of order) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), RELAY_TIMEOUT_MS);
+      try {
+        setStatus(`読み込み中… (${relay.name})`);
+        const res = await fetch(relayUrl(target, relay), { ...init, signal: controller.signal, credentials: "omit", referrerPolicy: "no-referrer" });
+        if (RELAY_FAILURE_STATUS.has(res.status)) {
+          errors.push(`${relay.name}: HTTP ${res.status}`);
+          continue;
+        }
+        currentRelay = relay;
+        return res;
+      } catch (err) {
+        errors.push(`${relay.name}: ${err.name === "AbortError" ? "タイムアウト" : "接続できません"}`);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw new Error("すべての中継サーバーで失敗しました。\n" + errors.join("\n"));
+  }
+
+  // Content-Type または <meta charset> から文字コードを判定してデコード (Shift_JIS 等に対応)
+  async function decodeBody(res) {
+    const buf = await res.arrayBuffer();
+    let charset = (/charset=["']?([\w-]+)/i.exec(res.headers.get("content-type") || "") || [])[1];
+    if (!charset) {
+      const head = new TextDecoder("latin1").decode(buf.slice(0, 4096));
+      charset = (/<meta[^>]+charset=["']?([\w-]+)/i.exec(head) || [])[1];
+    }
+    try {
+      return new TextDecoder(charset || "utf-8").decode(buf);
+    } catch {
+      return new TextDecoder("utf-8").decode(buf);
+    }
+  }
+
+  // ---------------------------------------------------------------- 履歴と移動
+
+  const history = [];
+  let historyIndex = -1;
+  let loadId = 0;
+
+  function normalizeInput(input) {
+    const value = input.trim();
+    if (!value) return null;
+    if (/^https?:\/\//i.test(value)) return value;
+    if (!/\s/.test(value) && /^[^\s/]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(value)) return "https://" + value;
+    return SEARCH_URL + encodeURIComponent(value);
+  }
+
+  function go(input, request = {}) {
+    const url = normalizeInput(input);
+    if (!url) return;
+    history.splice(historyIndex + 1);
+    history.push({ url, ...request });
+    historyIndex = history.length - 1;
+    load(history[historyIndex]);
+  }
+
+  function updateNavButtons() {
+    $("back").disabled = historyIndex <= 0;
+    $("forward").disabled = historyIndex >= history.length - 1;
+    $("reload").disabled = historyIndex < 0;
+  }
+
+  function load(entry) {
+    urlInput.value = entry.url;
+    updateNavButtons();
+    const id = ++loadId;
+    const yt = parseYouTube(entry.url);
+    const task = yt ? showYouTube(yt, id) : showWeb(entry, id);
+    task.catch((err) => {
+      if (id !== loadId) return;
+      setStatus(err.message, true);
+    });
+  }
+
+  // ---------------------------------------------------------------- Web ページ表示
+
+  async function showWeb(entry, id) {
+    const init = entry.method === "POST"
+      ? { method: "POST", body: entry.body, headers: { "content-type": "application/x-www-form-urlencoded" } }
+      : {};
+    const res = await relayFetch(entry.url, init);
+    if (id !== loadId) return;
+    const pageUrl = res.headers.get("x-final-url") || entry.url;
+    const type = (res.headers.get("content-type") || "text/html").toLowerCase();
+
+    let html;
+    if (type.includes("html") || type.includes("xml")) {
+      const source = await decodeBody(res);
+      if (id !== loadId) return;
+      html = await buildDocument(source, pageUrl);
+    } else if (type.startsWith("image/")) {
+      html = mediaDocument(`<img src="${escapeHtml(relayUrl(pageUrl))}" style="max-width:100%">`);
+    } else if (type.startsWith("video/") || type.startsWith("audio/")) {
+      const tag = type.startsWith("video/") ? "video" : "audio";
+      html = mediaDocument(`<${tag} src="${escapeHtml(relayUrl(pageUrl))}" controls style="max-width:100%"></${tag}>`);
+    } else if (type.startsWith("text/") || type.includes("json") || type.includes("javascript")) {
+      html = mediaDocument(`<pre style="white-space:pre-wrap">${escapeHtml(await decodeBody(res))}</pre>`, false);
+    } else {
+      html = mediaDocument(`<p>このファイルは表示できません (${escapeHtml(type)})。</p><p><a href="${escapeHtml(relayUrl(pageUrl))}" target="_blank" rel="noopener">中継経由でダウンロード</a></p>`, false);
+    }
+    if (id !== loadId) return;
+
+    showPane("web");
+    frame.srcdoc = html;
+    setStatus(`${res.status >= 400 ? `HTTP ${res.status} · ` : ""}中継: ${currentRelay.name}`);
+  }
+
+  function mediaDocument(body, center = true) {
+    const layout = center ? "display:grid;place-items:center;min-height:100vh;margin:0;background:#111" : "margin:16px;font-family:system-ui,sans-serif";
+    return `<!doctype html><meta charset="utf-8"><body style="${layout}">${body}</body>`;
+  }
+
+  async function buildDocument(source, pageUrl) {
+    const doc = new DOMParser().parseFromString(source, "text/html");
+    let baseUrl = pageUrl;
+    const baseEl = doc.querySelector("base[href]");
+    if (baseEl) baseUrl = absolute(baseEl.getAttribute("href"), pageUrl) || pageUrl;
+    doc.querySelectorAll("base").forEach((el) => el.remove());
+
+    const abs = (value) => absolute(value, baseUrl);
+    const asset = (value) => {
+      const url = abs(value);
+      if (!url) return value;
+      return settings.relayAssets && /^https?:/.test(url) ? relayUrl(url) : url;
+    };
+    const setAttr = (selector, attr, fn) => {
+      doc.querySelectorAll(selector).forEach((el) => {
+        const value = el.getAttribute(attr);
+        const next = fn(value, el);
+        if (next != null) el.setAttribute(attr, next);
+      });
+    };
+
+    doc.querySelectorAll("meta[http-equiv]").forEach((el) => {
+      const equiv = el.getAttribute("http-equiv").toLowerCase();
+      if (equiv === "content-security-policy" || equiv === "refresh") el.remove();
+    });
+    doc.querySelectorAll('link[rel~="preload"], link[rel~="modulepreload"], link[rel~="prefetch"], link[rel~="preconnect"], link[rel~="dns-prefetch"], link[rel="manifest"]').forEach((el) => el.remove());
+    doc.querySelectorAll("[integrity]").forEach((el) => el.removeAttribute("integrity"));
+
+    // リンク・フォームは元の絶対 URL にしておき、クリック・送信は注入スクリプトで横取りする
+    setAttr("a[href], area[href]", "href", (v) => (/^(#|javascript:|mailto:|tel:)/i.test(v.trim()) ? null : abs(v)));
+    doc.querySelectorAll("a[target], area[target], form[target]").forEach((el) => el.removeAttribute("target"));
+    doc.querySelectorAll("form").forEach((el) => el.setAttribute("action", abs(el.getAttribute("action") || "") || pageUrl));
+
+    if (settings.js) {
+      setAttr("script[src]", "src", (v) => asset(v));
+    } else {
+      doc.querySelectorAll("script").forEach((el) => el.remove());
+      doc.querySelectorAll("noscript").forEach((el) => el.replaceWith(...el.childNodes));
+      doc.querySelectorAll("*").forEach((el) => {
+        for (const { name } of [...el.attributes]) if (/^on/i.test(name)) el.removeAttribute(name);
+      });
+      setAttr("a[href]", "href", (v) => (/^javascript:/i.test(v.trim()) ? "#" : null));
+    }
+
+    // 画像 (遅延読み込み・srcset にも対応)
+    doc.querySelectorAll("picture source").forEach((el) => el.remove());
+    doc.querySelectorAll("img").forEach((el) => {
+      const lazy = el.getAttribute("data-src") || el.getAttribute("data-original") || el.getAttribute("data-lazy-src");
+      let src = el.getAttribute("src");
+      if (lazy && (!src || src.startsWith("data:"))) src = lazy;
+      const srcset = el.getAttribute("srcset") || el.getAttribute("data-srcset");
+      if ((!src || src.startsWith("data:")) && srcset) src = srcset.split(",").pop().trim().split(/\s+/)[0];
+      el.removeAttribute("srcset");
+      el.removeAttribute("sizes");
+      el.removeAttribute("loading");
+      if (src && !src.startsWith("data:")) el.setAttribute("src", asset(src));
+    });
+    setAttr("video[src], audio[src], source[src], track[src], embed[src], input[type=image][src]", "src", (v) => asset(v));
+    setAttr("video[poster]", "poster", (v) => asset(v));
+    setAttr("[background]", "background", (v) => asset(v));
+    setAttr('link[rel~="icon"]', "href", (v) => asset(v));
+
+    // 埋め込み YouTube は nocookie 版に、それ以外の iframe は絶対 URL に
+    setAttr("iframe[src]", "src", (v) => {
+      const yt = parseYouTube(abs(v) || "");
+      return yt && yt.type === "watch" ? playerUrl(yt.id, false) : abs(v);
+    });
+
+    // CSS
+    setAttr("[style]", "style", (v) => rewriteCss(v, baseUrl));
+    doc.querySelectorAll("style").forEach((el) => { el.textContent = rewriteCss(el.textContent, baseUrl); });
+    await Promise.all([...doc.querySelectorAll('link[rel~="stylesheet"][href]')].map(async (link) => {
+      const href = abs(link.getAttribute("href"));
+      if (!href) return link.remove();
+      if (!settings.relayAssets) return link.setAttribute("href", href);
+      try {
+        const res = await relayFetch(href);
+        const style = doc.createElement("style");
+        if (link.media) style.media = link.media;
+        style.textContent = rewriteCss(await decodeBody(res), res.headers.get("x-final-url") || href);
+        link.replaceWith(style);
+      } catch {
+        link.setAttribute("href", href);
+      }
+    }));
+
+    // 相対 URL の取りこぼし用の <base> と、移動を横取りするスクリプトを先頭に注入
+    const head = doc.head || doc.documentElement.insertBefore(doc.createElement("head"), doc.body);
+    const base = doc.createElement("base");
+    base.href = baseUrl;
+    const referrer = doc.createElement("meta");
+    referrer.name = "referrer";
+    referrer.content = "no-referrer";
+    const script = doc.createElement("script");
+    const config = { pageUrl, js: settings.js, relay: currentRelay ? currentRelay.template : null };
+    script.textContent = `(${frameHelper.toString()})(${JSON.stringify(config).replace(/</g, "\\u003c")});`;
+    head.prepend(referrer, base, script);
+
+    return "<!doctype html>\n" + doc.documentElement.outerHTML;
+  }
+
+  function absolute(value, base) {
+    if (value == null) return null;
+    try {
+      const url = new URL(value.trim(), base);
+      return /^(https?|data|blob):$/.test(url.protocol) ? url.href : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function rewriteCss(css, cssUrl) {
+    const asset = (value) => {
+      if (/^(data:|#)/i.test(value.trim())) return value;
+      const url = absolute(value, cssUrl);
+      if (!url) return value;
+      return settings.relayAssets && /^https?:/.test(url) ? relayUrl(url) : url;
+    };
+    return css
+      .replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (_, q, u) => `url(${q}${asset(u)}${q})`)
+      .replace(/@import\s+(['"])([^'"]+)\1/gi, (_, q, u) => `@import ${q}${asset(u)}${q}`);
+  }
+
+  // iframe 内で実行されるスクリプト (親とは postMessage でのみやり取りする)
+  function frameHelper(cfg) {
+    const send = (msg) => parent.postMessage(Object.assign({ __proxy: true }, msg), "*");
+    const stripHash = (u) => u.split("#")[0];
+
+    addEventListener("click", (e) => {
+      if (e.defaultPrevented || e.button !== 0) return;
+      const a = e.target.closest && e.target.closest("a[href], area[href]");
+      if (!a) return;
+      const url = a.href;
+      if (!/^https?:/i.test(url)) return;
+      e.preventDefault();
+      const hash = url.split("#")[1];
+      if (hash !== undefined && stripHash(url) === stripHash(cfg.pageUrl)) {
+        const id = decodeURIComponent(hash);
+        const target = document.getElementById(id) || document.getElementsByName(id)[0];
+        if (target) target.scrollIntoView();
+        else if (!hash) scrollTo(0, 0);
+        return;
+      }
+      send({ type: "navigate", url });
+    });
+
+    addEventListener("submit", (e) => {
+      if (e.defaultPrevented) return;
+      e.preventDefault();
+      const form = e.target;
+      const submitter = e.submitter;
+      const action = submitter && submitter.getAttribute("formaction")
+        ? new URL(submitter.getAttribute("formaction"), document.baseURI).href
+        : form.action;
+      const method = ((submitter && submitter.getAttribute("formmethod")) || form.getAttribute("method") || "get").toLowerCase();
+      let data;
+      try { data = new FormData(form, submitter); } catch { data = new FormData(form); }
+      const params = new URLSearchParams();
+      for (const [key, value] of data) if (typeof value === "string") params.append(key, value);
+      if (method === "post") {
+        send({ type: "navigate", url: action, method: "POST", body: params.toString() });
+      } else {
+        const url = new URL(action);
+        url.search = params.toString();
+        send({ type: "navigate", url: url.href });
+      }
+    });
+
+    if (cfg.js) {
+      // サンドボックス内では Cookie / Storage にアクセスすると例外になるので、メモリ上の代替を用意する
+      const memoryStorage = () => {
+        const map = new Map();
+        return {
+          get length() { return map.size; },
+          key: (i) => [...map.keys()][i] ?? null,
+          getItem: (k) => (map.has(String(k)) ? map.get(String(k)) : null),
+          setItem: (k, v) => { map.set(String(k), String(v)); },
+          removeItem: (k) => { map.delete(String(k)); },
+          clear: () => map.clear(),
+        };
+      };
+      for (const name of ["localStorage", "sessionStorage"]) {
+        try { window[name]; } catch {
+          try { Object.defineProperty(window, name, { value: memoryStorage(), configurable: true }); } catch {}
+        }
+      }
+      try { document.cookie; } catch {
+        const jar = new Map();
+        Object.defineProperty(document, "cookie", {
+          configurable: true,
+          get: () => [...jar].map(([k, v]) => `${k}=${v}`).join("; "),
+          set: (value) => {
+            const pair = String(value).split(";")[0];
+            const i = pair.indexOf("=");
+            if (i > 0) jar.set(pair.slice(0, i).trim(), pair.slice(i + 1).trim());
+          },
+        });
+      }
+    }
+
+    if (cfg.js && cfg.relay) {
+      const relayOrigin = new URL(cfg.relay.replace(/\{(url|enc)\}/g, "")).origin;
+      const wrap = (value) => {
+        try {
+          const url = new URL(value, document.baseURI);
+          if (!/^https?:$/.test(url.protocol) || url.origin === relayOrigin) return value;
+          return cfg.relay.replace("{enc}", encodeURIComponent(url.href)).replace("{url}", url.href);
+        } catch {
+          return value;
+        }
+      };
+      const originalFetch = window.fetch;
+      window.fetch = function (input, init) {
+        if (typeof input === "string" || input instanceof URL) input = wrap(String(input));
+        else if (input && input.url) input = new Request(wrap(input.url), input);
+        return originalFetch.call(this, input, init);
+      };
+      const originalOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+        return originalOpen.call(this, method, wrap(String(url)), ...rest);
+      };
+      window.open = (url) => {
+        if (url) send({ type: "navigate", url: new URL(url, document.baseURI).href });
+        return null;
+      };
+    }
+
+    addEventListener("DOMContentLoaded", () => send({ type: "title", title: document.title }));
+  }
+
+  addEventListener("message", (e) => {
+    if (e.source !== frame.contentWindow || !e.data || !e.data.__proxy) return;
+    if (e.data.type === "navigate" && typeof e.data.url === "string" && /^https?:/i.test(e.data.url)) {
+      go(e.data.url, e.data.method === "POST" ? { method: "POST", body: String(e.data.body || "") } : {});
+    } else if (e.data.type === "title") {
+      document.title = e.data.title ? `${e.data.title} - Web Proxy` : "Web Proxy";
+    }
+  });
+
+  // ---------------------------------------------------------------- YouTube
+
+  const VIDEO_ID = /^[\w-]{11}$/;
+
+  function parseYouTube(value) {
+    let url;
+    try { url = new URL(value); } catch { return null; }
+    const host = url.hostname.replace(/^(www|m|music)\./, "");
+    if (host === "youtu.be") {
+      const id = url.pathname.slice(1, 12);
+      return VIDEO_ID.test(id) ? { type: "watch", id } : { type: "home" };
+    }
+    if (host !== "youtube.com" && host !== "youtube-nocookie.com") return null;
+    const v = url.searchParams.get("v");
+    if (url.pathname === "/watch" && v && VIDEO_ID.test(v)) return { type: "watch", id: v };
+    const m = /^\/(?:shorts|embed|live|v)\/([\w-]{11})/.exec(url.pathname);
+    if (m) return { type: "watch", id: m[1] };
+    const q = url.searchParams.get("search_query") || url.searchParams.get("q");
+    if (url.pathname === "/results" && q) return { type: "search", q };
+    return { type: "home" };
+  }
+
+  const ytCache = { query: null, videos: [] };
+
+  function playerUrl(id, autoplay = true) {
+    const inst = settings.invidious.trim().replace(/\/+$/, "");
+    if (settings.ytPlayer === "invidious" && /^https?:\/\//.test(inst)) {
+      return `${inst}/embed/${id}?local=true${autoplay ? "&autoplay=1" : ""}`;
+    }
+    return `https://www.youtube-nocookie.com/embed/${id}?rel=0&playsinline=1${autoplay ? "&autoplay=1" : ""}`;
+  }
+
+  function ytMessage(text, isError = false) {
+    $("yt-msg").textContent = text;
+    $("yt-msg").classList.toggle("error", isError);
+  }
+
+  async function showYouTube(yt, id) {
+    showPane("yt");
+    setStatus("");
+    document.title = "YouTube - Web Proxy";
+    const watch = $("yt-watch");
+
+    if (yt.type === "watch") {
+      watch.hidden = false;
+      $("yt-frame").src = playerUrl(yt.id);
+      const known = ytCache.videos.find((v) => v.id === yt.id);
+      $("yt-title").textContent = known ? known.title : "";
+      $("yt-meta").textContent = known ? known.channel : "";
+      $("yt").scrollTop = 0;
+      if (location.protocol === "file:" && settings.ytPlayer === "nocookie") {
+        ytMessage("ファイルとして開いていると YouTube の埋め込みが「エラー 153」になることがあります。GitHub Pages などに置くか、設定で Invidious 経由に切り替えてください。");
+      } else {
+        ytMessage("");
+      }
+      if (!known) {
+        const info = await fetchOEmbed(yt.id).catch(() => null);
+        if (id !== loadId) return;
+        setStatus("");
+        if (info) {
+          $("yt-title").textContent = info.title;
+          $("yt-meta").textContent = info.author_name;
+          document.title = `${info.title} - Web Proxy`;
+          // 直接開いた動画は、タイトルで検索した結果を関連動画として表示する
+          if (!ytCache.videos.length) await runYouTubeSearch(info.title, id);
+        }
+      } else {
+        document.title = `${known.title} - Web Proxy`;
+      }
+      renderResults(yt.id);
+      return;
+    }
+
+    watch.hidden = true;
+    if (yt.type === "search") {
+      $("yt-q").value = yt.q;
+      await runYouTubeSearch(yt.q, id);
+      if (id !== loadId) return;
+      renderResults();
+    } else {
+      ytMessage("キーワードを入力して検索してください。");
+      renderResults();
+      $("yt-q").focus();
+    }
+  }
+
+  async function runYouTubeSearch(q, id) {
+    if (ytCache.query === q && ytCache.videos.length) return;
+    ytMessage("検索中…");
+    try {
+      ytCache.videos = await searchYouTube(q);
+      ytCache.query = q;
+      if (id !== loadId) return;
+      ytMessage(ytCache.videos.length ? "" : "動画が見つかりませんでした。");
+    } catch (err) {
+      if (id !== loadId) return;
+      ytCache.videos = [];
+      ytMessage(`検索結果を取得できませんでした。\n${err.message}`, true);
+    } finally {
+      if (id === loadId) setStatus(currentRelay ? `中継: ${currentRelay.name}` : "");
+    }
+  }
+
+  async function searchYouTube(q) {
+    try {
+      const res = await relayFetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&hl=ja&gl=JP`);
+      const html = await decodeBody(res);
+      const data = extractInitialData(html);
+      if (!data) throw new Error("YouTube の応答を解析できませんでした (同意画面やブロックの可能性があります)");
+      const videos = [];
+      collectVideos(data, videos, new Set());
+      return videos;
+    } catch (err) {
+      const inst = settings.invidious.trim().replace(/\/+$/, "");
+      if (!/^https?:\/\//.test(inst)) throw err;
+      // Invidious API で再試行
+      const res = await fetch(`${inst}/api/v1/search?type=video&q=${encodeURIComponent(q)}`);
+      if (!res.ok) throw err;
+      return (await res.json()).filter((v) => v.videoId).map((v) => ({
+        id: v.videoId,
+        title: v.title,
+        channel: v.author,
+        duration: formatSeconds(v.lengthSeconds),
+        views: v.viewCountText || "",
+        published: v.publishedText || "",
+      }));
+    }
+  }
+
+  function extractInitialData(html) {
+    const m = /ytInitialData"?\]?\s*=\s*(\{.+?\})\s*;\s*<\/script>/s.exec(html);
+    if (!m) return null;
+    try { return JSON.parse(m[1]); } catch { return null; }
+  }
+
+  function ytText(t) {
+    if (!t) return "";
+    if (typeof t === "string") return t;
+    if (t.simpleText) return t.simpleText;
+    if (t.content) return t.content;
+    return (t.runs || []).map((r) => r.text).join("");
+  }
+
+  function collectVideos(node, out, seen) {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) collectVideos(child, out, seen);
+      return;
+    }
+    const add = (video) => {
+      if (!video.id || !VIDEO_ID.test(video.id) || seen.has(video.id)) return;
+      seen.add(video.id);
+      out.push(video);
+    };
+    const v = node.videoRenderer;
+    if (v) {
+      add({
+        id: v.videoId,
+        title: ytText(v.title),
+        channel: ytText(v.ownerText || v.longBylineText),
+        duration: ytText(v.lengthText),
+        views: ytText(v.shortViewCountText || v.viewCountText),
+        published: ytText(v.publishedTimeText),
+      });
+    }
+    const s = node.shortsLockupViewModel;
+    if (s) {
+      const endpoint = s.onTap && s.onTap.innertubeCommand && s.onTap.innertubeCommand.reelWatchEndpoint;
+      add({
+        id: endpoint ? endpoint.videoId : String(s.entityId || "").replace(/^shorts-shelf-item-/, ""),
+        title: ytText(s.overlayMetadata && s.overlayMetadata.primaryText),
+        channel: "",
+        duration: "ショート",
+        views: ytText(s.overlayMetadata && s.overlayMetadata.secondaryText),
+        published: "",
+      });
+    }
+    const l = node.lockupViewModel;
+    if (l && /VIDEO/.test(l.contentType || "")) {
+      const meta = l.metadata && l.metadata.lockupMetadataViewModel;
+      add({ id: l.contentId, title: ytText(meta && meta.title), channel: "", duration: "", views: "", published: "" });
+    }
+    for (const key in node) collectVideos(node[key], out, seen);
+  }
+
+  function formatSeconds(total) {
+    if (!total) return "";
+    const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+    const pad = (n) => String(n).padStart(2, "0");
+    return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+  }
+
+  async function fetchOEmbed(videoId) {
+    const res = await relayFetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent("https://www.youtube.com/watch?v=" + videoId)}`);
+    return JSON.parse(await decodeBody(res));
+  }
+
+  function renderResults(currentId) {
+    const grid = $("yt-results");
+    grid.replaceChildren(...ytCache.videos.filter((v) => v.id !== currentId).map((video) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "card";
+      const sub = [video.channel, video.views, video.published].filter(Boolean).join(" · ");
+      card.innerHTML = `
+        <div class="thumb">
+          <img alt="" loading="lazy" referrerpolicy="no-referrer" src="https://i.ytimg.com/vi/${video.id}/mqdefault.jpg">
+          ${video.duration ? `<span class="badge">${escapeHtml(video.duration)}</span>` : ""}
+        </div>
+        <span class="title">${escapeHtml(video.title || video.id)}</span>
+        <span class="sub">${escapeHtml(sub)}</span>`;
+      // サムネイルが直接読めない環境では中継経由で再取得
+      card.querySelector("img").addEventListener("error", (e) => {
+        const img = e.currentTarget;
+        if (!img.dataset.relayed) {
+          img.dataset.relayed = "1";
+          img.src = relayUrl(img.src);
+        }
+      });
+      card.addEventListener("click", () => go(`https://www.youtube.com/watch?v=${video.id}`));
+      return card;
+    }));
+  }
+
+  $("yt-search").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = $("yt-q").value.trim();
+    if (q) go(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`);
+  });
+
+  // ---------------------------------------------------------------- UI
+
+  $("nav").addEventListener("submit", (e) => {
+    e.preventDefault();
+    go(urlInput.value);
+  });
+  $("back").addEventListener("click", () => {
+    if (historyIndex > 0) load(history[--historyIndex]);
+  });
+  $("forward").addEventListener("click", () => {
+    if (historyIndex < history.length - 1) load(history[++historyIndex]);
+  });
+  $("reload").addEventListener("click", () => {
+    if (historyIndex < 0) return;
+    ytCache.query = null;
+    load(history[historyIndex]);
+  });
+  document.querySelectorAll("[data-go]").forEach((btn) => btn.addEventListener("click", () => go(btn.dataset.go)));
+
+  const relaySelect = $("relay-mode");
+  relaySelect.append(new Option("自動 (上から順に試す)", "auto"));
+  for (const relay of BUILTIN_RELAYS) relaySelect.append(new Option(relay.name, relay.id));
+  relaySelect.append(new Option("カスタムのみ", "custom"));
+
+  const bindings = [
+    ["relay-mode", "relayMode", "value"],
+    ["custom-relay", "customRelay", "value"],
+    ["opt-assets", "relayAssets", "checked"],
+    ["opt-js", "js", "checked"],
+    ["yt-player-mode", "ytPlayer", "value"],
+    ["invidious", "invidious", "value"],
+  ];
+  for (const [elId, key, prop] of bindings) {
+    const el = $(elId);
+    el[prop] = settings[key];
+    el.addEventListener("change", () => {
+      settings[key] = el[prop];
+      if (key === "relayMode" || key === "customRelay") currentRelay = null;
+      saveSettings();
+    });
+  }
+
+  updateNavButtons();
+  showPane("home");
+
+  // index.html?url=https://example.com で直接開ける
+  const initial = new URLSearchParams(location.search).get("url");
+  if (initial) go(initial);
+})();
+</script>
+</body>
+</html>
