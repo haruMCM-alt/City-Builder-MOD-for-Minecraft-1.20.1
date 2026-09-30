@@ -91,7 +91,20 @@ export function coastDist(x, z) {
     const d = sdPoly(x, z, P);
     if (P.kind === 0) dl = Math.min(dl, d); else if (P.kind === 1) dw = Math.min(dw, d); else di = Math.min(di, d);
   }
-  return Math.min(Math.max(dl, -dw), di);
+  return Math.min(Math.max(dl, -dw), di) - coastWiggle(x, z);
+}
+
+// The geography polygons are 8-100 km straight segments: a ruler-straight shore from the air.
+// A fractal offset adds headlands, coves and a ragged small-scale edge. It only ever moves the
+// shore seawards (up to ~300 m), so nothing built on land ends up in the water, and it fades out
+// around the airports (sea walls, island runways).
+function coastWiggle(x, z) {
+  let df = 1e9;
+  for (const f of GEO.flats) df = Math.min(df, Math.hypot(Math.max(f.x0 - x, 0, x - f.x1), Math.max(f.z0 - z, 0, z - f.z1)));
+  const k = smooth(1500, 4500, df);
+  if (k <= 0) return 0;
+  const a = fbm(x / 3200 + 11.3, z / 3200 - 4.7, 3), b = fbm(x / 520 - 2.1, z / 520 + 8.9, 2);
+  return k * (Math.max(0, a - 0.35) * 620 + b * 55);
 }
 
 const PEAKS = GEO.peaks;          // [x, z, h, r, cone]
@@ -119,7 +132,9 @@ export function terrainHeight(x, z) {
     h *= smooth(0, 60, -d);                    // beaches / sea walls meet the water at ~0
   } else {
     // sea: shelf, then the deep ocean; a shallow coral shelf around Okinawa
-    h = -2 - Math.min(d * 0.01, 45) - Math.max(0, d - 8000) * 0.004;
+    // the shore shelves down over ~250 m (a 2 m step at the coast made the waterline follow
+    // the terrain grid: a staircase coast from the air)
+    h = -(2 + Math.min(d * 0.01, 45) + Math.max(0, d - 8000) * 0.004) * smooth(0, 250, d);
     const rd = Math.hypot(x - REEF[0], z - REEF[1]);
     if (rd < REEF[2]) {
       const reef = -1.1 - Math.min(d * 0.0016, 3.5) - Math.max(0, d - 1800) * 0.04;
@@ -222,7 +237,14 @@ float coastDist(vec2 p) {
     int kind = cPolys[k].z;
     if (kind == 0) dl = min(dl, d); else if (kind == 1) dw = min(dw, d); else di = min(di, d);
   }
-  return min(max(dl, -dw), di);
+  float dfl = flatsDist(p);
+  float kw = smoothstep(1500.0, 4500.0, dfl);
+  float wig = 0.0;
+  if (kw > 0.0) {
+    float a = t_fbm(p / 3200.0 + vec2(11.3, -4.7), 3), b = t_fbm(p / 520.0 + vec2(-2.1, 8.9), 2);
+    wig = kw * (max(0.0, a - 0.35) * 620.0 + b * 55.0);
+  }
+  return min(max(dl, -dw), di) - wig;
 }
 float terrainHeight(vec2 xz) {
   float x = xz.x, z = xz.y;
@@ -246,7 +268,7 @@ float terrainHeight(vec2 xz) {
     }
     h *= smoothstep(0.0, 60.0, -d);
   } else {
-    h = -2.0 - min(d * 0.01, 45.0) - max(0.0, d - 8000.0) * 0.004;
+    h = -(2.0 + min(d * 0.01, 45.0) + max(0.0, d - 8000.0) * 0.004) * smoothstep(0.0, 250.0, d);
     float rd = length(xz - cReef.xy);
     if (rd < cReef.z) {
       float reef = -1.1 - min(d * 0.0016, 3.5) - max(0.0, d - 1800.0) * 0.04;

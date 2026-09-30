@@ -585,7 +585,8 @@ float wFoam = 0.0;`)
   // breaking foam along the shore, pulsing with the swell
   float swell = 0.5 + 0.5 * sin(uWTime * 0.8 - depth * 2.2 + gNoise(vWW.xz * 0.05) * 6.0);
   float fn = gFbm(vWW.xz * 0.35 + vec2(uWTime * 0.05, 0.0));
-  wFoam = smoothstep(1.4, 0.2, depth) * smoothstep(0.35, 0.75, fn * 0.7 + swell * 0.5) * step(-0.5, depth);
+  // surf: a narrow broken line where the shelf gets shallow, not a wide white band
+  wFoam = smoothstep(0.75, 0.12, depth) * smoothstep(0.42, 0.8, fn * 0.7 + swell * 0.5) * step(-0.5, depth) * 0.85;
   diffuseColor.rgb = mix(wc, vec3(0.8, 0.82, 0.82), wFoam) * diffuse;
 }`)
         .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;', `vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
