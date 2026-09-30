@@ -1197,7 +1197,10 @@ roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
     if (W.overcast > 0.5 && cy > W.base && cy < W.base + 420) density = 1 / 180;   // inside the deck
     this.scene.fog.color.copy(horizon);
     this.scene.fog.density = density * 1.3;
-    this.envGroundMat.color.setRGB(0.1 * day + 0.01, 0.12 * day + 0.01, 0.08 * day + 0.01);
+    // ground bounce in the sky light: sunlit concrete and grass reflect 15-30 % of the sun, a
+    // warm grey fill that keeps shadows from turning pure sky-blue
+    const gb = day * (0.25 + 0.75 * (this.sunT ?? 1)) * (1 - 0.6 * W.overcast);
+    this.envGroundMat.color.setRGB(0.34 * gb + 0.01, 0.33 * gb + 0.01, 0.28 * gb + 0.01);
     this.envDome.material.opacity = 0.92 * W.overcast;
     this.envDome.material.color.setRGB(0.55 * day + 0.02, 0.57 * day + 0.02, 0.6 * day + 0.025);
     // env map (re-render when the sun moved)

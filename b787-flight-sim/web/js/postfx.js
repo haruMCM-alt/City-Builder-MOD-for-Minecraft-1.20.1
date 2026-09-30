@@ -131,7 +131,7 @@ const LensShader = {
         g = mix(g, g * g * (3.0 - 2.0 * g), 0.42 * uGrade);
         g = pow(max(g, 0.0), vec3(mix(1.0, 1.06, uGrade)));
         float lg = dot(g, vec3(0.2126, 0.7152, 0.0722));
-        g = mix(vec3(lg), g, 1.0 + 0.16 * uGrade);
+        g = mix(vec3(lg), g, 1.0 + 0.16 * uGrade * smoothstep(0.08, 0.45, lg));   // not in the shadows
         g += (vec3(-0.008, -0.002, 0.01) * (1.0 - lg) + vec3(0.01, 0.004, -0.008) * lg) * uGrade;
         // daylight white balance: the camera neutralises the blue of the sky fill a little
         g *= mix(vec3(1.0), vec3(1.025, 1.0, 0.955), uGrade);
