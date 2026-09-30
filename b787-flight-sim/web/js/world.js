@@ -467,6 +467,15 @@ varying vec3 vTW; varying float vSlope;`)
   grass = mix(grass, grass * vec3(1.06, 1.02, 0.92), hok * 0.6);
   grass = mix(grass, grass * vec3(0.9, 1.12, 0.85), oki);
   grass = mix(grass, grass * (0.9 + 0.14 * step(0.5, fract(vTW.x / 24.0))) * vec3(0.95, 1.06, 0.9), airport);
+  // airfield grass is not a lawn: sun-dried, yellowed patches on the sandy reclaimed ground,
+  // greener lines along the drainage ditches (~180 m apart) and bare, darker soil strips
+  {
+    float dryA = smoothstep(0.42, 0.72, gFbm(vTW.xz / 380.0 + 7.1) * 0.75 + nB * 0.25);
+    float ditch = 1.0 - smoothstep(1.5, 4.0 + tpx, abs(fract(vTW.z / 180.0 + gNoise(vTW.xz / 900.0) * 0.08) - 0.5) * 180.0);
+    vec3 dryG = vec3(0.24, 0.215, 0.12) * (0.85 + 0.3 * nC);
+    grass = mix(grass, mix(grass, dryG, 0.7 * dryA), airport);
+    grass = mix(grass, vec3(0.04, 0.08, 0.025), airport * ditch * 0.6);
+  }
   gH = ((nB - 0.5) * 0.08 + (nC - 0.5) * 0.05 * nearC + (nD - 0.5) * 0.02 * nearB) * (1.0 - soil * 0.5);
   vec3 forest = vec3(0.035, 0.065, 0.022) * (0.7 + 0.6 * d1.g) * (0.8 + 0.4 * nB);
   float fm = smoothstep(0.52, 0.6, d3.r * 0.7 + d2.b * 0.3) * smoothstep(15.0, 60.0, h);
@@ -491,7 +500,7 @@ varying vec3 vTW; varying float vSlope;`)
     fc = mix(fc, vec3(0.05, 0.09, 0.035), hedge * 0.75);
     float outside = inFlats(vTW.xz, 400.0) ? 0.0 : 1.0;
     float farm = smoothstep(0.38, 0.5, d3.b * 0.8 + d2.r * 0.2) * (1.0 - fm) * (1.0 - smoothstep(60.0, 220.0, h))
-               * smoothstep(0.5, 2.0, h) * (1.0 - smoothstep(0.06, 0.18, vSlope)) * outside;
+               * smoothstep(-0.2, 0.4, h) * (1.0 - smoothstep(0.06, 0.18, vSlope)) * outside;
     col = mix(col, fc, farm);
   }
   // urban fabric of Tokyo, Osaka, Sapporo and Naha (geo.py districts): roofs and paving in
@@ -503,7 +512,9 @@ varying vec3 vTW; varying float vSlope;`)
       float d = length(vTW.xz - u.xy) + (nA - 0.5) * u.z * 0.35;
       urb = max(urb, u.w * (1.0 - smoothstep(u.z * 0.5, u.z, d)));
     }
-    urb *= smoothstep(0.4, 2.5, h) * (1.0 - smoothstep(0.12, 0.3, vSlope)) * (inFlats(vTW.xz, 150.0) ? 0.0 : 1.0);
+    // land test, not height: the terrain around the airports is levelled to ~0 m for 3.5 km,
+    // which used to leave a golf-course lawn where Ota / Izumisano / Chitose / Naha are
+    urb *= smoothstep(-0.2, 0.4, h) * (1.0 - smoothstep(0.12, 0.3, vSlope)) * (inFlats(vTW.xz, 150.0) ? 0.0 : 1.0);
     if (urb > 0.001) {
       vec2 bc = floor(vTW.xz / 90.0), bf = fract(vTW.xz / 90.0);
       float edge = min(min(bf.x, 1.0 - bf.x), min(bf.y, 1.0 - bf.y)) * 90.0;
