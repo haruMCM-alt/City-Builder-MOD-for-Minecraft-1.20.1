@@ -39,7 +39,59 @@ CFG = {
     3: dict(block=106.0, street=18.0, grid=0.0, houses=0.4, seed=43),     # Sapporo's 60-ken grid
     4: dict(block=72.0, street=10.0, grid=12.0, houses=0.25, seed=26),
 }
-MAX_BUILDINGS = {1: 62000, 2: 26000, 3: 16000, 4: 14000}
+MAX_BUILDINGS = {1: 120000, 2: 60000, 3: 30000, 4: 45000}
+# dense low-rise belt right around each airport (Ota / Kawasaki, Izumisano / Rinku, Chitose,
+# Naha): radius (m), density, height range; heights are still capped by the obstacle surfaces
+NEAR = {1: dict(r=8000.0, dens=0.9, h=(7.0, 28.0)), 2: dict(r=9000.0, dens=0.75, h=(7.0, 24.0)),
+        3: dict(r=7000.0, dens=0.45, h=(6.0, 16.0)), 4: dict(r=7000.0, dens=0.95, h=(7.0, 22.0))}
+# the budget is spent near the airport first: everything within KEEP_R is kept, further out the
+# buildings are thinned with distance (the old random cut kept 16 % of Tokyo everywhere, so
+# the streets you see from the approach were mostly empty lots)
+KEEP_R = {1: 9000.0, 2: 10000.0, 3: 8000.0, 4: 9000.0}
+
+
+# ---- the simulator's coastline offset (web/js/terrain.js coastWiggle), bit-identical noise ----
+def _hash2(ix, iz):
+    M = 0xFFFFFFFF
+    ix = ix.astype(np.int64) & M
+    iz = iz.astype(np.int64) & M
+    h = (ix * 374761393 + iz * 668265263) & M
+    h = ((h ^ (h >> 13)) * 1274126177) & M
+    h = h ^ (h >> 16)
+    return (h & 0xFFFFFF) / 16777216.0
+
+
+def _vnoise(x, z):
+    ix, iz = np.floor(x), np.floor(z)
+    fx, fz = x - ix, z - iz
+    ux = fx ** 3 * (fx * (fx * 6 - 15) + 10)
+    uz = fz ** 3 * (fz * (fz * 6 - 15) + 10)
+    ix, iz = ix.astype(np.int64), iz.astype(np.int64)
+    a, b, c, d = _hash2(ix, iz), _hash2(ix + 1, iz), _hash2(ix, iz + 1), _hash2(ix + 1, iz + 1)
+    return a + (b - a) * ux + (c - a) * uz + (a - b - c + d) * ux * uz
+
+
+def _fbm(x, z, oct):
+    s, amp, f = 0.0, 0.5, 1.0
+    for i in range(oct):
+        s = s + amp * _vnoise(x * f + i * 17.3, z * f - i * 9.1)
+        f *= 2.03
+        amp *= 0.5
+    return s
+
+
+def coast_wiggle(x, z):
+    """seaward shift of the shore (m) at world (x, z); see terrain.js"""
+    df = np.full(np.shape(x), 1e9)
+    for f in geo.GEO_DATA["flats"]:
+        dx = np.maximum(np.maximum(f["x0"] - x, 0), x - f["x1"])
+        dz = np.maximum(np.maximum(f["z0"] - z, 0), z - f["z1"])
+        df = np.minimum(df, np.hypot(dx, dz))
+    t = np.clip((df - 1500) / 3000, 0, 1)
+    k = t * t * (3 - 2 * t)
+    a = _fbm(x / 3200 + 11.3, z / 3200 - 4.7, 3)
+    b = _fbm(x / 520 - 2.1, z / 520 + 8.9, 2)
+    return k * (np.maximum(0, a - 0.35) * 620 + b * 55)
 
 
 def land_mask(apid, half, res):
@@ -61,6 +113,19 @@ def land_mask(apid, half, res):
         dr.polygon([px(p) for p in P], fill=0)
     for P in D["islands"]:
         dr.polygon([px(p) for p in P], fill=255)
+    # land the simulator adds seawards of the polygon shore (coast_wiggle), less 40 m of beach
+    from scipy import ndimage
+    land0 = np.asarray(img) > 127
+    dsea = ndimage.distance_transform_edt(~land0) * res
+    near = (~land0) & (dsea < 700)
+    jj, ii = np.nonzero(near)
+    wx = ap["x"] + (ii + 0.5) * res - half
+    wz = ap["z"] - (half - (jj + 0.5) * res)
+    grow = dsea[jj, ii] < coast_wiggle(wx, wz) - 40.0
+    arr0 = np.asarray(img).copy()
+    arr0[jj[grow], ii[grow]] = 255
+    img = Image.fromarray(arr0)
+    dr = ImageDraw.Draw(img)
     # airports: no city on the flats (+ margin)
     for f in D["flats"]:
         m = 150.0
@@ -154,7 +219,7 @@ def generate(apid):
         for cy0 in xs:
             ccx, ccy = cx0 + cell / 2, cy0 + cell / 2
             # quick reject: far outside every district and the fill radius
-            dmin = math.hypot(ccx - fill[0], ccy - fill[1]) - fill[2]
+            dmin = min(math.hypot(ccx - fill[0], ccy - fill[1]) - fill[2], math.hypot(ccx, ccy) - NEAR[apid]["r"])
             for (dx_, dy_, r, _, _) in ds:
                 dmin = min(dmin, math.hypot(ccx - dx_, ccy - dy_) - r * 2.5)
             if dmin > cell:
@@ -174,6 +239,10 @@ def generate(apid):
                     # intensity: fill falloff + districts
                     rf = math.hypot(bx - fill[0], by - fill[1]) / fill[2]
                     dens = fill[4] * max(0.0, 1.0 - rf ** 2.2) if rf < 1 else 0.0
+                    nr = NEAR[apid]
+                    rn = math.hypot(bx, by) / nr["r"]
+                    if rn < 1.0:
+                        dens = max(dens, nr["dens"] * (1.0 - rn ** 3))
                     hlo, hhi = fill[3]
                     tall = 0.0
                     for (dx_, dy_, r, hr, dd) in ds:
@@ -185,7 +254,7 @@ def generate(apid):
                                 hlo2, hhi2 = hr
                             dens = max(dens, dd * math.exp(-q * q * 0.35))
                     indus = any(math.hypot(bx - ix, by - iy) < ir for (ix, iy, ir) in ind)
-                    if rng.random() > dens * (0.55 + 0.45 * (1 - rf)) + (0.35 if indus else 0.0):
+                    if rng.random() > dens * (0.55 + 0.45 * max(0.0, 1 - rf)) + (0.35 if indus else 0.0):
                         continue
                     wx, wz = ap["x"] + bx, ap["z"] - by
                     hmax = height_limit(wx, wz)
@@ -238,8 +307,17 @@ def generate(apid):
                         ox = bx + lu * ca - lv * sa
                         oy = by + lu * sa + lv * ca
                         recs.append((ox, oy, min(lw, 250), min(lh, 250), h, a, style))
+    # weighted sample without replacement (Efraimidis-Spirakis): weight 1 within KEEP_R,
+    # falling with the square of the distance beyond it
+    R0 = KEEP_R[apid]
+    keys = []
+    for k, r in enumerate(recs):
+        d = math.hypot(r[0], r[1])
+        w = 1.0 if d < R0 else (R0 / d) ** 2
+        keys.append((rng.random() ** (1.0 / w), k))
+    keys.sort(reverse=True)
+    recs = [recs[k] for _, k in keys[:MAX_BUILDINGS[apid]]]
     rng.shuffle(recs)
-    recs = recs[:MAX_BUILDINGS[apid]]
     buf = bytearray()
     for (x, y, w, d, h, a, st) in recs:
         rot = int(round((a % (2 * math.pi)) / (2 * math.pi) * 256)) % 256

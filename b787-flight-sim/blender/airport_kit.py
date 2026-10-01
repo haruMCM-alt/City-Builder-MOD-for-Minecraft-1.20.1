@@ -174,9 +174,15 @@ def curtain_wall(mb, p0, p1, z0, z1, out, bay=3.0, floor=4.5, slabs=True):
         p0, p1, ex = p1, p0, -ex
     quad(mb, p0 - o * 0.15 + ez * z0, ex, ez, L, z1 - z0, mi("curtain"), uv=1 / 6)
     nb = max(1, int(round(L / bay)))
+    fins = L > 20.0 and (z1 - z0) > 7.0
     for k in range(nb + 1):
         q = p0 + ex * (L * k / nb) + o * 0.05
         beam(mb, q + ez * z0, q + ez * z1, 0.12, 0.28, mi("steel"))
+        # vertical sun-shading fins on the big glazed facades (relief and shadow lines instead
+        # of one flat sheet of glass); every other mullion
+        if fins and k % 2 == 0:
+            fq = p0 + ex * (L * k / nb) + o * 0.45
+            beam(mb, fq + ez * (z0 + 0.6), fq + ez * (z1 - 0.2), 0.07, 0.75, mi("paint_white"))
     z = z0 + 1.5
     while z < z1 - 0.3:
         beam(mb, p0 + o * 0.05 + ez * z, p1 + o * 0.05 + ez * z, 0.22, 0.08, mi("steel"))
@@ -270,6 +276,41 @@ def stair_tower(mb, x, y, h, out):
     box(mb, x - 2.4, x + 2.4, y - 2.4, y + 2.4, h, h + 0.4, mi("paint_white"))
 
 
+def _tunnel(mb, cx, cy, zz, Ls, w, h, ang, u, nrm):
+    """One telescopic section of a glazed apron-drive bridge: floor box with a dark skirt,
+    low steel kick panel, full-height glazing between slim white mullions, white eaves band,
+    roof with rounded edges and a portal frame at each end."""
+    ux, uy = u
+    nx, ny = nrm
+    obox(mb, cx, cy, Ls, w, ang, zz - 0.25, zz + 0.35, mi("paint_grey"))           # floor / skirt
+    obox(mb, cx, cy, Ls - 0.1, w - 0.3, ang, zz - 0.32, zz - 0.25, mi("dark"))   # underside
+    for s in (-1, 1):
+        ox, oy = cx + nx * s * (w / 2 - 0.05), cy + ny * s * (w / 2 - 0.05)
+        obox(mb, ox, oy, Ls, 0.1, ang, zz + 0.35, zz + 0.95, mi("metal"))             # kick panel
+        obox(mb, ox, oy, Ls, 0.05, ang, zz + 0.95, zz + h - 0.55, mi("curtain"))      # glazing
+        obox(mb, ox, oy, Ls, 0.14, ang, zz + h - 0.55, zz + h - 0.12, mi("paint_white"))   # eaves band
+        obox(mb, ox, oy, Ls, 0.16, ang, zz + 0.9, zz + 1.0, mi("paint_white"))        # sill rail
+        # mullions every ~1.6 m
+        nm = max(2, int(Ls / 1.6))
+        for m in range(nm + 1):
+            f = -Ls / 2 + Ls * m / nm
+            px, py = ox + ux * f + nx * s * 0.04, oy + uy * f + ny * s * 0.04
+            beam(mb, (px, py, zz + 0.95), (px, py, zz + h - 0.55), 0.09, 0.12, mi("paint_white"))
+        # rounded roof edge
+        ex, ey = cx + nx * s * (w / 2 - 0.22), cy + ny * s * (w / 2 - 0.22)
+        cyl(mb, (ex - ux * Ls / 2, ey - uy * Ls / 2, zz + h - 0.2), (ex + ux * Ls / 2, ey + uy * Ls / 2, zz + h - 0.2), 0.24, mi("paint_white"), n=10)
+    obox(mb, cx, cy, Ls, w - 0.44, ang, zz + h - 0.2, zz + h + 0.04, mi("paint_white"))   # roof
+    obox(mb, cx, cy, Ls - 0.6, w - 1.2, ang, zz + h + 0.04, zz + h + 0.1, mi("paint_grey"))   # roof walkway
+    # portal frames at both ends (where the next section slides in)
+    for e in (-1, 1):
+        px, py = cx + ux * e * Ls / 2, cy + uy * e * Ls / 2
+        for s in (-1, 1):
+            beam(mb, (px + nx * s * (w / 2 + 0.02), py + ny * s * (w / 2 + 0.02), zz - 0.25),
+                 (px + nx * s * (w / 2 + 0.02), py + ny * s * (w / 2 + 0.02), zz + h), 0.22, 0.28, mi("paint_white"))
+        beam(mb, (px + nx * (w / 2 + 0.02), py + ny * (w / 2 + 0.02), zz + h + 0.02),
+             (px - nx * (w / 2 + 0.02), py - ny * (w / 2 + 0.02), zz + h + 0.02), 0.22, 0.28, mi("paint_white"))
+
+
 def jet_bridge(mb, face_pt, face_out, rot, door, z_door, door_out=(-1.0, 0.0)):
     """Apron-drive boarding bridge from the terminal face to the aircraft door.
     face_pt: (x, y) on the facade, face_out: outward unit normal; rot: rotunda (x, y);
@@ -303,32 +344,23 @@ def jet_bridge(mb, face_pt, face_out, rot, door, z_door, door_out=(-1.0, 0.0)):
         cx, cy = rx + dx * (t0 + t1) / 2, ry + dy * (t0 + t1) / 2
         zz = z0 + (z_end - z0) * (t0 + t1) / 2
         Ls = L * (t1 - t0)
-        obox(mb, cx, cy, Ls, w, ang, zz, zz + h, mi("metal"))
-        # window bands both sides and a darker skirt
-        for s in (-1, 1):
-            px, py = cx + nx * s * (w / 2 + 0.02), cy + ny * s * (w / 2 + 0.02)
-            ex = (ux * -s, uy * -s, 0) if s > 0 else (ux, uy, 0)
-            start = (px - ex[0] * Ls / 2 + 0.0, py - ex[1] * Ls / 2, zz + 1.25)
-            quad(mb, start, ex, (0, 0, 1), Ls, 0.95, mi("glass_dark"), off=0.0)
-        # ribs
-        k = 0.0
-        while k <= Ls:
-            px, py = cx - ux * Ls / 2 + ux * k, cy - uy * Ls / 2 + uy * k
-            for s in (-1, 1):
-                beam(mb, (px + nx * s * (w / 2 + 0.06), py + ny * s * (w / 2 + 0.06), zz), (px + nx * s * (w / 2 + 0.06), py + ny * s * (w / 2 + 0.06), zz + h), 0.12, 0.12, mi("paint_grey"))
-            beam(mb, (px + nx * (w / 2 + 0.06), py + ny * (w / 2 + 0.06), zz + h + 0.05), (px - nx * (w / 2 + 0.06), py - ny * (w / 2 + 0.06), zz + h + 0.05), 0.12, 0.1, mi("paint_grey"))
-            k += 2.4
-    # drive column: A-frame legs, lifting column and wheel bogie
+        _tunnel(mb, cx, cy, zz, Ls, w, h, ang, (ux, uy), (nx, ny))
+    # drive column: two lifting columns either side of the tunnel on a cross beam, wheel bogie
     t = 0.72
     cx, cy = rx + dx * t, ry + dy * t
     zb = z0 + (z_end - z0) * t
     for s in (-1, 1):
-        beam(mb, (cx + nx * s * 1.2, cy + ny * s * 1.2, zb), (cx + nx * s * 0.5, cy + ny * s * 0.5, 1.3), 0.35, 0.35, mi("paint_grey"))
-    beam(mb, (cx, cy, 1.1), (cx, cy, zb), 0.5, 0.5, mi("steel"))
-    obox(mb, cx, cy, 1.2, 3.4, ang, 0.5, 1.2, mi("paint_grey"))
+        px, py = cx + nx * s * 1.95, cy + ny * s * 1.95
+        box(mb, px - 0.32, px + 0.32, py - 0.32, py + 0.32, 0.9, zb - 0.1, mi("paint_grey"))          # outer sleeve
+        box(mb, px - 0.22, px + 0.22, py - 0.22, py + 0.22, zb - 0.1, zb + 0.4, mi("steel"))          # inner ram
+        beam(mb, (px, py, zb - 0.2), (cx + nx * s * 1.55, cy + ny * s * 1.55, zb + 0.2), 0.25, 0.3, mi("paint_grey"))
+    beam(mb, (cx + nx * 2.1, cy + ny * 2.1, 1.0), (cx - nx * 2.1, cy - ny * 2.1, 1.0), 0.55, 0.6, mi("paint_grey"))
+    obox(mb, cx, cy, 1.6, 1.2, ang, 0.35, 1.0, mi("paint_grey"))
     for s in (-1, 1):
-        c0 = np.array([cx + nx * s * 1.35 - ux * 0.0, cy + ny * s * 1.35, 0.5])
-        cyl(mb, c0 - np.array([nx, ny, 0]) * s * 0.25, c0 + np.array([nx, ny, 0]) * s * 0.25, 0.5, mi("rubber"), n=14)
+        for f in (-0.45, 0.45):
+            c0 = np.array([cx + nx * s * 0.9 + ux * f, cy + ny * s * 0.9 + uy * f, 0.5])
+            cyl(mb, c0 - np.array([nx, ny, 0]) * 0.22, c0 + np.array([nx, ny, 0]) * 0.22, 0.48, mi("rubber"), n=16)
+            cyl(mb, c0 - np.array([nx, ny, 0]) * 0.23, c0 + np.array([nx, ny, 0]) * 0.23, 0.22, mi("steel"), n=10)
     # cab (turns to the door) with a bellows canopy
     cxx, cyy = cab
     cux, cuy = math.cos(cab_ang), math.sin(cab_ang)
@@ -336,7 +368,9 @@ def jet_bridge(mb, face_pt, face_out, rot, door, z_door, door_out=(-1.0, 0.0)):
     obox(mb, cxx, cyy, 4.2, 4.6, cab_ang, z_end - 0.2, z_end + 3.0, mi("metal"))
     for s in (-1, 1):
         px, py = cxx + cnx * s * 2.32, cyy + cny * s * 2.32
-        quad(mb, (px - cux * 1.6 * s, py - cuy * 1.6 * s, z_end + 1.1), (cux * s, cuy * s, 0), (0, 0, 1), 3.2, 1.2, mi("glass_dark"), off=0.0)
+        quad(mb, (px - cux * 1.7 * s, py - cuy * 1.7 * s, z_end + 0.9), (cux * s, cuy * s, 0), (0, 0, 1), 3.4, 1.75, mi("curtain"), off=0.0)
+        beam(mb, (px - cux * 1.75, py - cuy * 1.75, z_end + 0.85), (px + cux * 1.75, py + cuy * 1.75, z_end + 0.85), 0.12, 0.12, mi("paint_white"))
+        beam(mb, (px - cux * 1.75, py - cuy * 1.75, z_end + 2.7), (px + cux * 1.75, py + cuy * 1.75, z_end + 2.7), 0.12, 0.12, mi("paint_white"))
     for k in range(4):
         e = 2.1 + 0.07 * k
         obox(mb, cxx + cux * e, cyy + cuy * e, 0.07, 3.6 + 0.14 * k, cab_ang, z_end - 0.1 - 0.05 * k, z_end + 2.8 + 0.05 * k, mi("rubber"))

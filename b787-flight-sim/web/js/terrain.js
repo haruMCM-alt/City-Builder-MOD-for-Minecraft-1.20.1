@@ -98,7 +98,7 @@ export function coastDist(x, z) {
 // A fractal offset adds headlands, coves and a ragged small-scale edge. It only ever moves the
 // shore seawards (up to ~300 m), so nothing built on land ends up in the water, and it fades out
 // around the airports (sea walls, island runways).
-function coastWiggle(x, z) {
+export function coastWiggle(x, z) {
   let df = 1e9;
   for (const f of GEO.flats) df = Math.min(df, Math.hypot(Math.max(f.x0 - x, 0, x - f.x1), Math.max(f.z0 - z, 0, z - f.z1)));
   const k = smooth(1500, 4500, df);
