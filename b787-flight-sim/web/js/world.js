@@ -584,7 +584,7 @@ vWDepth = uWaterLevel - terrainHeight(vWW.xz);`);
 varying vec3 vWW; varying float vWDepth;
 uniform float uWTime, uWaterLevel;
 ${GROUND_GLSL}
-float wFoam = 0.0;`)
+float wFoam = 0.0, wSlick = 0.0, wGust = 0.5;`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 {
   float depth = vWDepth;
@@ -598,15 +598,35 @@ float wFoam = 0.0;`)
   float fn = gFbm(vWW.xz * 0.35 + vec2(uWTime * 0.05, 0.0));
   // surf: a narrow broken line where the shelf gets shallow, not a wide white band
   wFoam = smoothstep(0.75, 0.12, depth) * smoothstep(0.42, 0.8, fn * 0.7 + swell * 0.5) * step(-0.5, depth) * 0.85;
+  // open water seen from the air is never one flat colour: gust patches (cat's paws) darken and
+  // roughen it at km scale, wind-row slicks lie as smooth, brighter streaks along the wind,
+  // scattered whitecaps where the wind is strongest
+  vec2 wp = vWW.xz + vec2(uWTime * 1.5, uWTime * 0.6);
+  wGust = gFbm(wp / 2200.0) * 0.65 + gFbm(wp / 600.0 + 3.7) * 0.35;
+  wSlick = smoothstep(0.62, 0.8, gNoise(vec2(wp.x / 900.0, wp.y / 70.0 + gNoise(wp / 1500.0) * 3.0))) * (1.0 - wGust * 0.6);
+  float deepK = smoothstep(2.0, 8.0, depth);
+  wc *= mix(1.0, 0.75 + 0.45 * (1.0 - wGust), deepK);
+  wc = mix(wc, wc * 1.18 + vec3(0.004, 0.008, 0.01), wSlick * deepK);
+  float wpx = length(fwidth(vWW.xz));
+  float capN = gNoise(vWW.xz / 7.0 + vec2(uWTime * 0.35, -uWTime * 0.2)) * 0.6 + gNoise(vWW.xz / 2.3 + 9.1) * 0.4;
+  float caps = smoothstep(0.86, 0.95, capN) * smoothstep(0.5, 0.85, wGust) * deepK;
+  // beyond the resolving distance the caps average out to a faint lightening, not sparkle
+  caps = mix(caps, smoothstep(0.5, 0.9, wGust) * 0.04 * deepK, smoothstep(0.4, 3.0, wpx));
+  wFoam = max(wFoam, caps * 0.9);
   diffuseColor.rgb = mix(wc, vec3(0.8, 0.82, 0.82), wFoam) * diffuse;
 }`)
         .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;', `vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
   vec3 mapN2 = texture2D( normalMap, vNormalMapUv * 0.27 + vec2( uWTime * 0.0021, - uWTime * 0.0033 ) ).xyz * 2.0 - 1.0;
   vec3 mapN3 = texture2D( normalMap, vNormalMapUv * 2.3 + vec2( - uWTime * 0.021, uWTime * 0.014 ) ).xyz * 2.0 - 1.0;
   float wfade = clamp( 1.0 - length( fwidth( vNormalMapUv ) ) * 3.0, 0.35, 1.0 );
-  mapN = normalize( vec3( ( mapN.xy + mapN2.xy * 1.1 + mapN3.xy * 0.45 * wfade ) * wfade * ( 1.0 - wFoam * 0.6 ), mapN.z ) );`)
+  // long swell (stays visible to the horizon) plus gust-dependent wind waves
+  vec3 mapN4 = texture2D( normalMap, vNormalMapUv * 0.043 + vec2( uWTime * 0.0006, uWTime * 0.0004 ) ).xyz * 2.0 - 1.0;
+  float gk = 0.65 + 0.7 * wGust - 0.5 * wSlick;
+  mapN = normalize( vec3( ( ( mapN.xy + mapN2.xy * 1.1 + mapN3.xy * 0.45 * wfade ) * wfade * gk + mapN4.xy * 0.55 ) * ( 1.0 - wFoam * 0.6 ), mapN.z ) );`)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-roughnessFactor = mix(roughnessFactor, 0.55, wFoam);`);
+roughnessFactor = mix(roughnessFactor, 0.55, wFoam);
+// unresolved waves far away scatter the reflection; slicks stay glassy
+roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwidth(vWW.xz))) + 0.16 * smoothstep(0.35, 0.8, wGust) - 0.06 * wSlick, 0.03, 1.0);`);
     };
     // tessellated (not a single quad) so logarithmic depth stays precise near the camera
     const g = World.radialGrid(96, size / 2);
