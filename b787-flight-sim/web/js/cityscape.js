@@ -109,6 +109,12 @@ ${NOISE_GLSL}`)
   return m;
 }
 
+function sizeClass(w, d, h) {
+  if (w * d < 320 && h < 14) return 's';
+  if (w * d < 1600 && h < 30) return 'm';
+  return '';
+}
+
 function mulberry(a) {
   return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
@@ -144,22 +150,54 @@ export class Cityscape {
     const walls = wallGeometry(), slab = slabGeometry(), gable = gableGeometry();
     const roofs = [], gables = [], plant = [], tanks = [];
     const shadows = this.quality === 'high' || this.quality === 'ultra';
+    this.shadows = shadows;
+    // Performance: the buildings are split into TILE x TILE m tiles, one InstancedMesh per tile
+    // and kind, so the frustum (and the sun's shadow camera) culls everything out of view; far
+    // tiles drop the rooftop clutter and tiles beyond the haze are hidden (update()).
+    const TILE = 3000;
+    const tileKey = (x, z) => Math.floor(x / TILE) + ',' + Math.floor(z / TILE);
+    const tiles = new Map();
+    const tileOf = (x, z) => {
+      const k = tileKey(x, z);
+      let t = tiles.get(k);
+      if (!t) { t = { x: (Math.floor(x / TILE) + 0.5) * TILE, z: (Math.floor(z / TILE) + 0.5) * TILE, main: [], detail: [], small: [], medium: [] }; tiles.set(k, t); }
+      return t;
+    };
+    const instanced = (geo, mat, list, setter, tile, detail, cls = '') => {
+      const im = new THREE.InstancedMesh(geo, mat, list.length);
+      list.forEach((r, k) => setter(im, r, k));
+      im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      im.computeBoundingBox(); im.computeBoundingSphere();
+      im.castShadow = shadows; im.receiveShadow = true;
+      im.frustumCulled = true;
+      (detail ? tile.detail : cls === 's' ? tile.small : cls === 'm' ? tile.medium : tile.main).push(im);
+      this.group.add(im);
+    };
+    const byTile = (list, xi = 0, zi = 2) => {
+      const m = new Map();
+      for (const r of list) { const k = tileKey(r[xi], r[zi]) + (typeof r[8] === 'string' ? r[8] : ''); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
+      return m;
+    };
     STYLES.forEach((S, st) => {
       const L = per[st];
       if (!L.length) return;
       const mat = cityFacade(this.mats[S.mat], S.tile, S.tint);
-      const im = new THREE.InstancedMesh(walls, mat, L.length);
-      L.forEach(([x, z, w, d, h, rot], k) => {
+      const wallsByTile = new Map();
+      L.forEach(([x, z, w, d, h, rot]) => {
         const g = terrainHeight(x, z);
         const base = Math.max(g, 0) - 1.5;
-        q.setFromAxisAngle(up, rot);
-        p.set(x, base, z); s.set(w, h + 1.5, d);
-        im.setMatrixAt(k, m4.compose(p, q, s));
+        // LOD class: small, low buildings (houses, shops) are under a pixel beyond ~9 km, mid-size
+        // blocks beyond ~18 km (at 1080p / 55 deg); towers stay to the haze
+        const cls = sizeClass(w, d, h);
+        const tk = tileKey(x, z) + cls;
+        if (!wallsByTile.has(tk)) wallsByTile.set(tk, []);
+        wallsByTile.get(tk).push([x, base, z, w, h + 1.5, d, rot, cls]);
         const top = base + h + 1.5;
         const rc = S.roof[Math.floor(rnd() * S.roof.length)];
-        if (st === 7) gables.push([x, top, z, w + 0.8, 2.2 + rnd() * 1.2, d + 0.8, rot, rc]);
+        if (st === 7) gables.push([x, top, z, w + 0.8, 2.2 + rnd() * 1.2, d + 0.8, rot, rc, cls]);
         else {
-          roofs.push([x, top, z, w, 0.6, d, rot, rc]);
+          roofs.push([x, top, z, w, 0.6, d, rot, rc, cls]);
           // rooftop plant rooms / AC units on the bigger roofs
           if (w > 14 && d > 14 && st !== 8) {
             const k2 = 1 + Math.floor(rnd() * 3);
@@ -179,39 +217,60 @@ export class Cityscape {
           this.obstacles.push(x - r, z - r, x + r, z + r, top);
         }
       });
-      im.instanceMatrix.needsUpdate = true;
-      im.computeBoundingSphere();
-      im.castShadow = shadows; im.receiveShadow = true;
-      im.frustumCulled = false;
-      this.group.add(im);
+      for (const list of wallsByTile.values()) {
+        instanced(walls, mat, list, (im, r, k) => {
+          q.setFromAxisAngle(up, r[6]); p.set(r[0], r[1], r[2]); s.set(r[3], r[4], r[5]);
+          im.setMatrixAt(k, m4.compose(p, q, s));
+        }, tileOf(list[0][0], list[0][2]), false, list[0][7]);
+      }
     });
     const roofMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.05, envMapIntensity: 0.5 });
-    const add = (geo, list, mat, withColor = true) => {
+    const add = (geo, list, mat, withColor = true, detail = false) => {
       if (!list.length) return;
-      const im = new THREE.InstancedMesh(geo, mat, list.length);
-      list.forEach((r, k) => {
-        q.setFromAxisAngle(up, r[6] ?? 0);
-        p.set(r[0], r[1], r[2]); s.set(r[3], r[4], r[5]);
-        im.setMatrixAt(k, m4.compose(p, q, s));
-        if (withColor) im.setColorAt(k, col.set(r[7] || '#8a8a86'));
-      });
-      im.instanceMatrix.needsUpdate = true;
-      if (im.instanceColor) im.instanceColor.needsUpdate = true;
-      im.castShadow = shadows; im.receiveShadow = true;
-      im.frustumCulled = false;
-      this.group.add(im);
+      for (const tl of byTile(list).values()) {
+        instanced(geo, mat, tl, (im, r, k) => {
+          q.setFromAxisAngle(up, r[6] ?? 0);
+          p.set(r[0], r[1], r[2]); s.set(r[3], r[4], r[5]);
+          im.setMatrixAt(k, m4.compose(p, q, s));
+          if (withColor) im.setColorAt(k, col.set(r[7] || '#8a8a86'));
+        }, tileOf(tl[0][0], tl[0][2]), detail, detail ? '' : (typeof tl[0][8] === 'string' ? tl[0][8] : ''));
+      }
     };
     add(slab, roofs, roofMat);
     add(gable, gables, roofMat);
-    add(slab, plant, new THREE.MeshStandardMaterial({ color: 0x9a9c9e, roughness: 0.7, metalness: 0.3 }), false);
+    add(slab, plant, new THREE.MeshStandardMaterial({ color: 0x9a9c9e, roughness: 0.7, metalness: 0.3 }), false, true);
     if (tanks.length) {
       const tg = new THREE.CylinderGeometry(0.6, 0.6, 1.6, 10); tg.translate(0, 0.8, 0);
-      add(tg, tanks.map((t) => [t[0], t[1], t[2], 1, 1, 1, 0]), new THREE.MeshStandardMaterial({ color: 0xe8e8e2, roughness: 0.5, metalness: 0.2 }), false);
+      add(tg, tanks.map((t) => [t[0], t[1], t[2], 1, 1, 1, 0]), new THREE.MeshStandardMaterial({ color: 0xe8e8e2, roughness: 0.5, metalness: 0.2 }), false, true);
     }
+    this.tiles = [...tiles.values()];
+    this.group.updateMatrixWorld(true);
+    for (const m of this.group.children) { m.matrixAutoUpdate = false; m.matrixWorldAutoUpdate = false; }
     this.count = n;
   }
 
+  // distance LOD per tile: rooftop plant / tanks only within DETAIL_R (sub-pixel beyond), the
+  // whole tile hidden past the visibility (it is in the haze anyway); shadows only near by
+  update(cam, vis = 60000) {
+    if (!this.tiles) return;
+    const far = Math.min(Math.max(vis * 0.9, 20000), 48000) + Math.max(0, cam.y) * 2;
+    const DETAIL_R = 6000, SHADOW_R = 4500, SMALL_R = 9000, MEDIUM_R = 18000;
+    for (const t of this.tiles) {
+      const d = Math.hypot(t.x - cam.x, t.z - cam.z) - 2121;      // to the nearest corner
+      const on = d < far;
+      for (const m of t.main) { m.visible = on; m.castShadow = this.shadows && d < SHADOW_R; }
+      const sm = on && d < SMALL_R;
+      for (const m of t.small) { m.visible = sm; m.castShadow = this.shadows && d < SHADOW_R; }
+      const md = on && d < MEDIUM_R;
+      for (const m of t.medium) { m.visible = md; m.castShadow = this.shadows && d < SHADOW_R; }
+      const det = on && d < DETAIL_R;
+      for (const m of t.detail) { m.visible = det; m.castShadow = this.shadows && d < SHADOW_R; }
+    }
+  }
+
   setNight(night) {
+    if (this._night !== undefined && Math.abs(night - this._night) < 0.002) return;
+    this._night = night;
     for (const m of this.group.children) {
       const mat = m.material;
       if (mat?.userData?.cityFacade) mat.emissiveIntensity = night * 1.3;

@@ -227,8 +227,13 @@ const AC_CIRCLES = [[26, 0, 3.5], [16, 0, 3.4], [6, 0, 3.4], [-4, 0, 3.4], [-14,
 
 function acCircles(x, z, a, out, circles = AC_CIRCLES) {
   const c = Math.cos(a), s = Math.sin(a);
-  out.length = 0;
-  for (const [f, l, r] of circles) out.push([x + f * c - l * s, z + f * s + l * c, r]);
+  // reuses the entry arrays (called for every aircraft every frame)
+  out.length = circles.length;
+  for (let i = 0; i < circles.length; i++) {
+    const [f, l, r] = circles[i];
+    const e = out[i] || (out[i] = [0, 0, 0]);
+    e[0] = x + f * c - l * s; e[1] = z + f * s + l * c; e[2] = r;
+  }
   return out;
 }
 
@@ -299,10 +304,11 @@ class Vehicle {
     const n = Math.max(1, Math.round(this.L / this.W));
     const c = Math.cos(this.a), s = Math.sin(this.a);
     const r = this.W * 0.55;
-    this.circles.length = 0;
+    this.circles.length = n;
     for (let i = 0; i < n; i++) {
       const f = n === 1 ? 0 : -this.L / 2 + r + (this.L - 2 * r) * i / (n - 1);
-      this.circles.push([this.x + f * c, this.z + f * s, r]);
+      const e = this.circles[i] || (this.circles[i] = [0, 0, 0]);
+      e[0] = this.x + f * c; e[1] = this.z + f * s; e[2] = r;
     }
     return this.circles;
   }
@@ -381,7 +387,8 @@ class Vehicle {
 
   place(dt) {
     const o = this.obj;
-    o.position.set(this.x, terrainHeight(this.x, this.z) > 0.5 ? terrainHeight(this.x, this.z) : 0.06, this.z);
+    const gh = terrainHeight(this.x, this.z);
+    o.position.set(this.x, gh > 0.5 ? gh : 0.06, this.z);
     o.rotation.set(0, -this.a, 0);
     const sp = this.v * (this.dir < 0 && !this.leader ? -1 : 1);
     for (const w of this.wheels) {
@@ -1403,8 +1410,8 @@ export class Traffic {
       for (const ac of this.remote.slice()) {
         this._remoteStep(ac, dt);
         const d = Math.hypot(ac.x - cam.x, ac.z - cam.z);
-        if (d < 7000 && !ac.art) ac.activate();
-        else if (d > 9000 && ac.art) ac.deactivate();
+        if (d < 3000 && !ac.art) ac.activate();
+        else if (d > 3800 && ac.art) ac.deactivate();
         ac.static.visible = !ac.art && d < 60000;
         if (d < 60000) ac.place(dt);
       }

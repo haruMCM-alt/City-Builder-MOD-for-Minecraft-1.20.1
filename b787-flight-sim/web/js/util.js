@@ -2,6 +2,12 @@ import { GEO } from './geo_data.js';
 // Small dependency-free math used by the physics (so it can run in Node for tests).
 // Frames: world = three.js (x east, y up, z south). Body = aircraft (x fwd, y up, z right).
 
+// static scenery: compose the matrices once, then skip them in the per-frame scene traversal
+export function freezeStatic(root) {
+  root.updateMatrixWorld(true);
+  root.traverse((o) => { o.matrixAutoUpdate = false; o.matrixWorldAutoUpdate = false; });
+}
+
 export const DEG = Math.PI / 180;
 export const RAD = 180 / Math.PI;
 export const KT = 0.514444;          // m/s per knot

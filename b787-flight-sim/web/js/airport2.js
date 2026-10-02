@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { textSign, signTexts } from './signs.js';
 import { REMOTES } from './airports.js';
+import { freezeStatic } from './util.js';
 
 export { REMOTES, remoteById, nearestAirport, LAYOUT, remoteRunways } from './airports.js';
 export const A2 = REMOTES[0];
@@ -69,6 +70,7 @@ export class RemoteAirport {
     });
     this.world.prepareGLB(gltf.scene);
     this.group.add(gltf.scene);
+    freezeStatic(gltf.scene);
     const t = remoteTrees(this.ap, this.data);
     if (t.length) this.world.buildTrees(t);
   }

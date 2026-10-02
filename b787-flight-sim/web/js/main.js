@@ -1159,6 +1159,11 @@ class App {
     const cam = this.camera.position;
     for (const c of this.cities || []) {
       c.setNight(this.world.night);
+      // tile LOD: only when the camera has moved ~150 m (it is a per-tile loop)
+      if (c.tiles && (!c._lodAt || Math.abs(cam.x - c._lodAt.x) + Math.abs(cam.z - c._lodAt.z) + Math.abs(cam.y - c._lodAt.y) > 150 || c._lodVis !== this.world.weather?.vis)) {
+        c._lodAt = (c._lodAt || new THREE.Vector3()).copy(cam); c._lodVis = this.world.weather?.vis;
+        c.update(cam, this.world.weather?.vis);
+      }
       if (c.loaded || c.loading || c.failed) continue;
       if (Math.hypot(cam.x - c.ap.x, cam.z - c.ap.z) > 90000) continue;
       c.loading = true;
@@ -1460,7 +1465,7 @@ class App {
     this.input.walk = this.rig.view === 'walk';
     this.rig.walkInput = this.input.walk && !this.paused ? this.input.walkAxes() : null;
     this.rig.update(dt, fm, this.visual.root);
-    this.world.update(dt, this.camera, new THREE.Vector3(fm.pos.x, fm.pos.y, fm.pos.z));
+    this.world.update(dt, this.camera, (this._wfoc || (this._wfoc = new THREE.Vector3())).set(fm.pos.x, fm.pos.y, fm.pos.z));
     this.updateAirports();
     this.fids?.update(dt);
     this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit });

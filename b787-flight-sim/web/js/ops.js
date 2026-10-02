@@ -382,8 +382,10 @@ export class AirportOps {
       this._step(ac, dt);
       const dc = Math.hypot(ac.x - cam.x, ac.z - cam.z);
       const moving = ac.state !== 'PARK';
-      if (moving && dc < 7000 && !ac.art) ac.activate();
-      else if ((!moving || dc > 9000) && ac.art) ac.deactivate();
+      // articulated (≈40 parts) only where flaps / gear can be seen: beyond ~3 km an airliner is
+      // ~25 px wide and the merged static model looks the same at a fraction of the draw calls
+      if (moving && dc < 3000 && !ac.art) ac.activate();
+      else if ((!moving || dc > 3800) && ac.art) ac.deactivate();
       ac.static.visible = !ac.art && dc < 45000;
       if (dc < 45000) ac.place(dt);
     }

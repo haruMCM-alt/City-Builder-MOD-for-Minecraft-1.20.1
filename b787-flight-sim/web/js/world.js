@@ -3,11 +3,12 @@
 // airfield / city lights and parked aircraft.
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL, terrainHeight } from './terrain.js';
 import { patchFacade, patchStructure } from './shading.js';
 import { GROUND_GLSL } from './ground.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
-import { clamp, smoothstep, lerp, mulberry32, DEG, northAt } from './util.js';
+import { clamp, smoothstep, lerp, mulberry32, DEG, northAt, freezeStatic } from './util.js';
 import { GEO } from './geo_data.js';
 
 const LIGHT_KIND = { steady: 0, directional: 1, papi: 2, sequenced: 3, blink: 4, night: 5 };
@@ -396,7 +397,41 @@ export class World {
   }
 
   _buildTerrain() {
-    const geo = World.radialGrid(this.quality === 'low' ? 160 : 256, 70000);
+    const NG = this.quality === 'low' ? 160 : 256;
+    const geo = World.radialGrid(NG, 70000);
+    // Performance: height and normal of every grid vertex (the full terrain function: coast
+    // polygons, wiggle, peaks, flats - evaluated three times for the normal) are baked into a
+    // float texture only when the grid moves (16 m steps); the vertex shader just reads one
+    // texel. Same function, same values: the picture does not change, the cost per frame does.
+    this._bakeOK = this.renderer.capabilities.isWebGL2 && this.renderer.extensions.has('EXT_color_buffer_float');
+    if (this._bakeOK) {
+      const ga = new Float32Array((NG + 1) * (NG + 1) * 2);
+      for (let j = 0, k = 0; j <= NG; j++) for (let i = 0; i <= NG; i++) { ga[k++] = i; ga[k++] = j; }
+      geo.setAttribute('aGrid', new THREE.BufferAttribute(ga, 2));
+      this.terrainRT = new THREE.WebGLRenderTarget(NG + 1, NG + 1, { type: THREE.FloatType, format: THREE.RGBAFormat,
+        minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false, generateMipmaps: false });
+      this.terrainBakeU = { uCenter: { value: new THREE.Vector2() }, uN: { value: NG } };
+      this.terrainBake = new FullScreenQuad(new THREE.ShaderMaterial({
+        uniforms: this.terrainBakeU, depthTest: false, depthWrite: false,
+        vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: `precision highp float;
+uniform vec2 uCenter; uniform float uN;
+${TERRAIN_GLSL}
+float gmap(float t) { return sign(t) * 70000.0 * (0.018 * abs(t) + 0.982 * pow(abs(t), 3.3)); }
+void main() {
+  vec2 ij = floor(gl_FragCoord.xy);
+  vec2 t = ij / uN * 2.0 - 1.0;
+  vec2 pos = vec2(gmap(t.x), gmap(t.y));
+  vec2 wxz = pos + uCenter;
+  float h0 = terrainHeight(wxz);
+  float e = max(3.0, length(pos) * 0.006);
+  float hx = terrainHeight(wxz + vec2(e, 0.0));
+  float hz = terrainHeight(wxz + vec2(0.0, e));
+  gl_FragColor = vec4(h0, normalize(vec3(h0 - hx, e, h0 - hz)));
+}`,
+      }));
+      this._bakedAt = null;
+    }
     const detail = new THREE.CanvasTexture(noiseCanvas(256, 3, 3, [16, 8, 4]));
     detail.wrapS = detail.wrapT = THREE.RepeatWrapping;
     detail.colorSpace = THREE.NoColorSpace;
@@ -405,15 +440,24 @@ export class World {
     this.terrainUniforms = {
       uCenter: { value: new THREE.Vector2() },
       uDetail: { value: detail },
+      uTerrH: { value: this.terrainRT ? this.terrainRT.texture : null },
     };
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, this.terrainUniforms);
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', `#include <common>
+        .replace('#include <common>', this._bakeOK ? `#include <common>
+uniform vec2 uCenter; uniform sampler2D uTerrH; attribute vec2 aGrid;
+varying vec3 vTW; varying float vSlope;` : `#include <common>
 uniform vec2 uCenter;
 varying vec3 vTW; varying float vSlope;
 ${TERRAIN_GLSL}`)
-        .replace('#include <beginnormal_vertex>', `
+        .replace('#include <beginnormal_vertex>', this._bakeOK ? `
+vec2 wxz = position.xz + uCenter;
+vec4 tH = texelFetch(uTerrH, ivec2(aGrid + 0.5), 0);
+float h0 = tH.x;
+vec3 objectNormal = tH.yzw;
+vSlope = 1.0 - objectNormal.y;
+vTW = vec3(wxz.x, h0, wxz.y);` : `
 vec2 wxz = position.xz + uCenter;
 float h0 = terrainHeight(wxz);
 float e = max(3.0, length(position.xz) * 0.006);
@@ -567,16 +611,30 @@ normal = gBump(normal, - vViewPosition, gH, 1.0);`);
     // three wave scales (swell, wind waves, ripples) drifting in different directions break the
     // tiling; the depth from the terrain gives shallow water its colour and the shore its foam
     this.waterU = { uWTime: { value: 0 }, uWaterLevel: { value: TERRAIN.waterLevel } };
+    // water depth per vertex from a baked copy of the terrain function as well (see _buildTerrain)
+    if (this._bakeOK) {
+      this.waterRT = new THREE.WebGLRenderTarget(97, 97, { type: THREE.FloatType, format: THREE.RGBAFormat,
+        minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false, generateMipmaps: false });
+      const wm = this.terrainBake.material.clone();
+      wm.uniforms = { uCenter: { value: new THREE.Vector2() }, uN: { value: 96 } };
+      this.waterBakeU = wm.uniforms;
+      this.waterBake = new FullScreenQuad(wm);
+      this.waterU.uWaterH = { value: this.waterRT.texture };
+    }
     this.waterMat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, this.waterU, this.terrainUniforms);
       // the water depth comes from the terrain function, per vertex (the grid is dense near the
       // camera) - the polygon coastline is too expensive per pixel
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', `#include <common>
+        .replace('#include <common>', this._bakeOK ? `#include <common>
+varying vec3 vWW; varying float vWDepth;
+uniform float uWaterLevel; uniform sampler2D uWaterH; attribute vec2 aGrid;` : `#include <common>
 varying vec3 vWW; varying float vWDepth;
 uniform float uWaterLevel;
 ${TERRAIN_GLSL}`)
-        .replace('#include <begin_vertex>', `#include <begin_vertex>
+        .replace('#include <begin_vertex>', this._bakeOK ? `#include <begin_vertex>
+vWW = (modelMatrix * vec4(transformed, 1.0)).xyz;
+vWDepth = uWaterLevel - texelFetch(uWaterH, ivec2(aGrid + 0.5), 0).x;` : `#include <begin_vertex>
 vWW = (modelMatrix * vec4(transformed, 1.0)).xyz;
 vWDepth = uWaterLevel - terrainHeight(vWW.xz);`);
       sh.fragmentShader = sh.fragmentShader
@@ -630,6 +688,11 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     };
     // tessellated (not a single quad) so logarithmic depth stays precise near the camera
     const g = World.radialGrid(96, size / 2);
+    if (this._bakeOK) {
+      const ga = new Float32Array(97 * 97 * 2);
+      for (let j = 0, k = 0; j <= 96; j++) for (let i = 0; i <= 96; i++) { ga[k++] = i; ga[k++] = j; }
+      g.setAttribute('aGrid', new THREE.BufferAttribute(ga, 2));
+    }
     const n = g.getAttribute('normal');
     for (let i = 0; i < n.count; i++) n.setXYZ(i, 0, 1, 0);
     const p = g.getAttribute('position');
@@ -695,6 +758,7 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     this.scene.add(this.signs);
     // tree prototypes
     this.treeProtos = [0, 1].map((k) => root.getObjectByName('TreeProto_' + k));
+    freezeStatic(root);
   }
 
   setAirportName(name) {
@@ -1193,7 +1257,7 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     // volumetric clouds, and then following the weather
     if (su.cloudCoverage) { su.cloudCoverage.value = this._volOn ? 0 : W.cover * 0.7; su.cloudDensity.value = this._volOn ? 0 : 0.4; }
     // sun light
-    const sunCol = new THREE.Color().setRGB(1, lerp(0.96, 0.62, golden), lerp(0.92, 0.38, golden));
+    const sunCol = (this._sunColT || (this._sunColT = new THREE.Color())).setRGB(1, lerp(0.96, 0.62, golden), lerp(0.92, 0.38, golden));
     this.sun.color.copy(sunCol);
     // clear-sky balance only while the sun is up and not hidden by an overcast
     const kSun = lerp(1, LIGHT.SUN_K, day * (1 - W.overcast));
@@ -1221,9 +1285,9 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     this.stars.material.opacity = this.night * (1 - W.overcast) * 0.9;
     this.stars.position.copy(camera.position);
     // fog / haze
-    const horizon = new THREE.Color().setRGB(
+    const horizon = (this._horizonT || (this._horizonT = new THREE.Color())).setRGB(
       lerp(0.02, lerp(0.70, 0.93, golden), day), lerp(0.03, lerp(0.79, 0.62, golden), day), lerp(0.06, lerp(0.90, 0.48, golden), day));
-    if (W.overcast > 0.5) horizon.lerp(new THREE.Color(0.55 * day + 0.03, 0.58 * day + 0.03, 0.62 * day + 0.04), 0.7);
+    if (W.overcast > 0.5) horizon.lerp((this._ovcT || (this._ovcT = new THREE.Color())).setRGB(0.55 * day + 0.03, 0.58 * day + 0.03, 0.62 * day + 0.04), 0.7);
     let density = 1 / W.vis;
     const cy = camera.position.y;
     if (W.overcast > 0.5 && cy > W.base && cy < W.base + 420) density = 1 / 180;   // inside the deck
@@ -1254,6 +1318,19 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     const cx = Math.round(camera.position.x / step) * step, cz = Math.round(camera.position.z / step) * step;
     this.terrain.position.set(cx, 0, cz);
     this.terrainUniforms.uCenter.value.set(cx, cz);
+    if (this._bakeOK && (!this._bakedAt || this._bakedAt.x !== cx || this._bakedAt.y !== cz)) {
+      this._bakedAt = (this._bakedAt || new THREE.Vector2()).set(cx, cz);
+      this.terrainBakeU.uCenter.value.set(cx, cz);
+      const prev = this.renderer.getRenderTarget();
+      this.renderer.setRenderTarget(this.terrainRT);
+      this.terrainBake.render(this.renderer);
+      if (this.waterBake) {
+        this.waterBakeU.uCenter.value.set(cx, cz);
+        this.renderer.setRenderTarget(this.waterRT);
+        this.waterBake.render(this.renderer);
+      }
+      this.renderer.setRenderTarget(prev);
+    }
     this.water.position.x = cx; this.water.position.z = cz;
     this.waterNormal.offset.set(cx / 55 + this.time * 0.012, -cz / 55 + this.time * 0.007);
     this.waterMat.color.setRGB(0.35 + 0.65 * day, 0.35 + 0.65 * day, 0.4 + 0.6 * day);   // tints the shader's body colour

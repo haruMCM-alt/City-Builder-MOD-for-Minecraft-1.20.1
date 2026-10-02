@@ -112,6 +112,8 @@ const REEF = GEO.reef;            // [x, z, radius]
 const FL = GEO.flats;             // {x0, x1, z0, z1, hard}
 
 export function terrainHeight(x, z) {
+  // inside an airport flat zone the answer is 0 whatever the coast: skip the polygon search
+  for (const f of FL) if (x >= f.x0 && x <= f.x1 && z >= f.z0 && z <= f.z1) return 0;
   const d = coastDist(x, z);
   let h;
   if (d < 0) {

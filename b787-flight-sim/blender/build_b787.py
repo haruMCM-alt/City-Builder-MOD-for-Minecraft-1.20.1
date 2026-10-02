@@ -408,7 +408,7 @@ def build_wing(M, root, col, side):
         s0 = le + 0.45 * c
         s1 = float(G.wing_te(yf)) + 0.30 * c
         length = s1 - s0
-        n_s, n_a = 26, 20
+        n_s, n_a = RS(26, 12), RS(20, 12)          # LOD: 12 x 12 is still smooth at gate distance
         t = np.linspace(0, 1, n_s)
         ss = s0 + t * length
         # depth below the wing lower surface
