@@ -63,7 +63,7 @@ function cloud(scene, N, additive, tex) {
         vec2 p = gl_PointCoord - 0.5; float c = cos(vR), s = sin(vR);
         p = vec2(c * p.x - s * p.y, s * p.x + c * p.y) + 0.5;
         float a = texture2D(uMap, p).a * vA;
-        if (a < 0.003) discard;
+        if (!(a >= 0.003)) discard;                                   // (also NaN)
         vec3 col = mix(vC, pow(vC, vec3(2.2)) * uGain * (uAdd > 0.5 ? 3.0 : 1.0), uLin);
         gl_FragColor = vec4(col * (uAdd > 0.5 ? a : 1.0), uAdd > 0.5 ? 1.0 : a);
       }`,
@@ -195,6 +195,9 @@ export class FX {
         const m = C.meta[i];
         if (m.life <= 0) { C.A[i] = 0; continue; }
         m.life -= dt;
+        // the last frame of a particle: off (a negative life made (1 - t) ** 1.5 a NaN, which
+        // the bloom blew up into a black square)
+        if (m.life <= 0) { m.life = 0; C.A[i] = 0; continue; }
         const t = 1 - m.life / m.max;
         const v = m.v;
         if (m.kind === 'spark') { v[1] -= G * dt; v[0] *= 1 - dt * 0.3; v[2] *= 1 - dt * 0.3; }

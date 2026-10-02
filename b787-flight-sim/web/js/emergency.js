@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import { terrainHeight } from './terrain.js';
 import { remoteById, nearestAirport } from './airports.js';
+import { runwayDir } from './util.js';
 
 const ground = (x, z) => Math.max(0, terrainHeight(x, z));
 const wrapPi = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
@@ -283,18 +284,23 @@ export class ARFF {
     return this.trucks[apt];
   }
 
-  // standby beside the touchdown zone of the landing runway (on the fire station's side)
+  // standby beside the touchdown zone of the landing runway, on the side of the fire station.
+  // The runway direction comes from its compass heading and the local north (util.js), so
+  // every runway of every airport works, whatever its angle.
   deploy(apt, runway) {
     const T = this._fleet(apt), st = fireStation(apt);
-    const d = { x: Math.sin(runway.heading * Math.PI / 180), z: -Math.cos(runway.heading * Math.PI / 180) };
-    const side = st.side, off = 75 * side;
     if (this.job?.phase === 'ATTEND' && this.job.apt === apt) return;     // already on the way to it
+    const d = runwayDir(runway), tx = runway.threshold[0], tz = runway.threshold[2];
+    // unit normal of the runway pointing towards the fire station
+    let nx = -d.z, nz = d.x;
+    if ((st.x - tx) * nx + (st.z - tz) * nz < 0) { nx = -nx; nz = -nz; }
+    const off = 75, face = Math.atan2(-nz, -nx);                         // facing the runway
     this.job = { apt, runway, phase: 'STANDBY', t: 0 };
     T.forEach((tr, k) => {
       const along = 500 + k * 350;
-      const px = runway.threshold[0] + d.x * along, pz = runway.threshold[2] + d.z * along + off;
+      const px = tx + d.x * along + nx * off, pz = tz + d.z * along + nz * off;
       tr.active = true; tr.spray = null; tr.onScene = false;
-      tr.goTo([{ x: tr.x, z: st.z - 25 * side }, { x: px, z: pz + 25 * side }, { x: px, z: pz, face: Math.atan2(-side, 0) }], 26);
+      tr.goTo([{ x: tr.x, z: st.z - 25 * st.side }, { x: px + nx * 25, z: pz + nz * 25 }, { x: px, z: pz, face }], 26);
     });
   }
 
