@@ -538,7 +538,7 @@ TYPES = {
         ENG_Y=10.4, ENG_Z=-2.60, ENG_FWD=5.4, ENG_KA=1.06, ENG_KR=1.04, FAN_BLADES=16, ENG_FLAT=0.0,
         HT_S_LE0=55.6, HT_C0=6.6, HT_SEMI=10.6, HT_LE=42.0, HT_TIP_C=1.8, HT_Z0=1.0,
         VT_Z0=2.0, VT_S_LE0=53.6, VT_C0=9.0, VT_TIP_C=3.1, VT_LE=46.0, VT_FIL=(1.6, 3.4),
-        NOSE_TIRE=(1.07, 0.42, 0.36), MAIN_TIRE=(1.40, 0.54, 0.76), MAIN_AXLE_DS=0.85,
+        NOSE_TIRE=(1.07, 0.42, 0.36), MAIN_TIRE=(1.40, 0.54, 0.76), MAIN_AXLE_DS=1.45, AXLES=3,
         DOORS=[7.9, 19.6, 44.8, 59.8], DOOR=(1.07, -0.93, 1.00), DOOR_GAP=0.95,
         EXITS=[],
         WIN=(0.30, 0.29, 0.50, 0.965), WIN_S=(9.3, 60.6),
@@ -559,7 +559,7 @@ TYPES = {
         ENG_Y=12.4, ENG_Z=-3.30, ENG_FWD=6.4, ENG_KA=1.22, ENG_KR=1.26, FAN_BLADES=16, ENG_FLAT=0.0,
         HT_S_LE0=61.8, HT_C0=8.0, HT_SEMI=12.4, HT_LE=38.0, HT_TIP_C=2.3, HT_Z0=1.25,
         VT_Z0=2.5, VT_S_LE0=59.8, VT_C0=10.6, VT_TIP_C=3.9, VT_LE=43.0, VT_FIL=(2.0, 4.2),
-        NOSE_TIRE=(1.27, 0.46, 0.42), MAIN_TIRE=(1.52, 0.57, 0.82), MAIN_AXLE_DS=0.95,
+        NOSE_TIRE=(1.27, 0.46, 0.42), MAIN_TIRE=(1.52, 0.57, 0.82), MAIN_AXLE_DS=1.55, AXLES=3,
         DOORS=[8.4, 21.8, 37.4, 54.6, 67.6], DOOR=(1.07, -1.18, 0.75), DOOR_GAP=0.95,
         EXITS=[],
         WIN=(0.05, 0.30, 0.52, 0.965), WIN_S=(9.8, 68.4),
@@ -718,7 +718,8 @@ def apply_type(t):
     g["NOSE_TIRE_D"], g["NOSE_TIRE_W"], g["NOSE_WHEEL_DY"] = T["NOSE_TIRE"]
     g["MAIN_TIRE_D"], g["MAIN_TIRE_W"], g["MAIN_WHEEL_DY"] = T["MAIN_TIRE"]
     ds = T["MAIN_AXLE_DS"]
-    g["MAIN_AXLES"] = (-ds, ds) if ds > 0 else (0.0,)
+    # three-axle bogies (6 wheels per leg) on the heaviest types, like the 777
+    g["MAIN_AXLES"] = (-ds, 0.0, ds) if T.get("AXLES") == 3 else (-ds, ds) if ds > 0 else (0.0,)
     # --- openings --------------------------------------------------------------------
     g["DOOR_W"], g["DOOR_Z0"], g["DOOR_Z1"] = T["DOOR"]
     g["WIN_Z"], g["WIN_W"], g["WIN_H"], g["WIN_PITCH"] = T["WIN"]

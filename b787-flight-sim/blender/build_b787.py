@@ -1180,7 +1180,8 @@ def build_gear(M, root, col):
             continue          # 737: the main wheels retract into open wells (no belly doors)
         # belly wheel-well door (hinged near the keel, opens downward)
         mbd = C.MeshBuilder(TB)
-        ss = np.linspace(sM - 1.55 * SG, sM + 1.75 * SG, 16)
+        ext = max(0.0, G.MAIN_AXLE_DS - 0.8 * SG)       # longer (three-axle) bogies: a longer door
+        ss = np.linspace(sM - 1.55 * SG - ext, sM + 1.75 * SG + ext, 16)
         ys = np.linspace(0.25 * G.WR, 2.55 * G.WR, 12) * side
         P = np.zeros((len(ss), len(ys), 3))
         for i, s in enumerate(ss):

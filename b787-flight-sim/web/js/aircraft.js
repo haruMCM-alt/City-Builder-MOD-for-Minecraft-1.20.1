@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { DEG, clamp, lerp, smoothstep } from './util.js';
 import { glowTexture, HDR } from './world.js';
 import { liveryUniforms, patchLiveryShader, liveryAssets, setLiveryUniforms, finUniforms, setFinUniforms, patchFinShader } from './livery.js';
-import { patchWeathering, weatherKind } from './shading.js';
+import { patchWeathering, weatherKind, upgradeAircraftMaterials } from './shading.js';
 
 const COCKPIT_PARTS = ['CockpitShell', 'CockpitInterior', 'CockpitDetail', 'HUD_Combiner', 'Throttle_L', 'Throttle_R', 'Yoke_L', 'Yoke_R',
   'Display_PFD_L', 'Display_ND_L', 'Display_EICAS', 'Display_ND_R', 'Display_PFD_R'];
@@ -79,6 +79,7 @@ export class AircraftVisual {
         o.material = Array.isArray(o.material) ? out : out[0];
       });
     }
+    upgradeAircraftMaterials(this.root, quality);
     this.fuselageMats = [];
     this.displayMats = {};
     this.lightMats = {};

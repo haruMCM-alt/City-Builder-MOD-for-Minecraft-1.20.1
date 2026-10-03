@@ -193,3 +193,51 @@ roughnessFactor = clamp(roughnessFactor * (0.85 + 0.35 * stMott), 0.05, 1.0);`);
   m.customProgramCacheKey = ((k) => () => (k ? k() : '') + '|structure')(m.customProgramCacheKey?.bind(m));
   m.needsUpdate = true;
 }
+
+// Real-world finishes for the aircraft (player and AI models), high / ultra quality:
+//  * paint: a clear coat over the base colour -- the glossy, sharp sky reflection on an airliner
+//  * leading edges, inlet lips: polished bare aluminium / titanium
+//  * tyres: dull rubber with a dusty sheen
+// The glTF materials are standard ones; paint materials become MeshPhysicalMaterial in place.
+const FINISH = {
+  B787_Fuselage: { clearcoat: 0.8, clearcoatRoughness: 0.07 },
+  B787_Tail: { clearcoat: 0.8, clearcoatRoughness: 0.07 },
+  B787_WingPaint: { clearcoat: 0.45, clearcoatRoughness: 0.16 },
+  B787_Nacelle: { clearcoat: 0.7, clearcoatRoughness: 0.09 },
+  B787_Navy: { clearcoat: 0.7, clearcoatRoughness: 0.09 },
+  B787_GearPaint: { clearcoat: 0.35, clearcoatRoughness: 0.3 },
+};
+export function upgradeAircraftMaterials(root, quality) {
+  if (quality !== 'high' && quality !== 'ultra') return;
+  const done = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const one = (m) => {
+      if (!m) return m;
+      if (done.has(m)) return done.get(m);
+      let out = m;
+      const f = FINISH[m.name];
+      if (f && m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial) {
+        const p = new THREE.MeshPhysicalMaterial();
+        THREE.MeshStandardMaterial.prototype.copy.call(p, m);
+        p.defines = { STANDARD: '', PHYSICAL: '' };          // (the standard copy drops PHYSICAL)
+        p.userData = { ...m.userData };
+        p.clearcoat = f.clearcoat; p.clearcoatRoughness = f.clearcoatRoughness;
+        out = p;
+      } else if (m.name === 'B787_LeadingEdge' || m.name === 'B787_InletLip') {
+        m.metalness = 1.0; m.roughness = m.name === 'B787_InletLip' ? 0.16 : 0.22;
+        m.color.setRGB(0.80, 0.81, 0.82);
+      } else if (m.name === 'B787_Tire' && m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial) {
+        const p = new THREE.MeshPhysicalMaterial();
+        THREE.MeshStandardMaterial.prototype.copy.call(p, m);
+        p.defines = { STANDARD: '', PHYSICAL: '' };
+        p.userData = { ...m.userData };
+        p.roughness = 0.93; p.sheen = 0.5; p.sheenRoughness = 0.8; p.sheenColor = new THREE.Color(0.25, 0.23, 0.21);
+        out = p;
+      }
+      done.set(m, out);
+      return out;
+    };
+    o.material = Array.isArray(o.material) ? o.material.map(one) : one(o.material);
+  });
+}

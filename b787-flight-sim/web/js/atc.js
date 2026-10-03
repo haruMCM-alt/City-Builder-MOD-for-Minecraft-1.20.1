@@ -2,6 +2,8 @@
 // Messages are shown in the radio log and, when enabled, spoken with the Web Speech API
 // (controller and pilots with different voices), one transmission at a time.
 
+import { translateATC } from './atcja.js';
+
 export const FREQ = { GND: 'Tokyo Ground 121.7', TWR: 'Tokyo Tower 118.1' };
 // airport names chosen in the menu (radio phrases, frequencies, signs)
 // (name: home airport, name2 / name3 / name4: the remote airports, see airports.js)
@@ -101,6 +103,7 @@ export class Radio {
     this.lines = [];
     this.voice = true;
     this.noise = true;              // squelch / static around transmissions (menu option)
+    this.ja = false;                // beginner mode: Japanese translation under every call
     this.enabled = true;
     this.queue = [];
     this.speaking = false;
@@ -138,7 +141,7 @@ export class Radio {
     const sid = atc ? +(who.slice(3) || 1) : 1;
     if ((apt ?? sid) !== this.tuned) return;
     const label = atc ? (sid > 1 ? aptName(sid).toUpperCase() + ' ' : '') + (who.startsWith('GND') ? 'GROUND' : 'TOWER') : who;
-    this.lines.push({ label: me ? label + ' (YOU)' : label, text, atc, me, t: performance.now() });
+    this.lines.push({ label: me ? label + ' (YOU)' : label, text, ja: this.ja ? translateATC(text) : null, atc, me, t: performance.now() });
     if (this.lines.length > 6) this.lines.shift();
     this.render();
     if (this.voice && this.synth) {
@@ -187,7 +190,10 @@ export class Radio {
     this.el.innerHTML = this.lines.map((l) => {
       const age = (now - l.t) / 1000;
       const op = Math.max(0.35, 1 - Math.max(0, age - 20) / 40);
-      return `<div class="${l.atc ? 'atc' : l.me ? 'me' : 'plt'}" style="opacity:${op.toFixed(2)}"><b>${esc(l.label)}</b> ${esc(l.text)}</div>`;
+      // beginner mode: the Japanese translation under the transmission
+      if (this.ja && l.ja == null) l.ja = translateATC(l.text);
+      const ja = this.ja && l.ja ? `<div class="ja">${esc(l.ja)}</div>` : '';
+      return `<div class="${l.atc ? 'atc' : l.me ? 'me' : 'plt'}" style="opacity:${op.toFixed(2)}"><b>${esc(l.label)}</b> ${esc(l.text)}${ja}</div>`;
     }).join('');
     this.el.classList.toggle('hidden', !this.lines.length);
   }

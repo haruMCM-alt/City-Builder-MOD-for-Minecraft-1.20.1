@@ -111,6 +111,10 @@
   #fids .fHead { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: linear-gradient(#1b2a4a, #0e1830); border-bottom: 2px solid #d9b73a; }
   #fids .fPlane { font-size: 26px; color: #d9b73a; transform: rotate(-20deg); }
   #fids .fTitle { font-size: 28px; font-weight: 700; letter-spacing: .08em; }
+  #fids .fPlane.fArr { transform: rotate(20deg); }
+  #fids .fKinds { display: flex; gap: 4px; }
+  #fids .fKinds button { background: #0e1830; color: #9aa6bd; border: 1px solid #34466e; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12.5px; }
+  #fids .fKinds button.sel { background: #d9b73a; color: #10182a; border-color: #d9b73a; font-weight: 700; }
   #fids .fApt { font-size: 15px; color: #b9c3d6; flex: 1; }
   #fids .fClock { font: 700 26px/1 "DejaVu Sans Mono", Menlo, monospace; color: #ffd84a; }
   #fids .fClose { background: none; border: 1px solid #556; color: #ccd; border-radius: 4px; padding: 2px 8px; cursor: pointer; }
@@ -164,13 +168,42 @@
 
   /* ---------- menu: three-step slide wizard, black & sand ---------- */
   #menu { background: radial-gradient(1100px 700px at 75% 15%, rgba(60,48,30,.55) 0%, rgba(8,7,6,.86) 60%, rgba(5,5,4,.92) 100%); }
-  #menu .card.wiz {
+  #menu .card.wiz, #menu .card.hub {
     --bs-panel: rgba(17, 15, 12, 0.94); --bs-line: rgba(217, 194, 154, 0.18); --bs-sand: #d9c29a; --bs-sand-2: #b8955f;
     --bs-text: #f1e9da; --bs-muted: #a39883;
     width: min(1020px, 100%); background: var(--bs-panel); border-color: var(--bs-line); color: var(--bs-text);
     display: flex; flex-direction: column; overflow: hidden; padding: 20px 22px 16px;
   }
   .wiz h1 span { color: var(--bs-sand); }
+  /* mode hub: the first screen, one card per way to play */
+  #menu .card.hub { width: min(1100px, 100%); animation: hubIn .45s cubic-bezier(.22, .8, .2, 1); }
+  .hub h1 { margin: 0; }
+  .hub h1 span { color: var(--bs-sand); }
+  .hub .sub { color: var(--bs-muted); margin: 6px 0 0; }
+  .hub .sub span { opacity: .7; margin-left: 6px; }
+  .hub-foot { margin-top: 14px !important; font-size: 12px; text-align: right; }
+  .modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }
+  .modes button { position: relative; text-align: left; padding: 16px 16px 14px; min-height: 148px; border-radius: 14px; overflow: hidden;
+    background: linear-gradient(160deg, #221e17 0%, #14120e 100%); border: 1px solid rgba(217,194,154,.22); color: var(--bs-text);
+    display: flex; flex-direction: column; gap: 4px; transition: transform .2s, border-color .2s, box-shadow .2s; cursor: pointer; }
+  .modes button::after { content: ''; position: absolute; inset: 0; background: var(--mbg, none) center / cover no-repeat; opacity: .16; pointer-events: none; transition: opacity .25s; }
+  .modes button:hover, .modes button:focus-visible { transform: translateY(-3px); border-color: var(--bs-sand); box-shadow: 0 10px 26px rgba(0,0,0,.45); }
+  .modes button:hover::after { opacity: .3; }
+  .modes .mi { font-size: 30px; line-height: 1; }
+  .modes .mt { font-size: 18px; font-weight: 800; margin-top: 6px; }
+  .modes .me { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--bs-sand); }
+  .modes .md { font-size: 12.5px; color: var(--bs-muted); line-height: 1.5; margin-top: 2px; }
+  .modes .badge { position: absolute; right: 12px; top: 12px; font-size: 10.5px; padding: 2px 8px; border-radius: 99px; background: var(--bs-sand); color: #17130c; font-weight: 700; }
+  @keyframes hubIn { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+  /* the compact slide-show menu of a mode: opens out of the hub */
+  #menu .card.wiz { width: min(880px, 100%); animation: wizIn .45s cubic-bezier(.22, .8, .2, 1); }
+  #menu .card.wiz.compact { width: min(760px, 100%); }
+  @keyframes wizIn { from { opacity: 0; transform: translateY(24px) scale(.96); } to { opacity: 1; transform: none; } }
+  #wizHome { padding: 6px 10px; font-size: 12.5px; }
+  #menuTitle { display: flex; align-items: center; gap: 10px; font-size: 22px; margin: 0; flex: 1; }
+  #menuTitle i { font-style: normal; font-size: 26px; }
+  .wiz .beg { color: #ffd166 !important; font-weight: 700; }
+  .failPick button b { font-size: 15px; }
   .wiz .sub, .wiz label, .wiz .keys { color: var(--bs-muted); }
   .wiz legend { color: var(--bs-sand); }
   .wiz fieldset { border-color: var(--bs-line); }
@@ -375,6 +408,13 @@
   #atc div b { color: #8fdcff; font-weight: 700; margin-right: 5px; }
   #atc div.atc b { color: #ffd166; }
   #atc div.me b { color: #9dff9d; }
+  #atc div .ja { border: 0; padding: 1px 0 0 0; color: #fff3c4; font-size: 1.02em; font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif; }
+  #coach { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 12; max-width: min(720px, calc(100vw - 32px));
+    background: rgba(12, 18, 28, .82); border: 1px solid rgba(255, 216, 102, .55); border-radius: 10px; padding: 8px 14px;
+    color: #f4f0e2; font: 14px/1.5 "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif; pointer-events: none; backdrop-filter: blur(4px); }
+  #coach b { color: #ffd166; }
+  #coach .cT { font-size: 11px; letter-spacing: .12em; color: #ffd166; margin-right: 8px; }
+  #coach kbd { display: inline-block; min-width: 1.4em; padding: 0 5px; margin: 0 1px; border: 1px solid #8a7a4a; border-bottom-width: 2px; border-radius: 4px; background: #1e2433; color: #fff; font: 600 12px/1.5 "DejaVu Sans Mono", Menlo, monospace; text-align: center; }
   #atcHint { position: fixed; left: 12px; top: 178px; z-index: 6; font: 600 12px var(--mono); color: #d7e6f2; cursor: pointer;
     background: var(--glass); border: 1px solid var(--glass-line); border-left: 3px solid #6c7a88; padding: 6px 11px 6px 9px; border-radius: 4px;
     box-shadow: var(--glass-shadow); transition: opacity .5s, border-color .3s; }
@@ -466,46 +506,38 @@
   <div class="tFoot">非公式の個人制作ゲームです · Blender + three.js · ロゴと塗装の権利は各航空会社に帰属</div>
 </div>
 <div id="menu" class="hidden">
-  <div class="card wiz">
+  <div class="card hub" id="modeHub">
+    <div class="hub-head">
+      <h1>Micomsoft <span>Fright Simulator</span></h1>
+      <p class="sub">モードを選んでください　<span>Choose how you want to fly</span></p>
+    </div>
+    <div class="modes" id="modeGrid"></div>
+    <p class="sub hub-foot">羽田・関西・新千歳・那覇 ／ ボーイング 3 機種＋オリジナル MA シリーズ 3 機種</p>
+  </div>
+  <div class="card wiz hidden" id="wizCard">
     <div class="wiz-head">
-      <h1 id="menuTitle">Micomsoft <span>Fright Simulator</span></h1>
-      <ol class="steps" id="wizSteps">
-        <li data-i="0" class="on"><i>1</i><b>フライト設定</b><small>Flight</small></li>
-        <li data-i="1"><i>2</i><b>機体設定</b><small>Aircraft</small></li>
-        <li data-i="2"><i>3</i><b>環境設定</b><small>Environment</small></li>
-      </ol>
+      <button id="wizHome" class="small" title="モード選択に戻る">← モード</button>
+      <h1 id="menuTitle"><i id="modeIcon"></i><span id="modeName"></span></h1>
+      <ol class="steps" id="wizSteps"></ol>
     </div>
     <div class="slides">
       <div class="track" id="wizTrack">
-        <section class="slide" data-i="0">
-          <h2>フライト設定 <span>どこから飛ぶ？ 離陸・進入・遊覧を選択</span></h2>
+        <section class="slide" data-key="flight" data-label="フライト" data-en="Flight">
+          <h2>フライト <span>どこから飛ぶ？</span></h2>
           <div class="scen" id="scenarios"></div>
-          <div class="opts">
-            <label class="chk"><input type="checkbox" id="traffic" checked> AI交通・地上車両 Traffic &amp; GSE</label>
-            <label class="chk"><input type="checkbox" id="atcVoice" checked> ATC 無線音声 Radio voice</label>
-            <label class="chk"><input type="checkbox" id="atcNoise" checked> 無線ノイズ Radio static</label>
-            <label class="chk"><input type="checkbox" id="sound" checked> サウンド Sound</label>
-            <label class="inl">画質 Graphics
-              <select id="quality">
-                <option value="ultra" selected>異次元 Ultra (SSAO・光芒・レンズフレア・8K影)</option>
-                <option value="high">高 High (shadows)</option>
-                <option value="medium">中 Medium</option>
-                <option value="low">低 Low (fast)</option>
-              </select>
-            </label>
-          </div>
-          <div class="apNames">
-            <label>出発空港 東京・羽田 RJTT<input type="text" id="apName" maxlength="24" value="Tokyo" autocomplete="off" spellcheck="false"></label>
-            <label>大阪・関西 RJBB（西南西 260 km）<input type="text" id="apName2" maxlength="24" value="Kansai" autocomplete="off" spellcheck="false"></label>
-            <label>札幌・新千歳 RJCC（北北東 330 km）<input type="text" id="apName3" maxlength="24" value="New Chitose" autocomplete="off" spellcheck="false"></label>
-            <label>沖縄・那覇 ROAH（南西 420 km）<input type="text" id="apName4" maxlength="24" value="Naha" autocomplete="off" spellcheck="false"></label>
-            <label>目的地 Destination<select id="destApt"></select></label>
-          </div>
+          <div class="apNames dest"><label>目的地 Destination<select id="destApt"></select></label></div>
         </section>
-        <section class="slide" data-i="1">
-          <h2>機体設定 <span>機種・重量・塗装</span></h2>
+        <section class="slide" data-key="fail" data-label="故障" data-en="Failure">
+          <h2>訓練する故障 <span>出発の約 20 秒後に発生します</span></h2>
+          <div class="scen failPick" id="failPick"></div>
+        </section>
+        <section class="slide" data-key="type" data-label="機種" data-en="Aircraft">
+          <h2>機種 <span>ボーイング 3 機種とオリジナル MA シリーズ</span></h2>
           <div class="types" id="typePick"></div>
           <p class="sub" id="typeNote"></p>
+        </section>
+        <section class="slide" data-key="load" data-label="重量・塗装" data-en="Loading">
+          <h2>重量と塗装 <span>燃料・ペイロード・航空会社</span></h2>
           <div class="grid2">
             <fieldset>
               <legend>重量 / Loading</legend>
@@ -525,8 +557,8 @@
             </fieldset>
           </div>
         </section>
-        <section class="slide" data-i="2">
-          <h2>環境設定 <span>時刻・天候・風</span></h2>
+        <section class="slide" data-key="env" data-label="環境" data-en="Weather">
+          <h2>時刻・天候・風</h2>
           <div class="grid2">
             <fieldset>
               <legend>時刻と天候 / Time &amp; weather</legend>
@@ -552,7 +584,30 @@
               <input type="range" id="turb" min="0" max="1" step="0.1" value="0.2">
             </fieldset>
           </div>
-          <div class="summary" id="wizSummary"></div>
+        </section>
+        <section class="slide" data-key="opts" data-label="オプション" data-en="Options">
+          <h2>オプション <span>交通・音・画質・空港名</span></h2>
+          <div class="opts">
+            <label class="chk beg"><input type="checkbox" id="beginner"> 🔰 初心者モード（管制の日本語訳・操作ガイド）</label>
+            <label class="chk"><input type="checkbox" id="traffic" checked> AI交通・地上車両 Traffic &amp; GSE</label>
+            <label class="chk"><input type="checkbox" id="atcVoice" checked> ATC 無線音声 Radio voice</label>
+            <label class="chk"><input type="checkbox" id="atcNoise" checked> 無線ノイズ Radio static</label>
+            <label class="chk"><input type="checkbox" id="sound" checked> サウンド Sound</label>
+            <label class="inl">画質 Graphics
+              <select id="quality">
+                <option value="ultra" selected>異次元 Ultra (SSAO・光芒・レンズフレア・8K影)</option>
+                <option value="high">高 High (shadows)</option>
+                <option value="medium">中 Medium</option>
+                <option value="low">低 Low (fast)</option>
+              </select>
+            </label>
+          </div>
+          <div class="apNames">
+            <label>出発空港 東京・羽田 RJTT<input type="text" id="apName" maxlength="24" value="Tokyo" autocomplete="off" spellcheck="false"></label>
+            <label>大阪・関西 RJBB（西南西 260 km）<input type="text" id="apName2" maxlength="24" value="Kansai" autocomplete="off" spellcheck="false"></label>
+            <label>札幌・新千歳 RJCC（北北東 330 km）<input type="text" id="apName3" maxlength="24" value="New Chitose" autocomplete="off" spellcheck="false"></label>
+            <label>沖縄・那覇 ROAH（南西 420 km）<input type="text" id="apName4" maxlength="24" value="Naha" autocomplete="off" spellcheck="false"></label>
+          </div>
           <details>
             <summary>操作方法 / Controls</summary>
             <div class="keys" style="margin-top:10px">
@@ -584,20 +639,21 @@
         <div><b>Shift+E</b> 故障発生 (訓練) Random failure</div>
         <div><b>Shift+L</b> 緊急自動着陸 Emergency auto land</div>
         <div><b>Shift+D</b> 出発案内 Departures board</div>
+        <div><b>Shift+A</b> 到着案内 Arrivals board</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>
         <div><b>Esc</b> 一時停止 Pause</div>
       </div>
-      <p class="sub" style="margin-top:10px">ゲームパッド対応: 左スティック=操縦、右スティック=ラダー、RT/LT=スラスト、A=ギア、X/Y=フラップ、B=ブレーキ。</p>
             <p class="sub" style="margin-top:10px">ゲームパッド対応: 左スティック=操縦、右スティック=ラダー、RT/LT=スラスト、A=ギア、X/Y=フラップ、B=ブレーキ。</p>
           </details>
         </section>
       </div>
     </div>
+    <div class="summary" id="wizSummary"></div>
     <div class="row wiz-nav">
       <button id="wizBack">← 戻る</button>
-      <span class="dots" id="wizDots"><i class="on"></i><i></i><i></i></span>
+      <span class="dots" id="wizDots"></span>
       <span class="sub" style="margin:0" id="menuNote">開始後、画面をクリックするとキーボード操作できます。</span>
       <span class="spacer"></span>
       <button class="primary" id="wizNext">次へ →</button>
@@ -654,6 +710,7 @@
         <div><b>Shift+E</b> 故障発生 (訓練) Random failure</div>
         <div><b>Shift+L</b> 緊急自動着陸 Emergency auto land</div>
         <div><b>Shift+D</b> 出発案内 Departures board</div>
+        <div><b>Shift+A</b> 到着案内 Arrivals board</div>
         <div><b>B</b> AI交通カメラ・対象切替 Traffic cam</div>
         <div><b>9</b> ATC 音声 ON/OFF</div>
         <div><b>J</b> プッシュバック Pushback</div>
@@ -700,10 +757,12 @@
 <div id="status" class="hidden"></div>
 <div id="atc" class="hidden"></div>
 <div id="atcHint" class="hidden"></div>
+<div id="coach" class="hidden"></div>
 <div id="corner" class="hidden">
   <button id="btnView" title="視点 View (C)">◎ 視点</button>
   <button id="btnPanel" title="計器 Panel (I)">▦ 計器</button>
   <button id="btnFids" title="出発案内 Departures (Shift+D)">🛫</button>
+  <button id="btnFidsArr" title="到着案内 Arrivals (Shift+A)">🛬</button>
   <button id="btnMenu" title="一時停止 Pause (Esc)">❚❚</button>
 </div>
 <div id="fids" class="hidden"></div>

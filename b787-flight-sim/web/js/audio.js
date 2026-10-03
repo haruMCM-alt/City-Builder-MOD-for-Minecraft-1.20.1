@@ -35,10 +35,21 @@ const PHRASES = {
 // engine type (set when the aircraft type changes): N1 100 % shaft rate and fan blade count
 // GEnx-1B ~2560 rpm / 18 blades, CFM56-7B 5380 rpm / 24, CF6-80C2 3280 rpm / 38
 // MA-300 MX-1G geared fan ~3300 rpm / 18, MA-700 MX-9 ~2500 / 16, MA-900 MX-12 ~2100 / 16
-export const ENGINE_SOUND = { shaftHz: 2560 / 60, blades: 18 };
-export function setEngineSound(type) {
+// size: take-off thrust relative to the GEnx (a bigger engine is louder, and its roar deeper)
+export const ENGINE_SOUND = { shaftHz: 2560 / 60, blades: 18, thrust: 329600, size: 1 };
+export function setEngineSound(type, thrustSL) {
   const T = { b789: [2560, 18], b738: [5380, 24], b763: [3280, 38], ma3: [3300, 18], ma7: [2500, 16], ma9: [2100, 16] }[type] || [2560, 18];
   ENGINE_SOUND.shaftHz = T[0] / 60; ENGINE_SOUND.blades = T[1];
+  ENGINE_SOUND.thrust = thrustSL || 329600;
+  ENGINE_SOUND.size = ENGINE_SOUND.thrust / 329600;
+}
+// soft-clipping curve: adds harmonics to the low end so the body of the roar is heard (and
+// felt) even on small speakers that cannot reproduce 40 Hz
+function saturator(ctx, drive) {
+  const n = 1024, c = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(x * drive) / Math.tanh(drive); }
+  const w = ctx.createWaveShaper(); w.curve = c; w.oversample = '2x';
+  return w;
 }
 const TONE_SCALE = 0.62;
 const C_SOUND = 340;
@@ -71,10 +82,15 @@ export class Audio {
     // output: compressor glues the layers, master volume
     this.master = ctx.createGain();
     this.master.gain.value = 0.85;
+    // bus compressor (glue, slow release keeps the roar dense) + make-up gain + a brick-wall
+    // limiter: louder and thicker without clipping
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 3.5;
-    comp.attack.value = 0.01; comp.release.value = 0.25;
-    this.master.connect(comp); comp.connect(ctx.destination);
+    comp.threshold.value = -22; comp.knee.value = 10; comp.ratio.value = 4;
+    comp.attack.value = 0.015; comp.release.value = 0.35;
+    const makeup = ctx.createGain(); makeup.gain.value = 1.45;
+    const lim = ctx.createDynamicsCompressor();
+    lim.threshold.value = -2.5; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.12;
+    this.master.connect(comp); comp.connect(makeup); makeup.connect(lim); lim.connect(ctx.destination);
     // engine bus: air absorption (distance) + cabin filtering
     this.engBus = ctx.createGain();
     this.airLP = ctx.createBiquadFilter(); this.airLP.type = 'lowpass'; this.airLP.frequency.value = 18000; this.airLP.Q.value = 0.5;
@@ -83,6 +99,13 @@ export class Audio {
     // overall voicing: softer highs, fuller lows
     const hs = ctx.createBiquadFilter(); hs.type = 'highshelf'; hs.frequency.value = 2200; hs.gain.value = -7;
     const ls = ctx.createBiquadFilter(); ls.type = 'lowshelf'; ls.frequency.value = 160; ls.gain.value = 4;
+    // parallel saturation of the low end: density and "chest" of the roar
+    this.satIn = ctx.createBiquadFilter(); this.satIn.type = 'lowpass'; this.satIn.frequency.value = 320;
+    this.sat = saturator(ctx, 3.2);
+    this.satOut = ctx.createBiquadFilter(); this.satOut.type = 'lowpass'; this.satOut.frequency.value = 1400;
+    this.satG = ctx.createGain(); this.satG.gain.value = 0.55;
+    this.satLS = ls;
+    this.engBus.connect(this.satIn); this.satIn.connect(this.sat); this.sat.connect(this.satOut); this.satOut.connect(this.satG); this.satG.connect(ls);
     this.engBus.connect(hs); hs.connect(ls); ls.connect(this.airLP); this.airLP.connect(this.cabinLP); this.cabinLP.connect(this.cabinLP2); this.cabinLP2.connect(this.master);
     // outdoor reverberation (terminal / hangar walls, the ground): synthetic stereo impulse
     // response - sparse early reflections, then a diffuse exponential tail
@@ -254,6 +277,24 @@ export class Audio {
     E.rumLP = filt('lowpass', 110, 0.7);
     E.rumG = gain();
     E.rumSrc.connect(E.rumLP); E.rumLP.connect(E.rumG); E.rumG.connect(E.pan);
+    // ---- jet "body": 35-90 Hz sub layer, saturated so it reaches small speakers ---------------
+    E.subSrc = this.noise(this.brown, 0.6 + i * 2.2);
+    E.subLP = filt('lowpass', 75, 0.9);
+    E.subPk = filt('peaking', 48, 1.2); E.subPk.gain.value = 8;
+    E.subSat = saturator(ctx, 2.4);
+    E.subG = gain();
+    E.subSrc.connect(E.subLP); E.subLP.connect(E.subPk); E.subPk.connect(E.subSat); E.subSat.connect(E.subG); E.subG.connect(E.pan);
+    // ---- the tearing mid band of a take-off (big turbulent eddies, 250-900 Hz) ----------------
+    E.tearSrc = this.noise(this.pink, 3.7 + i * 0.4);
+    E.tearF = filt('bandpass', 420, 0.9);
+    E.tearG = gain();
+    E.tearSrc.connect(E.tearF); E.tearF.connect(E.tearG); E.tearG.connect(E.pan);
+    // ---- slow swell of the roar (4-10 Hz amplitude modulation from the turbulent mixing) -------
+    E.amSrc = this.noise(this.brown, 1.4 + i * 0.8);
+    E.amLP = filt('lowpass', 9, 0.6);
+    E.amDepth = gain(0);
+    E.amSrc.connect(E.amLP); E.amLP.connect(E.amDepth);
+    E.amDepth.connect(E.jetG.gain); E.amDepth.connect(E.tearG.gain); E.amDepth.connect(E.subG.gain);
     return E;
   }
 
@@ -508,7 +549,8 @@ export class Audio {
       const dop = 1;       // Doppler comes from the delay line now
       const shaft = ENGINE_SOUND.shaftHz * n1 * dop * TONE_SCALE * (ENGINE_SOUND.blades === 18 ? 1 : 0.8) * (i ? 1.0035 : 1);
       const bpf = shaft * ENGINE_SOUND.blades;
-      const thrust = clamp(Math.abs(e.thrust) / 330000, 0, 1.1);
+      const thrust = clamp(Math.abs(e.thrust) / ENGINE_SOUND.thrust, 0, 1.1);
+      const size = ENGINE_SOUND.size, big = Math.sqrt(size);       // big engines: louder, deeper
       const rev = e.reverse;
       // stereo placement from the engine position relative to the camera
       if (E.out.pan) {
@@ -536,13 +578,24 @@ export class Audio {
       // jet roar grows with thrust; reversers throw it forwards
       const jet = Math.pow(thrust, 1.25) + rev * 0.5;
 
-      set(E.jetLP.frequency, 220 + 1100 * Math.min(jet, 1) * (inside ? 0.5 : 1), 0.12);
-      set(E.jetG.gain, on * near * (jetDir + rev * 0.8) * (0.02 + 0.55 * jet), 0.12);
+      set(E.jetLP.frequency, (220 + 1100 * Math.min(jet, 1) * (inside ? 0.5 : 1)) / Math.pow(size, 0.25), 0.12);
+      set(E.jetBody.frequency, 110 / Math.pow(size, 0.3), 0.3);
+      const jetLvl = on * near * (jetDir + rev * 0.8) * (0.02 + 0.55 * jet) * big;
+      set(E.jetG.gain, jetLvl, 0.12);
       // crackle at high thrust, aft
-
-      set(E.crkG.gain, on * near * jetDir * 0.35 * smoothstep(0.6, 1.0, thrust), 0.12);
+      set(E.crkG.gain, on * near * jetDir * 0.35 * smoothstep(0.6, 1.0, thrust) * big, 0.12);
       // rumble
-      set(E.rumG.gain, on * near * (0.16 + 0.65 * n1) * (inside ? 1.6 : 1), 0.1);
+      set(E.rumG.gain, on * near * (0.16 + 0.65 * n1) * (inside ? 1.6 : 1) * big, 0.1);
+      // sub body: grows with thrust, carried through the airframe into the cabin / flight deck
+      const subLvl = on * near * (0.05 + 0.5 * Math.pow(Math.min(jet, 1.1), 1.4)) * (0.5 + 0.5 * jetDir) * (inside ? 0.8 : cabin ? 1.0 : 1) * big;
+      set(E.subG.gain, subLvl, 0.15);
+      set(E.subLP.frequency, 65 + 25 * Math.min(jet, 1), 0.2);
+      // tearing mid band: the "ripping" quality of full power, aft and outside
+      const tearLvl = on * near * jetDir * 0.32 * smoothstep(0.35, 1.0, thrust) * (outsideProp ? 1 : 0.25) * big;
+      set(E.tearG.gain, tearLvl, 0.15);
+      set(E.tearF.frequency, (300 + 260 * thrust) / Math.pow(size, 0.2), 0.2);
+      // swell depth: ~35 % of the roar level (the modulator noise is ~+-1)
+      set(E.amDepth.gain, 0.35 * jetLvl + 0.3 * tearLvl, 0.2);
     }
     // ---- APU at the gate: high whine + exhaust hiss from the tail cone ----------------------------
     if (!this.apu) {

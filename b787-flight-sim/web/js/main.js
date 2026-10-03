@@ -66,6 +66,39 @@ const TYPES = [
   { id: 'ma7', asset: 'ma-700', weight: 0.6, maker: 'Micomsoft', short: 'MA-700 Hayabusa', cls: '高速長距離 High-speed long-haul' },
   { id: 'ma9', asset: 'ma-900', weight: 0.5, maker: 'Micomsoft', short: 'MA-900 Otori', cls: '超大型双発 Super-widebody twin' },
 ];
+// play modes on the menu's first screen: each opens a compact slide show with only the
+// slides it needs (keys of the <section data-key> slides) and presets its scenario
+const MODES = [
+  { id: 'beginner', icon: '🔰', name: '初心者モード', en: 'Beginner', badge: 'おすすめ', img: 'type_b789.jpg',
+    desc: '管制の指示を日本語に訳し、次にやる操作を画面でガイド。羽田のゲートから出発します。',
+    slides: ['type', 'env'], scen: ['gate', 'rwy27', 'final'], preset: { scenario: 'gate', beginner: true, weather: 'clear', wind: 5, turb: 0, tod: 10 } },
+  { id: 'free', icon: '✈', name: 'フリーフライト', en: 'Free flight', img: 'type_b763.jpg',
+    desc: 'すべての設定を自由に。離陸・進入・遊覧から選び、機種・重量・塗装・天候まで細かく決めます。',
+    slides: ['flight', 'type', 'load', 'env', 'opts'], scen: null, preset: { beginner: false } },
+  { id: 'auto', icon: '🤖', name: '自動操縦の旅', en: 'Auto flight', img: 'type_ma7.jpg',
+    desc: '出発から着陸まで全自動。目的地を選んで、客室の窓や機内から空の旅を楽しめます。',
+    slides: ['flight', 'type', 'env'], scen: ['auto'], preset: { scenario: 'auto', beginner: false } },
+  { id: 'landing', icon: '🛬', name: '着陸チャレンジ', en: 'Landing challenge', img: 'type_b738.jpg',
+    desc: 'ILS 進入・ショートファイナル・目的地への最終進入。横風や悪天候で腕試し。',
+    slides: ['flight', 'type', 'env'], scen: ['ils27', 'final', 'apt2'], preset: { scenario: 'ils27', beginner: false } },
+  { id: 'emergency', icon: '🚨', name: '緊急事態訓練', en: 'Emergency training', img: 'type_ma9.jpg',
+    desc: 'エンジン火災や両エンジン停止を訓練。メーデー宣言、消防車の出動、緊急着陸まで。',
+    slides: ['flight', 'fail', 'type', 'env'], scen: ['ils27', 'rwy27', 'cruise'], preset: { scenario: 'ils27', beginner: false } },
+  { id: 'sightseeing', icon: '🏙', name: '遊覧飛行', en: 'Sightseeing', img: 'type_ma3.jpg',
+    desc: '東京の街やランドマークの上空をのんびり。夕焼けや夜景の時刻もおすすめ。',
+    slides: ['flight', 'type', 'env'], scen: ['city', 'cruise'], preset: { scenario: 'city', beginner: false, tod: 17.5 } },
+  { id: 'spotter', icon: '📷', name: 'スポッター', en: 'Plane spotting', img: 'type_b789.jpg',
+    desc: '空港で行き交う飛行機を眺めるモード。カメラが離着陸機を自動で追います（B で次の機体）。',
+    slides: ['env'], scen: ['gate'], preset: { scenario: 'gate', beginner: false, spotter: true } },
+];
+const FAILS = [
+  { id: 'engineFire', icon: '🔥', name: 'エンジン火災', en: 'Engine fire' },
+  { id: 'engineFail', icon: '⚙', name: 'エンジン停止', en: 'Engine failure' },
+  { id: 'fuelLeak', icon: '⛽', name: '燃料漏れ', en: 'Fuel leak' },
+  { id: 'wingOff', icon: '✈', name: '主翼脱落', en: 'Wing separation' },
+  { id: 'dualEngine', icon: '⚙⚙', name: '両エンジン停止', en: 'Dual engine failure' },
+  { id: 'random', icon: '🎲', name: 'ランダム', en: 'Random' },
+];
 const STAND_NOSE = 24.13;       // stands are marked for the 787-9 nose gear position
 const WEATHER_ICONS = { clear: ['☀', '快晴'], scattered: ['🌤', '晴れ時々曇り'], broken: ['⛅', '曇り'], overcast: ['☁', '曇天・低視程'], rain: ['🌧', '雨'] };
 
@@ -333,13 +366,11 @@ class App {
     this.fm = new FlightModel(T.meta);
     this.sys = new Systems(this.fm, this.worldData);
     this.rig.meta = T.meta;
-    setEngineSound(id);
+    setEngineSound(id, T.meta.spec && T.meta.spec.thrustSL);
     if (this.traffic) this.traffic.setPlayerMeta(T.meta);
     this.applyLivery();
     this.updateWeights();
     try { localStorage.setItem('b787.actype', id); } catch (e) { /* ignore */ }
-    const t = $('menuTitle');
-    if (t) t.innerHTML = `Micomsoft <span>Fright Simulator</span>`;
     document.title = `Micomsoft Fright Simulator — ${T.maker === 'Boeing' ? 'B' : ''}${T.short}`;
   }
 
@@ -381,6 +412,12 @@ class App {
   }
 
   // ------------------------------------------------------------------- menu
+  pickScenario(id) {
+    this.scenario = id;
+    $('scenarios').querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x.dataset.id === id));
+    this.updateSummary?.();
+  }
+
   buildMenu() {
     const box = $('scenarios');
     this.scenario = 'rwy27';
@@ -388,11 +425,7 @@ class App {
       const b = document.createElement('button');
       b.innerHTML = `<b>${s.name}</b><br><span style="color:var(--muted);font-size:12px">${s.note}</span>`;
       b.dataset.id = s.id;
-      b.onclick = () => {
-        this.scenario = s.id;
-        box.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x.dataset.id === s.id));
-        this.updateSummary();
-      };
+      b.onclick = () => this.pickScenario(s.id);
       if (s.id === this.scenario) b.classList.add('sel');
       box.appendChild(b);
     }
@@ -424,6 +457,7 @@ class App {
     $('btnMenu').onclick = () => this.command('menu');
     this.fids = new FIDS(this, $('fids'));
     $('btnFids').onclick = () => this.command('fids');
+    if ($('btnFidsArr')) $('btnFidsArr').onclick = () => this.command('fidsArr');
     $('resumeBtn').onclick = () => this.resume();
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && ['menu', 'crash', 'pause'].every((id) => $(id).classList.contains('hidden'))) this.pause();
@@ -489,26 +523,28 @@ class App {
     fuel.dispatchEvent(new Event('input')); pay.dispatchEvent(new Event('input'));
   }
 
-  // ------------------------------------------------------------------- menu wizard
+  // ------------------------------------------------------------------- menu: mode hub + slide show
   buildWizard() {
     this.wizStep = 0;
+    this.wizSlides = [];
     const go = (i) => {
-      this.wizStep = Math.max(0, Math.min(2, i));
+      const n = this.wizSlides.length;
+      this.wizStep = Math.max(0, Math.min(n - 1, i));
       $('wizTrack').style.transform = `translateX(${-100 * this.wizStep}%)`;
       document.querySelectorAll('#wizSteps li').forEach((li, k) => {
         li.classList.toggle('on', k === this.wizStep); li.classList.toggle('done', k < this.wizStep);
       });
       document.querySelectorAll('#wizDots i').forEach((d, k) => d.classList.toggle('on', k === this.wizStep));
       $('wizBack').disabled = this.wizStep === 0;
-      $('wizNext').classList.toggle('hidden', this.wizStep === 2);
-      $('startBtn').classList.toggle('hidden', this.wizStep !== 2);
-      document.querySelectorAll('#wizTrack .slide').forEach((s, k) => { s.inert = k !== this.wizStep; s.scrollTop = 0; });
+      $('wizNext').classList.toggle('hidden', this.wizStep >= n - 1);
+      $('startBtn').classList.toggle('hidden', this.wizStep < n - 1);
+      this.wizSlides.forEach((sl, k) => { sl.inert = k !== this.wizStep; sl.scrollTop = 0; });
       this.updateSummary();
     };
     this.wizGo = go;
     $('wizBack').onclick = () => go(this.wizStep - 1);
     $('wizNext').onclick = () => go(this.wizStep + 1);
-    document.querySelectorAll('#wizSteps li').forEach((li) => { li.onclick = () => go(+li.dataset.i); });
+    $('wizHome').onclick = () => this.showModeHub();
     // swipe between the slides on touch screens
     let sx = null;
     const tr = $('wizTrack');
@@ -518,7 +554,68 @@ class App {
       const dx = e.changedTouches[0].clientX - sx; sx = null;
       if (Math.abs(dx) > 60 && !(e.target.closest && e.target.closest('input, select, .logos'))) go(this.wizStep + (dx < 0 ? 1 : -1));
     }, { passive: true });
-    go(0);
+    // failure picker (emergency training)
+    const fp = $('failPick');
+    this.trainFail = 'engineFire';
+    for (const f of FAILS) {
+      const b = document.createElement('button');
+      b.dataset.id = f.id;
+      b.innerHTML = `<b>${f.icon} ${f.name}</b><br><span style="color:var(--muted);font-size:12px">${f.en}</span>`;
+      b.onclick = () => { this.trainFail = f.id; fp.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x === b)); this.updateSummary(); };
+      if (f.id === this.trainFail) b.classList.add('sel');
+      fp.appendChild(b);
+    }
+    // the hub
+    const grid = $('modeGrid');
+    for (const m of MODES) {
+      const b = document.createElement('button');
+      b.dataset.id = m.id;
+      b.style.setProperty('--mbg', `url("${assetURL(ASSET + m.img)}")`);
+      b.innerHTML = (m.badge ? `<span class="badge">${m.badge}</span>` : '') +
+        `<span class="mi">${m.icon}</span><span class="mt">${m.name}</span><span class="me">${m.en}</span><span class="md">${m.desc}</span>`;
+      b.onclick = () => this.selectMode(m.id);
+      grid.appendChild(b);
+    }
+    this.showModeHub();
+  }
+
+  showModeHub() {
+    $('wizCard').classList.add('hidden');
+    $('modeHub').classList.remove('hidden');
+  }
+
+  // a mode opens its own compact slide show
+  selectMode(id) {
+    const m = MODES.find((x) => x.id === id) || MODES[1];
+    this.mode = m;
+    const P = m.preset || {};
+    // presets
+    if (P.scenario) this.pickScenario(P.scenario);
+    else if (m.scen && !m.scen.includes(this.scenario)) this.pickScenario(m.scen[0]);
+    if ($('beginner')) $('beginner').checked = !!P.beginner;
+    if (P.weather) { $('weather').value = P.weather; $('weather').dispatchEvent(new Event('change')); this.refreshWeatherPick?.(); }
+    const setR = (rid, v) => { if (v == null || !$(rid)) return; $(rid).value = v; $(rid).dispatchEvent(new Event('input')); };
+    setR('windSpd', P.wind); setR('turb', P.turb); setR('tod', P.tod);
+    // scenarios offered by this mode
+    $('scenarios').querySelectorAll('button').forEach((b) => b.classList.toggle('hidden', !!m.scen && !m.scen.includes(b.dataset.id)));
+    // slides of this mode, in their order in the page
+    this.wizSlides = [];
+    document.querySelectorAll('#wizTrack .slide').forEach((sl) => {
+      const on = m.slides.includes(sl.dataset.key);
+      sl.classList.toggle('hidden', !on);
+      if (on) this.wizSlides.push(sl);
+    });
+    $('wizSteps').innerHTML = this.wizSlides.map((sl, k) => `<li data-i="${k}"><i>${k + 1}</i><b>${sl.dataset.label}</b><small>${sl.dataset.en}</small></li>`).join('');
+    $('wizSteps').querySelectorAll('li').forEach((li) => { li.onclick = () => this.wizGo(+li.dataset.i); });
+    $('wizDots').innerHTML = this.wizSlides.map(() => '<i></i>').join('');
+    $('modeIcon').textContent = m.icon;
+    $('modeName').textContent = `${m.name}`;
+    $('wizCard').classList.toggle('compact', this.wizSlides.length <= 2);
+    $('modeHub').classList.add('hidden');
+    const card = $('wizCard');
+    card.classList.remove('hidden');
+    card.style.animation = 'none'; void card.offsetWidth; card.style.animation = '';
+    this.wizGo(0);
   }
 
   updateSummary() {
@@ -570,6 +667,7 @@ class App {
     const box = $('wxPick'), sel = $('weather');
     if (!box) return;
     const upd = () => box.querySelectorAll('button').forEach((b) => b.classList.toggle('sel', b.dataset.id === sel.value));
+    this.refreshWeatherPick = upd;
     for (const o of sel.options) {
       const [icon, name] = WEATHER_ICONS[o.value] || ['', o.textContent];
       const b = document.createElement('button');
@@ -606,7 +704,9 @@ class App {
     $('pause').classList.add('hidden');
     this.paused = true;
     $('menu').classList.remove('hidden');
-    ['mcp', 'panel', 'status', 'corner', 'touch', 'atc', 'atcHint'].forEach((i) => $(i).classList.add('hidden'));
+    this.showModeHub();
+    $('coach')?.classList.add('hidden');
+    ['mcp', 'panel', 'status', 'corner', 'touch', 'atc', 'atcHint', 'coach'].forEach((i) => $(i)?.classList.add('hidden'));
   }
 
   applyLivery() {
@@ -766,7 +866,14 @@ class App {
     this.audio.enabled = $('sound').checked;
     this.audio.start();
     $('menu').classList.add('hidden');
+    this.beginner = !!($('beginner') && $('beginner').checked);
     this.startScenario(this.scenario, true);
+    if (this.radio) { this.radio.ja = this.beginner; this.radio.render(); }
+    const m = this.mode;
+    // emergency training: the chosen failure some 20 s into the flight
+    this._failAt = m && m.id === 'emergency' ? 20 : null;
+    // plane spotting: the traffic camera follows the aircraft moving around the airport
+    if (m && m.preset && m.preset.spotter) this.command('trafficNext');
   }
 
   setQuality(q) {
@@ -1028,9 +1135,11 @@ class App {
   // ------------------------------------------------------------------- commands
   command(c) {
     const sys = this.sys, fm = this.fm, o = fm.out;
-    if (c === 'fids') {
-      // the board of the airport you are nearest to
-      { const na = nearestAirport(this.fm.pos.x, this.fm.pos.z); this.fids.toggle(!this.fids.open, na > 1 ? String(na) : 'home'); }
+    if (c === 'fids' || c === 'fidsArr') {
+      // the board of the airport you are nearest to (departures / arrivals)
+      const na = nearestAirport(this.fm.pos.x, this.fm.pos.z), kind = c === 'fids' ? 'dep' : 'arr';
+      const on = !(this.fids.open && this.fids.kind === kind);
+      this.fids.toggle(on, na > 1 ? String(na) : 'home', kind);
       return;
     }
     if (c === 'menu') {
@@ -1478,6 +1587,16 @@ class App {
     this.world.update(dt, this.camera, (this._wfoc || (this._wfoc = new THREE.Vector3())).set(fm.pos.x, fm.pos.y, fm.pos.z));
     this.updateAirports();
     this.fids?.update(dt);
+    // emergency training: the failure picked in the menu
+    if (this._failAt != null && !this.paused && !this.fm.crashed) {
+      this._failAt -= dt;
+      if (this._failAt <= 0) {
+        this._failAt = null;
+        const ids = FAILS.filter((f) => f.id !== 'random').map((f) => f.id);
+        const k = this.trainFail === 'random' ? ids[Math.floor(Math.random() * ids.length)] : (this.trainFail || 'engineFire');
+        this.command('failure:' + k);
+      }
+    }
     this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit });
     if (this.mcp3d && this.visual.cockpitVisible && (this._mcpT3 = (this._mcpT3 || 0) + dt) > 0.12) { this._mcpT3 = 0; this.mcp3d.update(sys, this.world.night); }
     const hud = $('hud');
@@ -1707,6 +1826,66 @@ class App {
       el.classList.remove('hidden');
       el.classList.toggle('ready', !!h);
     }
+    // beginner mode: what to do next, in plain Japanese with the keys
+    const ce = $('coach');
+    if (ce) {
+      const c = this.beginner && !this.paused && this.rig.view !== 'traffic' ? this.coachText() : '';
+      if (c) { const html = `<span class="cT">🔰 次にやること</span>${c}`; if (ce.innerHTML !== html) ce.innerHTML = html; }
+      ce.classList.toggle('hidden', !c);
+    }
+  }
+
+  coachText() {
+    const fm = this.fm, sys = this.sys, o = fm.out, T = this.traffic;
+    if (!T || !T.enabled || fm.crashed) return '';
+    const pc = T.pc, s = pc.s, ph = pc.phase(), k = (x) => `<kbd>${x}</kbd>`;
+    const vs = sys.vspeeds(), ias = Math.round(o.ias || 0);
+    if (this.autoFlight && !s.mayday) return '自動操縦で飛行中です。操縦桿（矢印キー）を動かすと手動に切り替わります。' + k('C') + 'で客室の窓や機内に視点を変えられます';
+    const ek = pc.emergencyKind && pc.emergencyKind();
+    if (ek && !s.mayday) return `機体に異常が発生！ ${k('Y')} で管制に<b>${ek === 'MAYDAY' ? 'メーデー' : 'パンパン'}</b>を宣言しましょう`;
+    if (s.mayday && !s.autoLand && !o.wow && !s.landed) return `もう一度 ${k('Y')}（または ${k('Shift')}+${k('L')}）で全自動の緊急着陸ができます`;
+    if (o.wow) {
+      if (s.landed || (s.landCleared && o.gs > 30 && !s.tkof)) {
+        if (o.gs > 40) return `着陸しました！ ${k('H')} で逆噴射、${k('Space')} でブレーキ。まっすぐ減速しましょう`;
+        if (!s.taxiIn) return `誘導路に出たら ${k('Y')} でスポットまでの地上走行を要求します`;
+        return `管制の指示どおり誘導路をスポットへ。${k('R')}/${k('F')} で推力、${k('←')}${k('→')} で前輪操舵。スポットに着いたら ${k('P')} で駐機ブレーキ`;
+      }
+      if (ph === 'GATE' && !s.push && !s.pushPending) return `まず ${k('Y')} を押して、管制にプッシュバック（後押し出発）を要求しましょう`;
+      if ((ph === 'GATE' || ph === 'TAXI') && s.push && !fm.ctl.pushback && !this.pushPending && !s.taxi && o.gs < 1) {
+        return `プッシュバックが許可されました。${k('J')} でトーイングカーが押し出します（駐機ブレーキは自動で解除）`;
+      }
+      if (fm.ctl.pushback || this.pushPending) return `プッシュバック中です。止まるまで待ちましょう（もう一度 ${k('J')} で終了）`;
+      if ((ph === 'TAXI' || ph === 'GATE') && !s.taxi) return `${k('Y')} で管制に地上走行（タキシー）を要求します`;
+      if (ph === 'TAXI') return `誘導路を滑走路の手前まで進みます。${k('R')} で推力を少し上げ（N1 30% 前後）、${k('←')}${k('→')} で前輪を操舵。速さは 20 ノット以下に。止まるときは ${k('Space')}`;
+      if ((ph === 'HOLD' || ph === 'RUNWAY') && !s.tkof) {
+        if (pc.waiting) return '管制の指示を待っています。離陸の許可が出るまでその場で待機しましょう';
+        return `停止位置で止まり（${k('Space')}）、${k('Y')} で「離陸準備完了」を伝えます。フラップは ${k('X')} で 5 に`;
+      }
+      if (s.tkof && ias < vs.vr) {
+        const fl = FLAPS[sys.flapLever].angle;
+        if (fl < 5) return `離陸にはフラップが必要です。${k('X')} でフラップ 5 に`;
+        return `離陸許可が出ました！ ${k('Shift')}+${k('R')} で離陸推力。<b>VR ${Math.round(vs.vr)} ノット</b>で ${k('↓')} を引いて機首を上げます（いま ${ias} ノット）`;
+      }
+      if (s.tkof) return `${k('↓')} を引いて機首を 10〜15 度まで上げ、浮き上がるのを待ちましょう`;
+      return '';
+    }
+    // in the air
+    const agl = o.raFt ?? o.altFt;
+    if (s.tkof && !s.inbound && agl < 4000) {
+      if (fm.ctl.gearPos < 0.5 && o.vs > 0) return `上昇中。${k('G')} で脚（ギア）を上げましょう`;
+      if (sys.flapLever > 0 && ias > vs.flapsUp + 10) return `速度が出てきました。${k('Z')} でフラップを 1 段ずつ上げます`;
+      if (!sys.ap.on) return `落ち着いたら ${k('1')} でオートパイロット、${k('2')} でオートスロットルを入れると楽になります`;
+    }
+    if (!s.inbound) return `飛行を楽しんだら ${k('Y')} で着陸を要求しましょう。管制が進入の方法を教えてくれます`;
+    const d = sys.ilsDev || {};
+    if (!o.wow && agl > 1200) {
+      if (!sys.ap.armed.loc && sys.ap.roll !== 'LOC') return `${k('6')}（APP）で ILS を捕捉させましょう。オートパイロット ${k('1')} が入っていれば、滑走路まで自動で降りていきます`;
+      if (fm.ctl.gearPos > 0.5 && agl < 3000) return `${k('G')} で脚を下ろします`;
+      if (sys.flapLever < 4) return `${k('X')} でフラップを段階的に出し、最後は 30 に。速度は <b>${Math.round(vs.vref + 5)} ノット</b>前後`;
+      return `ILS に沿って降下中。速度 <b>${Math.round(vs.vref + 5)} ノット</b>前後を保ちます（いま ${ias} ノット）`;
+    }
+    if (agl > 60) return `滑走路が近づいてきました。${k('1')} でオートパイロットを切り、手動で着陸しても OK。速度 ${Math.round(vs.vref + 5)} ノット`;
+    return `地面すれすれで ${k('↓')} を少し引いて機首を上げ（フレア）、${k('Shift')}+${k('F')} で推力をアイドルに`;
   }
 }
 

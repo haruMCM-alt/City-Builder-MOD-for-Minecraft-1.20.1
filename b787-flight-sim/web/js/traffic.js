@@ -13,7 +13,7 @@ import { PlayerATC } from './playeratc.js';
 import { dressParked, logoById, AI_LOGO_LIGHT } from './livery.js';
 import { REMOTES, runwayWords } from './airports.js';
 import { GEO } from './geo_data.js';
-import { weatherModel, weatherGSE } from './shading.js';
+import { weatherModel, weatherGSE, upgradeAircraftMaterials } from './shading.js';
 import { initGSELivery, dressGSE, renameGSE } from './gselivery.js';
 import { terrainHeight } from './terrain.js';
 import { DEG, KT, FT, clamp, lerp, smoothstep, mulberry32, northAt } from './util.js';
@@ -529,6 +529,7 @@ export class Traffic {
     const list = (types && types.length ? types : [{ meta, lod: lodTemplate, weight: 1 }]).filter((t) => t.lod);
     if (gse) { weatherGSE(gse); initGSELivery(gse); }
     this.types = list.map((t) => {
+      upgradeAircraftMaterials(t.lod, this.quality);
       weatherModel(t.lod);
       const tm = typeModel(t.meta);
       tm.weight = t.weight ?? 1;
@@ -922,6 +923,7 @@ export class Traffic {
         const endX = ap.x - sx * ap.conns[2];                       // take-off end of the runway
         if (ac.state === 'R_TAXI') {
           // busier airports turn their aircraft round faster (GEO.traffic.rate)
+          ac.arrivedAt = this.time;
           ac.state = 'R_PARK'; ac.timer = 0; ac.parkFor = (300 + this.rnd() * 420) * (0.75 / (GEO.traffic[ap.id]?.rate || 0.5)) ** 0.5; ac.v = 0;
         } else if (ac.state === 'R_PUSH') {
           const pts = [{ x: ac.x, z: lane, v: 8 }, { x: ap.x - sx * 420, z: lane, v: 10 }, { x: ap.x - sx * 420, z: ap.z + ap.twyZ, v: 10 },
@@ -1836,7 +1838,7 @@ export class Traffic {
           this.apronQueue.push(ac);
         }
         if (ac.state === 'TAXI_IN' && ac.mover.done) {
-          ac.state = 'PARKED'; ac.parkT = 0; ac.v = 0; ac.inbound = false;
+          ac.state = 'PARKED'; ac.parkT = 0; ac.v = 0; ac.inbound = false; ac.arrivedAt = this.time;   // (arrivals board)
           Object.assign(ac.lightsOn, { taxi: false, strobe: false, landing: false });
           this.apron.delete(ac);
           ac.apronReq = false;
