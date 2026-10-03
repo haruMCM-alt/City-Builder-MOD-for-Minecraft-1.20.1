@@ -19,13 +19,16 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 # ---------------------------------------------------------------------------
-# Aircraft type (AC_TYPE environment variable): b789 (default), b738, b763.
+# Aircraft type (AC_TYPE environment variable): b789 (default), b738, b763, and the three
+# original Micomsoft Aerospace designs ma3 (MA-300), ma7 (MA-700), ma9 (MA-900).
 # Everything below is first defined for the 787-9; the other types override the
 # published figures and derive the rest by mapping the 787 shapes (see apply_type).
 # ---------------------------------------------------------------------------
 TYPE = os.environ.get("AC_TYPE", "b789")
-ASSET = {"b789": "b787-9", "b738": "b737-800", "b763": "b767-300er"}[TYPE]
-NAME = {"b789": "Boeing 787-9", "b738": "Boeing 737-800", "b763": "Boeing 767-300ER"}[TYPE]
+ASSET = {"b789": "b787-9", "b738": "b737-800", "b763": "b767-300er",
+         "ma3": "ma-300", "ma7": "ma-700", "ma9": "ma-900"}[TYPE]
+NAME = {"b789": "Boeing 787-9", "b738": "Boeing 737-800", "b763": "Boeing 767-300ER",
+        "ma3": "Micomsoft MA-300 Tsubame", "ma7": "Micomsoft MA-700 Hayabusa", "ma9": "Micomsoft MA-900 Otori"}[TYPE]
 
 # ---------------------------------------------------------------------------
 # Global figures
@@ -501,6 +504,71 @@ TYPES = {
                   fuelCapacity=73100, thrustSL=267000, VMO=360, MMO=0.86),
         ENGINE="GE CF6-80C2B6",
     ),
+    # ---- original designs (Micomsoft Aerospace) -----------------------------------------
+    # MA-300 "Tsubame": a next-generation single-aisle airliner -- a slender 4.1 m fuselage
+    # with the 787-style smooth nose, a very high aspect ratio wing with raked tips, and
+    # geared turbofans with big, slow fans (18 wide-chord blades) hung close under the wing
+    "ma3": dict(
+        LENGTH=44.20, SPAN=46.00, HEIGHT=13.20, FUS_W=4.10, FUS_H=4.30, NL=8.6, T0=31.2,
+        GROUND_Z=-3.62, FLOOR_Z=-0.70, S_NOSE=5.0, WHEELBASE=17.60, TRACK=6.60,
+        WING_C0=7.4, Y_KINK=5.4, Y_TIP=23.0, Y_RAKE=20.4, LE=27.0, TE_IN=0.0, TE_OUT=15.0, WING_Z0=-1.45,
+        TC=[0.150, 0.135, 0.110, 0.095, 0.088], TWIST=[3.8, 3.4, 1.5, -1.2, -1.8],
+        WINGLET=None,
+        ENG_Y=5.6, ENG_Z=-1.80, ENG_FWD=3.0, ENG_KA=0.66, ENG_KR=0.74, FAN_BLADES=18, ENG_FLAT=0.0,
+        HT_S_LE0=37.4, HT_C0=4.0, HT_SEMI=7.6, HT_LE=33.0, HT_TIP_C=1.2, HT_Z0=0.50,
+        VT_Z0=1.40, VT_S_LE0=34.2, VT_C0=6.8, VT_TIP_C=2.2, VT_LE=38.0, VT_FIL=(1.4, 3.6),
+        NOSE_TIRE=(0.76, 0.24, 0.20), MAIN_TIRE=(1.17, 0.43, 0.45), MAIN_AXLE_DS=0.0,
+        DOORS=[5.6, 39.2], DOOR=(0.86, -0.64, 1.28), DOOR_GAP=0.62,
+        EXITS=[(19.0, 0.51, 0.0, 0.98), (19.9, 0.51, 0.0, 0.98)],
+        WIN=(0.47, 0.28, 0.46, 0.52), WIN_S=(7.0, 37.6),
+        CARGO=[(9.6, 1.22, -2.10, -1.12), (31.0, 1.22, -2.05, -1.12)],
+        LABEL="MA-300", REG="JA300M", CK=(0.80, 0.10, 0.90, 0.90, -0.30),
+        SPEC=dict(S=150.4, b=46.0, c=4.51, OEW=45800, MTOW=86000, MLW=72000, MZFW=68000,
+                  fuelCapacity=24000, thrustSL=128000, VMO=340, MMO=0.82),
+        ENGINE="Micomsoft MX-1G geared turbofan", CHEVRONS=0,
+    ),
+    # MA-700 "Hayabusa": a high-speed long-range twin -- a long, sleek nose, a 39 deg wing
+    # with sharply raked tips for Mach 0.90 cruise, chevron-nozzle engines
+    "ma7": dict(
+        LENGTH=68.60, SPAN=64.40, HEIGHT=17.60, FUS_W=5.85, FUS_H=6.05, NL=12.5, T0=48.5,
+        GROUND_Z=-5.35, FLOOR_Z=-1.00, S_NOSE=8.4, WHEELBASE=28.6, TRACK=10.2,
+        WING_C0=14.7, Y_KINK=10.6, Y_TIP=32.2, Y_RAKE=28.2, LE=39.0, TE_IN=8.0, TE_OUT=27.0, WING_Z0=-1.85,
+        TC=[0.140, 0.128, 0.105, 0.090, 0.085], TWIST=[4.0, 3.6, 1.4, -1.4, -2.2],
+        WINGLET=None,
+        ENG_Y=10.4, ENG_Z=-2.60, ENG_FWD=5.4, ENG_KA=1.06, ENG_KR=1.04, FAN_BLADES=16, ENG_FLAT=0.0,
+        HT_S_LE0=55.6, HT_C0=6.6, HT_SEMI=10.6, HT_LE=42.0, HT_TIP_C=1.8, HT_Z0=1.0,
+        VT_Z0=2.0, VT_S_LE0=53.6, VT_C0=9.0, VT_TIP_C=3.1, VT_LE=46.0, VT_FIL=(1.6, 3.4),
+        NOSE_TIRE=(1.07, 0.42, 0.36), MAIN_TIRE=(1.40, 0.54, 0.76), MAIN_AXLE_DS=0.85,
+        DOORS=[7.9, 19.6, 44.8, 59.8], DOOR=(1.07, -0.93, 1.00), DOOR_GAP=0.95,
+        EXITS=[],
+        WIN=(0.30, 0.29, 0.50, 0.965), WIN_S=(9.3, 60.6),
+        CARGO=[(16.2, 2.69, -2.65, -1.0), (49.0, 2.69, -2.60, -0.96), (52.8, 0.95, -2.10, -0.96)],
+        LABEL="MA-700", REG="JA700M", CK=(1.136, 0.0, 1.01, 1.01, 0.0),
+        SPEC=dict(S=417.3, b=64.4, c=8.85, OEW=135000, MTOW=285000, MLW=205000, MZFW=192000,
+                  fuelCapacity=118000, thrustSL=380000, VMO=360, MMO=0.93),
+        ENGINE="Micomsoft MX-9 high-bypass turbofan", CHEVRONS=20,
+    ),
+    # MA-900 "Otori": a super-widebody twin -- a 7.05 m fuselage (3-4-3 at 20 in seats), five
+    # door pairs, a 75 m raked wing and the largest fans ever hung on an airliner (3.5 m)
+    "ma9": dict(
+        LENGTH=76.40, SPAN=74.80, HEIGHT=20.40, FUS_W=7.05, FUS_H=7.45, NL=13.4, T0=54.0,
+        GROUND_Z=-6.30, FLOOR_Z=-1.25, S_NOSE=9.6, WHEELBASE=31.0, TRACK=12.4,
+        WING_C0=15.6, Y_KINK=12.4, Y_TIP=37.4, Y_RAKE=33.0, LE=33.5, TE_IN=6.0, TE_OUT=24.0, WING_Z0=-2.40,
+        TC=[0.150, 0.138, 0.110, 0.096, 0.090], TWIST=[4.2, 3.8, 1.6, -1.2, -2.0],
+        WINGLET=None,
+        ENG_Y=12.4, ENG_Z=-3.30, ENG_FWD=6.4, ENG_KA=1.22, ENG_KR=1.26, FAN_BLADES=16, ENG_FLAT=0.0,
+        HT_S_LE0=61.8, HT_C0=8.0, HT_SEMI=12.4, HT_LE=38.0, HT_TIP_C=2.3, HT_Z0=1.25,
+        VT_Z0=2.5, VT_S_LE0=59.8, VT_C0=10.6, VT_TIP_C=3.9, VT_LE=43.0, VT_FIL=(2.0, 4.2),
+        NOSE_TIRE=(1.27, 0.46, 0.42), MAIN_TIRE=(1.52, 0.57, 0.82), MAIN_AXLE_DS=0.95,
+        DOORS=[8.4, 21.8, 37.4, 54.6, 67.6], DOOR=(1.07, -1.18, 0.75), DOOR_GAP=0.95,
+        EXITS=[],
+        WIN=(0.05, 0.30, 0.52, 0.965), WIN_S=(9.8, 68.4),
+        CARGO=[(18.2, 2.90, -3.25, -1.25), (56.6, 2.90, -3.15, -1.20), (61.0, 1.00, -2.60, -1.20)],
+        LABEL="MA-900", REG="JA900M", CK=(1.218, 0.0, 1.10, 1.10, 0.10),
+        SPEC=dict(S=589.8, b=74.8, c=9.53, OEW=175000, MTOW=362000, MLW=262000, MZFW=246000,
+                  fuelCapacity=150000, thrustSL=500000, VMO=355, MMO=0.88),
+        ENGINE="Micomsoft MX-12 ultra-high-bypass turbofan", CHEVRONS=0,
+    ),
 }
 
 # 737-800 nose, measured from side-on photos (KLM PH-BXC, Norwegian LN-NGK, GOL PR-GGP,
@@ -552,6 +620,19 @@ NACELLES = {
         # cowl ~0.45 of its length with a big core nozzle; the plug barely shows
         nozzle=4.40, core=[(3.6, 1.06), (4.3, 1.09), (5.0, 1.07), (5.7, 1.02), (6.35, 0.96)],
         core_lip=6.35, plug=[(5.95, 0.72), (6.4, 0.70), (6.75, 0.56), (7.05, 0.30), (7.25, 0.02)]),
+    # MX-1G geared turbofan: a short, fat fan cowl (slim lip), short core with a pointed plug
+    "ma3": dict(
+        outer=[(0.00, 1.520), (0.03, 1.600), (0.10, 1.665), (0.25, 1.720), (0.55, 1.760), (1.00, 1.780),
+               (1.80, 1.780), (2.60, 1.740), (3.20, 1.660), (3.70, 1.520)],
+        nozzle=3.70, core=[(3.0, 1.00), (3.6, 1.03), (4.2, 0.99), (4.9, 0.86), (5.5, 0.68)],
+        core_lip=5.5, plug=[(5.0, 0.54), (5.5, 0.52), (6.0, 0.42), (6.5, 0.24), (6.95, 0.02)]),
+    # MX-9 / MX-12: GEnx-like long fan cowls (the 787's own outlines)
+    "ma7": dict(outer=NAC_OUTER, nozzle=NOZZLE_A, core=CORE_PROF, core_lip=CORE_LIP, plug=PLUG_PROF),
+    "ma9": dict(
+        outer=[(0.00, 1.520), (0.03, 1.595), (0.10, 1.650), (0.25, 1.700), (0.55, 1.742), (1.00, 1.765),
+               (1.70, 1.770), (2.50, 1.752), (3.30, 1.705), (4.00, 1.625), (4.60, 1.515), (5.00, 1.420)],
+        nozzle=5.00, core=[(3.5, 0.96), (4.2, 1.00), (4.9, 0.96), (5.7, 0.84), (6.5, 0.66)],
+        core_lip=6.5, plug=[(6.0, 0.50), (6.5, 0.48), (6.9, 0.41), (7.3, 0.25), (7.6, 0.02)]),
 }
 WS_ZONES = {"b738": ((1.3, 1.6, 2.45, 3.0), 1.62), "b763": ((1.54, 1.79, 2.39, 3.04), 1.72)}
 # side windows (No. 2 / No. 3) length scale: the 767's window band is ~2.4 m long in photos
@@ -592,7 +673,7 @@ def apply_type(t):
     g["LE_SWEEP"] = T["LE"] * D2R
     g["TE_IN_SWEEP"] = T["TE_IN"] * D2R
     g["TE_OUT_SWEEP"] = T["TE_OUT"] * D2R
-    g["Y_RAKE"] = T["Y_TIP"]
+    g["Y_RAKE"] = T.get("Y_RAKE", T["Y_TIP"])
     g["FILLET_W"] = 1.2 * T["Y_TIP"] / 30.06
     g["TC_Y"] = (0.1 * T["Y_TIP"], 0.665 * T["Y_TIP"])
     g["S_MAIN"] = T["S_NOSE"] + T["WHEELBASE"]
@@ -618,7 +699,7 @@ def apply_type(t):
     if t in WS_ZONES:
         g["WS_ZONE"], g["WS_N"] = WS_ZONES[t]
     g["FAN_R"] = 1.41 * T["ENG_KR"]
-    g["CHEVRONS"] = 0
+    g["CHEVRONS"] = T.get("CHEVRONS", 0)
     NA = NACELLES[t]
     g["NAC_OUTER"] = NA["outer"]
     g["NOZZLE_A"] = NA["nozzle"]

@@ -543,11 +543,12 @@ export class Traffic {
     this.pc = new PlayerATC(this);
   }
 
-  // aircraft type for a new AI flight: random, drawn from a shuffled bag so that the three
-  // types stay mixed (no long runs of one type) while the order is unpredictable
+  // aircraft type for a new AI flight: random, drawn from a shuffled bag so that the types
+  // stay mixed (no long runs of one type) while the order is unpredictable; each type is in the
+  // bag 2 x weight times (the original MA designs fly less often than the Boeings)
   _pickType() {
     if (!this._bag || !this._bag.length) {
-      this._bag = this.types.flatMap((t) => [t, t]);
+      this._bag = this.types.flatMap((t) => Array(Math.max(1, Math.round(2 * (t.weight ?? 1)))).fill(t));
       for (let i = this._bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [this._bag[i], this._bag[j]] = [this._bag[j], this._bag[i]]; }
     }
     return this._bag.pop();

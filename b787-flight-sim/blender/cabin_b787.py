@@ -36,6 +36,12 @@ CABIN = {
                  aisle_y=0.0),
     "b763": dict(S0=5.94, S1=49.0, BAND=(-0.55, 0.95), CEIL=1.45, BIN_BOT=0.97, BIN_FRONT=1.33, centre=True,
                  aisle_y=0.985),
+    "ma3": dict(S0=5.66, S1=40.15, BAND=(-0.38, 0.84), CEIL=1.46, BIN_BOT=1.00, BIN_FRONT=0.72, centre=False,
+                aisle_y=0.0),
+    "ma7": dict(S0=7.85, S1=61.35, BAND=(-0.55, 0.95), CEIL=1.45, BIN_BOT=0.97, BIN_FRONT=1.36, centre=True,
+                aisle_y=0.955),
+    "ma9": dict(S0=8.42, S1=69.1, BAND=(-0.80, 0.70), CEIL=1.35, BIN_BOT=0.82, BIN_FRONT=2.0, centre=True,
+                aisle_y=1.30),
 }[G.TYPE]
 FL = G.FLOOR_Z                  # cabin floor (design z)
 S0, S1 = CABIN["S0"], CABIN["S1"]
@@ -466,10 +472,11 @@ def build_floor(M, parent, col):
 # --------------------------------------------------------------------------- monuments
 def lavatory(mb, sa, sb, side, open_door=False):
     """Lavatory against the sidewall: y from the aisle edge to the lining."""
-    yo = lining_y(0.5 * (sa + sb), 0.0) - 0.02
+    h = FL + 2.05
+    # outboard face: inside the lining up to the lav ceiling (narrow fuselages curve in)
+    yo = min(lining_y(0.5 * (sa + sb), 0.0), lining_y(min(sa, sb), h), lining_y(max(sa, sb), h)) - 0.02
     yi = 1.05 if yo > 2.0 else max(0.45, yo - 1.1)
     Y = lambda y: side * y
-    h = FL + 2.05
     mat_w, mat_a, mat_s, mat_m, mat_p, mat_l = 0, 1, 2, 3, 4, 5
     # walls (fore, aft) and ceiling
     for s in (sa, sb):
@@ -510,6 +517,9 @@ def lavatory(mb, sa, sb, side, open_door=False):
 def galley(mb, sa, sb, y0, y1, facing):
     """Galley block between y0..y1, working face at s = sa (facing=-1) or sb (facing=+1)."""
     mat_w, mat_s, mat_d, mat_a = 0, 2, 6, 1
+    # keep the 2.1 m tall block inside the lining (narrow fuselages, tapering tail)
+    lim = min(lining_y(sa, FL + 2.1), lining_y(sb, FL + 2.1)) - 0.02
+    y0, y1 = max(-lim, min(lim, y0)), max(-lim, min(lim, y1))
     sc = 0.5 * (sa + sb)
     yc, wy = 0.5 * (y0 + y1), abs(y1 - y0)
     face = sa if facing < 0 else sb
@@ -583,6 +593,8 @@ def build_monuments(M, parent, col):
         lavatory(mb, 45.05, 46.15, 1)
         lavatory(mb, 45.05, 46.15, -1)
         galley(mb, 47.8, 48.9, -1.2, 1.2, -1)
+    elif G.TYPE in MONUMENTS:
+        monuments_table(mb, MONUMENTS[G.TYPE])
     else:
         monuments_787(mb)
     finish_monuments(mb)
@@ -611,6 +623,37 @@ def monuments_787(mb):
     lavatory(mb, 51.45, 52.75, 1)
     lavatory(mb, 51.45, 52.75, -1)
     galley(mb, 54.55, 55.35, -1.1, 1.1, -1)
+
+
+# original designs: (kind, s0, s1, args) -- lav: side; galley: y0, y1, facing; div: blocks
+MONUMENTS = {
+    "ma3": [("lav", 6.55, 7.65, 1), ("gal", 6.55, 7.65, (-0.35, -1.75, +1)),
+            ("div", 10.95, None, [(0.35, 1.85), (-1.85, -0.35)]),
+            ("lav", 37.6, 38.6, 1), ("lav", 37.6, 38.6, -1), ("gal", 39.75, 40.1, (-1.3, 1.3, -1))],
+    "ma7": [("lav", 8.6, 9.8, 1), ("gal", 8.6, 9.8, (-0.45, -2.2, +1)),
+            ("div", 10.05, None, [(0.7, 2.6), (-0.68, 0.68), (-2.6, -0.7)]),
+            ("lav", 20.4, 21.6, 1), ("lav", 20.4, 21.6, -1), ("gal", 20.4, 21.6, (-0.45, 0.45, +1)),
+            ("div", 21.7, None, [(0.7, 2.6), (-0.7, 0.7), (-2.6, -0.7)]),
+            ("lav", 43.5, 44.1, 1), ("lav", 43.5, 44.1, -1),
+            ("lav", 58.4, 59.2, 1), ("lav", 58.4, 59.2, -1), ("gal", 60.5, 61.3, (-1.1, 1.1, -1))],
+    "ma9": [("lav", 9.1, 10.3, 1), ("gal", 9.1, 10.3, (-0.5, -2.6, +1)),
+            ("div", 10.6, None, [(0.75, 3.1), (-0.75, 0.75), (-3.1, -0.75)]),
+            ("lav", 22.5, 23.4, 1), ("lav", 22.5, 23.4, -1), ("gal", 22.5, 23.4, (-0.7, 0.7, +1)),
+            ("div", 23.5, None, [(1.6, 3.1), (-1.0, 1.0), (-3.1, -1.6)]),
+            ("lav", 37.2, 38.2, 1), ("lav", 37.2, 38.2, -1),
+            ("lav", 54.4, 55.4, 1), ("lav", 54.4, 55.4, -1),
+            ("lav", 66.8, 67.6, 1), ("lav", 66.8, 67.6, -1), ("gal", 68.3, 69.0, (-1.4, 1.4, -1))],
+}
+
+
+def monuments_table(mb, T):
+    for kind, a, b, arg in T:
+        if kind == "lav":
+            lavatory(mb, a, b, arg)
+        elif kind == "gal":
+            galley(mb, a, b, *arg)
+        else:
+            divider(mb, a, arg, 1)
 
 
 def finish_monuments(mb):
@@ -651,9 +694,32 @@ ZONES = {
         ("Y", 17.95, 0.81, 7, [(1.73, 2, 0.46), (0.0, 3, 0.46), (-1.73, 2, 0.46)], "AC" "DEG" "HK"),
         ("Y", 24.6, 0.81, 25, [(1.73, 2, 0.46), (0.0, 3, 0.46), (-1.73, 2, 0.46)], "AC" "DEG" "HK"),
     ],
+    # MA-300: business 2-2, economy 3-3 at 18.5 in seats (two over-wing exit rows)
+    "ma3": [
+        ("J", 8.0, 0.97, 3, [(0.98, 2, 0.56), (-0.98, 2, 0.56)], "AC" "DF"),
+        ("Y", 11.6, 0.80, 9, [(1.03, 3, 0.47), (-1.03, 3, 0.47)], "ABC" "DEF"),
+        ("Y", 19.45, 0.90, 2, [(1.03, 3, 0.47), (-1.03, 3, 0.47)], "ABC" "DEF"),
+        ("Y", 21.2, 0.80, 20, [(1.03, 3, 0.47), (-1.03, 3, 0.47)], "ABC" "DEF"),
+    ],
+    # MA-700: business 2-2-2, premium 2-3-2, economy 3-3-3 (the 787 cabin, stretched)
+    "ma7": [
+        ("J", 10.9, 1.5, 5, [(1.91, 2, 0.66), (0.0, 2, 0.66), (-1.91, 2, 0.66)], "AC" "DG" "HK"),
+        ("W", 22.1, 0.97, 4, [(1.81, 2, 0.50), (0.0, 3, 0.50), (-1.81, 2, 0.50)], "AC" "DEG" "HK"),
+        ("Y", 26.1, 0.81, 22, [(1.91, 3, 0.46), (0.0, 3, 0.46), (-1.91, 3, 0.46)], "ABC" "DEG" "HJK"),
+        ("Y", 45.7, 0.81, 16, [(1.91, 3, 0.46), (0.0, 3, 0.46), (-1.91, 3, 0.46)], "ABC" "DEG" "HJK"),
+    ],
+    # MA-900: business 2-2-2, premium 2-4-2, economy 3-4-3 at 20 in seats
+    "ma9": [
+        ("J", 11.4, 1.55, 6, [(2.25, 2, 0.70), (0.0, 2, 0.70), (-2.25, 2, 0.70)], "AC" "DG" "HK"),
+        ("W", 24.2, 0.97, 5, [(2.30, 2, 0.52), (0.0, 4, 0.52), (-2.30, 2, 0.52)], "AC" "DEFG" "HK"),
+        ("Y", 29.0, 0.81, 10, [(2.35, 3, 0.50), (0.0, 4, 0.50), (-2.35, 3, 0.50)], "ABC" "DEFG" "HJK"),
+        ("Y", 38.9, 0.81, 19, [(2.35, 3, 0.50), (0.0, 4, 0.50), (-2.35, 3, 0.50)], "ABC" "DEFG" "HJK"),
+        ("Y", 56.1, 0.81, 13, [(2.35, 3, 0.50), (0.0, 4, 0.50), (-2.35, 3, 0.50)], "ABC" "DEFG" "HJK"),
+    ],
 }[G.TYPE]
-AISLES = {"b789": [0.955, -0.955], "b738": [0.0], "b763": [0.985, -0.985]}[G.TYPE]   # aisle centres (design y)
-MY_SEAT_S = {"b789": 36.2, "b738": 20.57, "b763": 30.27}[G.TYPE]
+AISLES = {"b789": [0.955, -0.955], "b738": [0.0], "b763": [0.985, -0.985],
+          "ma3": [0.0], "ma7": [0.955, -0.955], "ma9": [1.30, -1.30]}[G.TYPE]   # aisle centres (design y)
+MY_SEAT_S = {"b789": 36.2, "b738": 20.57, "b763": 30.27, "ma3": 22.0, "ma7": 32.58, "ma9": 33.86}[G.TYPE]
 
 
 def seat_map():

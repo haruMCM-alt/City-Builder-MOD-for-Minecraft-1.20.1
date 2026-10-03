@@ -1,4 +1,4 @@
-// Micomsoft Fright Simulator: Boeing 787-9 / 767-300ER / 737-800 flight simulator - application entry point.
+// Micomsoft Fright Simulator: Boeing 787-9 / 767-300ER / 737-800 and Micomsoft MA-300 / 700 / 900 flight simulator - application entry point.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
@@ -43,7 +43,13 @@ const MODEL_EXT = window.B787_MODEL_EXT || '.glb';
 // window.B787_ASSETS maps its path to an in-memory blob URL; fetch() and the three.js loaders
 // are redirected there
 const EMBEDDED = window.B787_ASSETS || null;
-const assetURL = (u) => (EMBEDDED && EMBEDDED[String(u).replace(/^\.\//, '')]) || u;
+// (images shared by several models are stored once under assets/_shared/; a model refers to
+// them by a relative uri, which the glTF loader resolves against the model's own location)
+const assetURL = (u) => {
+  if (!EMBEDDED) return u;
+  const k = String(u).replace(/^\.\//, ''), sh = k.indexOf('assets/_shared/');
+  return EMBEDDED[k] || (sh >= 0 && EMBEDDED[k.slice(sh)]) || u;
+};
 if (EMBEDDED) {
   THREE.DefaultLoadingManager.setURLModifier(assetURL);
   const fetch0 = window.fetch.bind(window);
@@ -51,10 +57,14 @@ if (EMBEDDED) {
 }
 
 // aircraft types (Blender builds: blender/build_b787.py with AC_TYPE) and the AI fleet mix
+// (MA-300 / 700 / 900: original Micomsoft Aerospace designs, built by the same Blender script)
 const TYPES = [
-  { id: 'b738', asset: 'b737-800', weight: 1, short: '737-800', cls: '単通路 Narrow-body' },
-  { id: 'b763', asset: 'b767-300er', weight: 1, short: '767-300ER', cls: '双通路 Wide-body' },
-  { id: 'b789', asset: 'b787-9', weight: 1, short: '787-9', cls: '双通路 Wide-body' },
+  { id: 'b738', asset: 'b737-800', weight: 1, maker: 'Boeing', short: '737-800', cls: '単通路 Narrow-body' },
+  { id: 'b763', asset: 'b767-300er', weight: 1, maker: 'Boeing', short: '767-300ER', cls: '双通路 Wide-body' },
+  { id: 'b789', asset: 'b787-9', weight: 1, maker: 'Boeing', short: '787-9', cls: '双通路 Wide-body' },
+  { id: 'ma3', asset: 'ma-300', weight: 0.6, maker: 'Micomsoft', short: 'MA-300 Tsubame', cls: '次世代単通路 Next-gen narrow-body' },
+  { id: 'ma7', asset: 'ma-700', weight: 0.6, maker: 'Micomsoft', short: 'MA-700 Hayabusa', cls: '高速長距離 High-speed long-haul' },
+  { id: 'ma9', asset: 'ma-900', weight: 0.5, maker: 'Micomsoft', short: 'MA-900 Otori', cls: '超大型双発 Super-widebody twin' },
 ];
 const STAND_NOSE = 24.13;       // stands are marked for the 787-9 nose gear position
 const WEATHER_ICONS = { clear: ['☀', '快晴'], scattered: ['🌤', '晴れ時々曇り'], broken: ['⛅', '曇り'], overcast: ['☁', '曇天・低視程'], rain: ['🌧', '雨'] };
@@ -330,7 +340,7 @@ class App {
     try { localStorage.setItem('b787.actype', id); } catch (e) { /* ignore */ }
     const t = $('menuTitle');
     if (t) t.innerHTML = `Micomsoft <span>Fright Simulator</span>`;
-    document.title = `Micomsoft Fright Simulator — B${T.short}`;
+    document.title = `Micomsoft Fright Simulator — ${T.maker === 'Boeing' ? 'B' : ''}${T.short}`;
   }
 
   // menu: pick a type (loads its model the first time)
@@ -518,7 +528,7 @@ class App {
     const wx = WEATHER_ICONS[$('weather').value] || ['', $('weather').value];
     const tod = +$('tod').value;
     const gw = SPEC.OEW + +$('fuel').value + +$('payload').value;
-    el.innerHTML = `<b>${sc ? sc.name : ''}</b> · <b>Boeing ${this.cur.short}</b>（${(this.livery?.name || '')}）` +
+    el.innerHTML = `<b>${sc ? sc.name : ''}</b> · <b>${this.cur.maker} ${this.cur.short}</b>（${(this.livery?.name || '')}）` +
       ` · 総重量 <b>${(gw / 1000).toFixed(1)} t</b> · <b>${String(Math.floor(tod)).padStart(2, '0')}:${String(Math.round((tod % 1) * 60)).padStart(2, '0')}</b>` +
       ` · ${wx[0]} ${wx[1]} · 風 <b>${String($('windDir').value).padStart(3, '0')}° / ${$('windSpd').value} kt</b>`;
   }
@@ -536,7 +546,7 @@ class App {
       b.dataset.id = t.id;
       const seats = m.cabin ? m.cabin.total : '—';
       b.innerHTML = `<img alt="" src="${assetURL(ASSET + 'type_' + t.id + '.jpg')}" onerror="this.style.display='none'">` +
-        `<div class="tb"><div class="tn">Boeing ${t.short}<em>${t.cls}</em></div>` +
+        `<div class="tb"><div class="tn">${t.maker} ${t.short}<em>${t.cls}</em></div>` +
         `<div class="ts">全長 ${m.length.toFixed(2)} m · 全幅 ${m.span.toFixed(2)} m · 全高 ${m.height.toFixed(2)} m<br>` +
         `最大離陸重量 ${(s.MTOW / 1000).toFixed(1)} t · 座席 ${seats}<br>${m.engineName || ''} ×2 · Mmo ${s.MMO}</div></div>`;
       b.onclick = () => this.selectType(t.id);
@@ -1439,7 +1449,7 @@ class App {
         altFt: o.altFt || 0, gs: o.gs || 0, hdg: o.hdg || 0, oat: 15 - 1.98 * (o.altFt || 0) / 1000, x: fm.pos.x, z: fm.pos.z, dist,
         destX: dap.x, destZ: dap.z, destName: aptName(dap.id),
         clock: `${String(Math.floor(tod)).padStart(2, '0')}:${String(Math.floor((tod % 1) * 60)).padStart(2, '0')}`,
-        callsign: this.playerCallsign || '', type: 'Boeing ' + (this.cur?.short || ''),
+        callsign: this.playerCallsign || '', type: (this.cur ? this.cur.maker + ' ' + this.cur.short : ''),
       }, v === 'ife');
       // automatic meal service once established in the climb / cruise
       if (!this.paused && !this._serviceDone && (o.altFt || 0) > 10000 && this.cabin.group && this.cabin.startService()) this._serviceDone = true;

@@ -34,9 +34,10 @@ const PHRASES = {
 
 // engine type (set when the aircraft type changes): N1 100 % shaft rate and fan blade count
 // GEnx-1B ~2560 rpm / 18 blades, CFM56-7B 5380 rpm / 24, CF6-80C2 3280 rpm / 38
+// MA-300 MX-1G geared fan ~3300 rpm / 18, MA-700 MX-9 ~2500 / 16, MA-900 MX-12 ~2100 / 16
 export const ENGINE_SOUND = { shaftHz: 2560 / 60, blades: 18 };
 export function setEngineSound(type) {
-  const T = { b789: [2560, 18], b738: [5380, 24], b763: [3280, 38] }[type] || [2560, 18];
+  const T = { b789: [2560, 18], b738: [5380, 24], b763: [3280, 38], ma3: [3300, 18], ma7: [2500, 16], ma9: [2100, 16] }[type] || [2560, 18];
   ENGINE_SOUND.shaftHz = T[0] / 60; ENGINE_SOUND.blades = T[1];
 }
 const TONE_SCALE = 0.62;

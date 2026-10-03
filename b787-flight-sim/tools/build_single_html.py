@@ -14,6 +14,7 @@ browser (Chrome / Edge / Firefox), double-click is enough.
 """
 import argparse
 import base64
+import hashlib
 import gzip
 import io
 import json
@@ -66,18 +67,54 @@ def b64(path):
         return base64.b64encode(fh.read()).decode("ascii")
 
 
-def repack_glb(data, strip):
-    """strip: drop all textures (materials keep their names); otherwise shrink textures larger
-    than MAX_TEX and re-encode big JPEGs.  bufferView indices are kept (dropped images become
-    4-byte stubs) so accessors / Draco references stay valid."""
-    from PIL import Image
+def glb_parts(data):
     jl = struct.unpack_from("<I", data, 12)[0]
     J = json.loads(data[20:20 + jl])
     o = 20 + jl
     bl = struct.unpack_from("<I", data, o)[0]
     BIN = data[o + 8:o + 8 + bl]
+    blobs = [BIN[v.get("byteOffset", 0):v.get("byteOffset", 0) + v["byteLength"]] for v in J["bufferViews"]]
+    return J, blobs
+
+
+def shrink_image(blob, png):
+    """textures larger than MAX_TEX are halved, big JPEGs re-encoded (None: keep as is)"""
+    from PIL import Image
+    src = Image.open(io.BytesIO(blob))
+    w, h = src.size
+    if max(w, h) > MAX_TEX:
+        src = src.resize((max(1, w // 2), max(1, h // 2)), Image.LANCZOS)
+    elif png or len(blob) < 60000:
+        return None
+    out = io.BytesIO()
+    if png:
+        src.save(out, "PNG", optimize=True)
+    else:
+        src.convert("RGB").save(out, "JPEG", quality=72, optimize=True, progressive=True)
+    return out.getvalue() if len(out.getvalue()) < len(blob) * 0.9 else None
+
+
+SHARED_DIR = "assets/_shared/"
+
+
+def find_shared(paths):
+    """images embedded in more than one model (the flight-deck panels, cabin carpet ...):
+    sha1 -> number of files"""
+    seen = {}
+    for p in paths:
+        J, blobs = glb_parts(open(p, "rb").read())
+        for h in {hashlib.sha1(blobs[im["bufferView"]]).hexdigest() for im in J.get("images", []) if "bufferView" in im}:
+            seen[h] = seen.get(h, 0) + 1
+    return {h for h, n in seen.items() if n > 1}
+
+
+def repack_glb(data, strip, shared=None, shared_out=None):
+    """strip: drop all textures (materials keep their names); otherwise shrink textures larger
+    than MAX_TEX and re-encode big JPEGs.  bufferView indices are kept (dropped images become
+    4-byte stubs) so accessors / Draco references stay valid.  Images in `shared` (sha1) are
+    moved out to SHARED_DIR (stored once in shared_out, referenced by uri; main.js maps it)."""
+    J, blobs = glb_parts(data)
     views = J["bufferViews"]
-    blobs = [BIN[v.get("byteOffset", 0):v.get("byteOffset", 0) + v["byteLength"]] for v in views]
     img_views = {im["bufferView"]: im for im in J.get("images", []) if "bufferView" in im}
     if strip:
         for vi in img_views:
@@ -94,20 +131,18 @@ def repack_glb(data, strip):
             drop(m)
     else:
         for vi, im in img_views.items():
-            src = Image.open(io.BytesIO(blobs[vi]))
-            w, h = src.size
             png = im.get("mimeType") == "image/png"
-            if max(w, h) > MAX_TEX:
-                src = src.resize((max(1, w // 2), max(1, h // 2)), Image.LANCZOS)
-            elif png or len(blobs[vi]) < 60000:
-                continue
-            out = io.BytesIO()
-            if png:
-                src.save(out, "PNG", optimize=True)
-            else:
-                src.convert("RGB").save(out, "JPEG", quality=72, optimize=True, progressive=True)
-            if len(out.getvalue()) < len(blobs[vi]) * 0.9:
-                blobs[vi] = out.getvalue()
+            h = hashlib.sha1(blobs[vi]).hexdigest()
+            small = shrink_image(blobs[vi], png)
+            if shared is not None and h in shared:
+                key = SHARED_DIR + h[:16] + (".png" if png else ".jpg")
+                if key not in shared_out:
+                    shared_out[key] = small or blobs[vi]
+                im.pop("bufferView")
+                im["uri"] = key
+                blobs[vi] = b"\0\0\0\0"
+            elif small:
+                blobs[vi] = small
     nb = bytearray()
     for v, bb in zip(views, blobs):
         while len(nb) % 4:
@@ -126,11 +161,12 @@ def repack_glb(data, strip):
             + struct.pack("<II", len(nb), 0x004E4942) + bytes(nb))
 
 
-def pack_asset(key, path, video_kbps):
+def pack_asset(key, path, video_kbps, shared=None, shared_out=None):
     """bytes to embed + whether they are gzip-compressed"""
-    data = open(path, "rb").read()
+    data = open(path, "rb").read() if path else shared_out[key]
     if key.endswith(".glb"):
-        data = repack_glb(data, bool(STRIP_TEX.search(key)))
+        strip = bool(STRIP_TEX.search(key))
+        data = repack_glb(data, strip, None if strip else shared, shared_out)
     if key.endswith(".mp4") and video_kbps:
         data = reencode_video(path, video_kbps) or data
     gz = gzip.compress(data, 9, mtime=0)
@@ -186,11 +222,27 @@ def main():
         if f not in SKIP:
             assets.append((DRACO + "/" + f, os.path.join(WEB, DRACO, f)))
 
+    # images shared by several models are embedded once
+    models = [p for k, p in assets if k.endswith(".glb") and not STRIP_TEX.search(k)]
+    shared, shared_out = find_shared(models), {}
     blocks = []
     total = 0
-    for key, p in assets:
+    for item in assets + [None]:
+        if item is None:                    # (after the models: the shared images they produced)
+            if not shared_out:
+                break
+            assets_sh = sorted(shared_out)
+            for k in assets_sh:
+                raw = shared_out[k]
+                data = base64.b64encode(raw).decode("ascii")
+                total += len(data)
+                blocks.append('<script type="application/octet-stream" data-asset="%s" data-type="%s">%s</script>' % (
+                    k, MIME.get(os.path.splitext(k)[1], "application/octet-stream"), data))
+            print("shared images: %d (%.1f MB)" % (len(shared_out), sum(len(v) for v in shared_out.values()) / 1e6))
+            break
+        key, p = item
         ext = os.path.splitext(p)[1].lower()
-        raw, gz = pack_asset(key, p, args.video_kbps)
+        raw, gz = pack_asset(key, p, args.video_kbps, shared, shared_out)
         data = base64.b64encode(raw).decode("ascii")
         total += len(data)
         blocks.append('<script type="application/octet-stream" data-asset="%s" data-type="%s"%s>%s</script>' % (
