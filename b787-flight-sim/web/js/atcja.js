@@ -170,8 +170,14 @@ function problemJa(s) {
 }
 
 // clauses not recognised (call signs, station names) are kept as they are
+// "runway one six right" -> "runway 16R" (the extra-runway traffic spells its runways out)
+const RWY_WORDS = /\brunway ((?:zero|one|two|three|four|five|fife|six|seven|eight|nine|niner)(?: (?:zero|one|two|three|four|five|fife|six|seven|eight|nine|niner))*)(?: (left|right|cent(?:er|re)))?\b/gi;
+function normRunway(t) {
+  return t.replace(RWY_WORDS, (m, num, side) => `runway ${words2num(num).replace(/\s/g, '')}${side ? side[0].toUpperCase() : ''}`);
+}
+
 function translateClause(c) {
-  const t = c.trim().replace(/[.!]+$/, '');
+  const t = normRunway(c.trim().replace(/[.!]+$/, ''));
   if (!t) return '';
   for (const [re, out] of RULES) {
     const m = t.match(re);
