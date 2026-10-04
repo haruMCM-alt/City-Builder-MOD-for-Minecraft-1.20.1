@@ -369,13 +369,13 @@ def build_wing(M, root, col, side):
     brk = [G.FLAP_IN["y0"], G.FLAP_IN["y1"], G.FLAPERON["y0"], G.FLAPERON["y1"],
            G.FLAP_OUT["y0"], G.FLAP_OUT["y1"], G.AILERON["y0"], G.AILERON["y1"],
            G.SLAT["y0"], G.SLAT["y1"], G.Y_KINK, G.Y_RAKE] + list(G.SLAT_SPLITS)
-    base = np.unique(np.r_[np.linspace(1.2, G.Y_TIP, RS(110)), np.linspace(G.Y_KINK - 1.6, G.Y_KINK + 1.6, RS(12)),
+    base = np.unique(np.r_[np.linspace(G.WING_ROOT_Y, G.Y_TIP, RS(110)), np.linspace(G.Y_KINK - 1.6, G.Y_KINK + 1.6, RS(12)),
                            np.linspace(G.Y_RAKE, G.Y_TIP, RS(12)), brk])
     sd = (0, side, 0)
     mb = C.MeshBuilder(TB)
     gap = 0.004
     segs = [
-        (1.2, G.FLAP_IN["y0"], 0.0, 1.0, "le"),
+        (G.WING_ROOT_Y, G.FLAP_IN["y0"], 0.0, 1.0, "le"),
         (G.FLAP_IN["y0"], G.FLAP_IN["y1"], 0.0, G.FLAP_IN["x0"], "le"),
         (G.FLAP_IN["y1"], G.FLAPERON["y0"], 0.0, 1.0, "le"),
         (G.FLAPERON["y0"], G.SLAT["y0"], 0.0, G.FLAPERON["x0"], "le"),
@@ -1512,6 +1512,24 @@ def build_details(M, root, col):
 COCKPIT_META = {}
 
 
+LIGHT_NAMES = ("NavLight_L", "NavLight_R", "NavTail_L", "NavTail_R", "Strobe_L", "Strobe_R", "Strobe_Tail",
+               "Beacon_Top", "Beacon_Bottom", "LandingLight_L", "LandingLight_R", "TurnoffLight_L",
+               "TurnoffLight_R", "LogoLight_L", "LogoLight_R")
+
+
+def light_points():
+    """exterior light positions (three.js frame) for the AI aircraft, which use the LOD model"""
+    from mathutils import Vector
+    out = {}
+    for n in LIGHT_NAMES:
+        o = bpy.data.objects.get(n)
+        if o is None or o.type != "MESH":
+            continue
+        c = sum((o.matrix_world @ Vector(v) for v in o.bound_box), Vector()) / 8
+        out[n] = [round(c.x, 3), round(c.z, 3), round(-c.y, 3)]
+    return out
+
+
 def engine_points():
     """every engine's axis point and lowest pod point (four-engine types: contrails, ground strike)"""
     axes, pods = [], []
@@ -1784,6 +1802,7 @@ def main():
         engineAxisR=G.to_three([G.ENG_S_HL + 5.0 * G.ENG_KA, -G.ENG_Y, G.ENG_Z]),
         engineExit=G.to_three([G.ENG_S_HL + 7.7 * G.ENG_KA, G.ENG_Y, G.ENG_Z]),
         **engine_points(),
+        lights=light_points(),
         noseTip=G.to_three([0, 0, float(G.fus_profile(0.0)[3])]),
         # condensation sources: outboard flap tip (trailing edge) and upper-surface points
         flapTipL=G.to_three(list(G.wing_point(np.array(G.FLAP_OUT["y1"]), np.array(1.0), np.array(True), 1))),

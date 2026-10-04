@@ -1743,13 +1743,15 @@ class App {
   plumes() {
     const out = [];
     const mw = this.visual.root.matrixWorld;
+    const inside = ['cockpit', 'cabin', 'walk', 'wing', 'ife'].includes(this.rig.view);
     this._pl = this._pl || [0, 1].map(() => ({ start: new THREE.Vector3(), end: new THREE.Vector3(), r0: 0.9, r1: 5, strength: 0 }));
     [this.meta.engineAxisL, this.meta.engineAxisR].forEach((ax, i) => {
       const e = this.fm.engines[i], p = this._pl[i];
       p.start.set(ax[0] - 2.0 * ((this.meta.fanRadius || 1.41) / 1.41), ax[1], ax[2]).applyMatrix4(mw);
       p.end.set(ax[0] - 38, ax[1] - 0.8, ax[2]).applyMatrix4(mw);
       const n = Math.max(0, Math.min(1, (e.n1 - 15) / 85));
-      p.strength = e.running ? 0.35 + 0.65 * n : 0;
+      // (not from inside: the screen-space refraction would also bend the cabin / flight deck)
+      p.strength = e.running && !inside ? 0.35 + 0.65 * n : 0;
       p.r1 = 4 + 3 * n;
       out.push(p);
     });

@@ -119,6 +119,9 @@ def window_rows():
         rows.append((z2, ws))
     return rows
 SPONSON = None     # dict(s0, s1, y, z, ry, rz): main-gear fairings (high-wing turboprops)
+DORSAL = None      # dict(h, n): high wing: the crown is raised by h and flattened (superellipse n)
+                   # under the wing root so the wing sits on the fuselage (stations set from the wing)
+WING_ROOT_Y = 1.2  # wing root station (m from the centre line)
 
 
 def _hump(s):
@@ -186,6 +189,16 @@ def fus_section(s, phi):
         z = np.where(lower, z, z_up0 + hh * k)
         n = np.clip((up - 0.30) / 0.55, 0, 1)
         y = y * (1.0 - HUMP.get("narrow", 0.24) * (hh / max(HUMP["h"], 1e-6)) * n * n * (3 - 2 * n))
+    if DORSAL:
+        # high-wing root fairing: a flat-topped crown under the wing
+        Ad = _bump(s, *DORSAL["st"])
+        up = np.where(lower, 0.0, np.abs(cp))
+        nf = 2.0 + (DORSAL["n"] - 2.0) * Ad
+        ztd = zt + DORSAL["h"] * Ad
+        yd = -hw * np.sign(sp) * np.abs(sp) ** (2.0 / nf)
+        zd = zw + (ztd - zw) * up ** (2.0 / nf)
+        y = np.where(lower, y, yd)
+        z = np.where(lower, z, zd)
     # wing-to-body (belly) fairing: broadens and deepens the lower lobe
     A = _bump(s, *BUMP)
     d = np.where(lower, np.abs(cp), 0.0)
@@ -642,9 +655,9 @@ TYPES = {
     "b744": dict(
         LENGTH=70.66, SPAN=64.44, HEIGHT=19.41, FUS_W=6.50, FUS_H=6.90, NL=12.6, T0=50.5,
         GROUND_Z=-5.55, FLOOR_Z=-0.90, S_NOSE=7.6, WHEELBASE=25.6, TRACK=11.0,
-        WING_C0=18.6, Y_KINK=12.0, Y_TIP=30.4, LE=40.0, TE_IN=0.0, TE_OUT=24.0, WING_Z0=-2.35,
+        WING_C0=16.78, Y_KINK=12.0, Y_TIP=31.2, LE=42.4, TE_IN=18.7, TE_OUT=30.8, WING_Z0=-2.35,
         TC=[0.134, 0.122, 0.098, 0.085, 0.080], TWIST=[3.8, 3.4, 1.4, -1.2, -1.8],
-        WINGLET=dict(r=0.35, theta=60.0, h=1.85, c_tip=0.9, sweep=55.0),
+        WINGLET=dict(r=0.35, theta=61.0, h=1.80, c_tip=1.0, sweep=55.0),
         ENG_Y=11.9, ENG_Z=-2.80, ENG_FWD=4.7, ENG_KA=0.82, ENG_KR=0.84, FAN_BLADES=38, ENG_FLAT=0.0,
         ENG2=dict(Y=21.3, Z=-1.45, FWD=4.2),
         HT_S_LE0=58.6, HT_C0=7.6, HT_SEMI=11.1, HT_LE=40.0, HT_TIP_C=2.4, HT_Z0=1.5,
@@ -675,10 +688,10 @@ TYPES = {
     "at76": dict(
         LENGTH=27.17, SPAN=27.05, HEIGHT=7.65, FUS_W=2.77, FUS_H=2.90, NL=4.9, T0=19.2,
         GROUND_Z=-2.42, FLOOR_Z=-0.56, S_NOSE=2.55, WHEELBASE=10.77, TRACK=4.10,
-        WING_C0=2.84, Y_KINK=4.1, Y_TIP=13.52, LE=2.5, TE_IN=0.0, TE_OUT=-5.0, WING_Z0=1.18,
+        WING_C0=2.84, Y_KINK=4.1, Y_TIP=13.52, LE=2.5, TE_IN=0.0, TE_OUT=-5.0, WING_Z0=1.58,
         TC=[0.180, 0.175, 0.160, 0.135, 0.130], TWIST=[2.0, 2.0, 1.0, 0.0, -1.0], DIHEDRAL=1.5,
-        WINGLET=None, BUMP_D=0.0,
-        ENG_Y=4.10, ENG_Z=0.72, ENG_FWD=2.65, ENG_KA=0.6, ENG_KR=1.40, FAN_BLADES=6, ENG_FLAT=0.0,
+        WINGLET=None, BUMP_D=0.0, WING_ROOT_Y=0.3, DORSAL=dict(h=0.08, n=6.0),
+        ENG_Y=4.10, ENG_Z=1.12, ENG_FWD=2.65, ENG_KA=0.6, ENG_KR=1.40, FAN_BLADES=6, ENG_FLAT=0.0,
         PROP=dict(R=1.98, blades=6, L=6.9, Rn=0.58),
         HT_S_LE0=24.25, HT_C0=1.95, HT_SEMI=3.65, HT_LE=9.0, HT_TIP_C=1.35, HT_Z0=4.95, HT_DIH=0.0,
         VT_Z0=1.25, VT_S_LE0=20.6, VT_C0=4.4, VT_TIP_C=2.35, VT_LE=34.0, VT_FIL=(0.9, 3.6),
@@ -869,6 +882,10 @@ def apply_type(t):
     # --- optional features ---------------------------------------------------------
     for k in ("HUMP", "ENG2", "PROP", "BODY_GEAR", "WIN2", "SPONSON", "WIN_RUNS"):
         g[k] = T.get(k)
+    g["WING_ROOT_Y"] = T.get("WING_ROOT_Y", 1.2)
+    if T.get("DORSAL"):
+        le_d, te_d = float(wing_le(g["WING_ROOT_Y"])), float(wing_te(g["WING_ROOT_Y"]))
+        g["DORSAL"] = dict(T["DORSAL"], st=(le_d - 1.6, le_d + 0.2, te_d - 0.3, te_d + 2.2))
     if "HT_DIH" in T:
         g["HT_DIHEDRAL"] = T["HT_DIH"] * D2R
     if "DIHEDRAL" in T:

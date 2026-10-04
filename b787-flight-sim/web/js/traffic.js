@@ -499,20 +499,32 @@ export class AIAircraft {
     const v = this.t._v;
     const tm = this.tm, meta = tm.meta, kL = tm.kL, kW = tm.kW;
     const P = (p) => v.set(p[0], p[1], p[2]).applyMatrix4(mw);
+    // light positions of the Blender model (meta.lights); older metadata: 787 layout scaled
+    const LP = meta.lights || {};
+    const at = (name, fb) => P(LP[name] || fb);
     if (lo.nav) {
-      L.add(P(meta.wingTipL), 1.0, 0.08, 0.05, 0.5);
-      L.add(P(meta.wingTipR), 0.1, 1.0, 0.25, 0.5);
-      L.add(P([tm.tailX, 1.0 * kW, 0]), 1, 1, 1, 0.35);
+      L.add(at('NavLight_L', meta.wingTipL), 1.0, 0.08, 0.05, 0.5);
+      L.add(at('NavLight_R', meta.wingTipR), 0.1, 1.0, 0.25, 0.5);
+      L.add(at('Strobe_Tail', [tm.tailX, 1.0 * kW, 0]), 1, 1, 1, 0.35);
     }
     const ph = (time + this.id * 0.37) % 1.2;
-    if (lo.beacon && ph < 0.12) { L.add(P([-2 * kL, 3.1 * kW, 0]), 1.0, 0.1, 0.05, 0.6); L.add(P([4 * kL, -3.1 * kW, 0]), 1.0, 0.1, 0.05, 0.6); }
-    if (lo.strobe && (ph > 0.5 && ph < 0.56 || ph > 0.66 && ph < 0.72)) {
-      L.add(P([meta.wingTipL[0] - 0.4, meta.wingTipL[1], meta.wingTipL[2]]), 1, 1, 1, 1.1);
-      L.add(P([meta.wingTipR[0] - 0.4, meta.wingTipR[1], meta.wingTipR[2]]), 1, 1, 1, 1.1);
+    if (lo.beacon && ph < 0.12) {
+      L.add(at('Beacon_Top', [-2 * kL, 3.1 * kW, 0]), 1.0, 0.1, 0.05, 0.6);
+      L.add(at('Beacon_Bottom', [4 * kL, -3.1 * kW, 0]), 1.0, 0.1, 0.05, 0.6);
     }
-    if (lo.landing) { L.add(P([9 * kL, -1.9 * kW, -5.2 * kW]), 1, 0.97, 0.9, 1.3); L.add(P([9 * kL, -1.9 * kW, 5.2 * kW]), 1, 0.97, 0.9, 1.3); }
-    if (lo.taxi) L.add(P([tm.noseAhead + 0.1, meta.noseGear[1] + 2.9 * kW, 0]), 1, 0.97, 0.9, 0.8);
-    if (lo.logo) { L.add(P([-24 * kL, 4 * kW, -3 * kW]), 0.9, 0.9, 0.9, 0.4); L.add(P([-24 * kL, 4 * kW, 3 * kW]), 0.9, 0.9, 0.9, 0.4); }
+    if (lo.strobe && (ph > 0.5 && ph < 0.56 || ph > 0.66 && ph < 0.72)) {
+      L.add(at('Strobe_L', [meta.wingTipL[0] - 0.4, meta.wingTipL[1], meta.wingTipL[2]]), 1, 1, 1, 1.1);
+      L.add(at('Strobe_R', [meta.wingTipR[0] - 0.4, meta.wingTipR[1], meta.wingTipR[2]]), 1, 1, 1, 1.1);
+    }
+    if (lo.landing) {
+      L.add(at('LandingLight_L', [9 * kL, -1.9 * kW, -5.2 * kW]), 1, 0.97, 0.9, 1.3);
+      L.add(at('LandingLight_R', [9 * kL, -1.9 * kW, 5.2 * kW]), 1, 0.97, 0.9, 1.3);
+    }
+    if (lo.taxi) L.add(P([tm.noseAhead + 0.1, meta.noseGear[1] * 0.38, 0]), 1, 0.97, 0.9, 0.8);
+    if (lo.logo) {
+      L.add(at('LogoLight_L', [-24 * kL, 4 * kW, -3 * kW]), 0.9, 0.9, 0.9, 0.4);
+      L.add(at('LogoLight_R', [-24 * kL, 4 * kW, 3 * kW]), 0.9, 0.9, 0.9, 0.4);
+    }
   }
 }
 
