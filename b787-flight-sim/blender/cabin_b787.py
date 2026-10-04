@@ -63,12 +63,7 @@ DOOR_VZ = DOOR_Z0 + 1.33 / 1.93 * (DOOR_Z1 - DOOR_Z0)   # door viewport height
 
 
 def windows():
-    out, s = [], G.WIN_S[0]
-    while s < G.WIN_S[1]:
-        if all(abs(s - d) > G.DOOR_GAP for d in DOORS):
-            out.append(round(s, 4))
-        s += WIN_PITCH
-    return out
+    return G.window_stations(skip_exits=False)
 
 
 # --------------------------------------------------------------------------- section helpers

@@ -492,17 +492,7 @@ def fuselage_textures(W=8192, H=2048):
 
     # --- passenger windows -------------------------------------------------------
     print("windows ...")
-    wins = []
-    s = G.WIN_S[0]
-    while s < G.WIN_S[1]:
-        if all(abs(s - d) > G.DOOR_GAP for d in DOORS) and all(abs(s - e[0]) > e[1] / 2 + 0.05 for e in G.EXITS):
-            wins.append(s)
-        s += WIN_PITCH
-    rows = [(WIN_Z, wins)]
-    if G.WIN2:
-        # upper-deck windows (747): a second, shorter row along the hump
-        z2, s0, s1 = G.WIN2
-        rows.append((z2, [float(v) for v in np.arange(s0, s1, WIN_PITCH)]))
+    rows = G.window_rows()
     for side in (1, -1):
         for wz, sc in ((wz, sc) for wz, ws in rows for sc in ws):
             sl, d = side_feature(fm, sc, wz, WIN_W / 2, WIN_H / 2, side, 0.11)
@@ -561,7 +551,9 @@ def fuselage_textures(W=8192, H=2048):
                 line = aa(np.abs(d) - 0.006, px)
                 blend(col[sl], DOORLINE, line)
                 height[sl] -= 0.004 * line
-            sl, d = side_feature(fm, ec, WIN_Z, WIN_W / 2, WIN_H / 2, side, 0.11)
+            # its window: on the main deck, or (747 upper-deck door) level with the upper windows
+            wz = WIN_Z if ez0 < WIN_Z < ez1 else (G.WIN2[0] if G.WIN2 else WIN_Z)
+            sl, d = side_feature(fm, ec, wz, WIN_W / 2, WIN_H / 2, side, 0.11)
             if sl is not None:
                 g = aa(d, px)
                 blend(col[sl], GLASS, g)

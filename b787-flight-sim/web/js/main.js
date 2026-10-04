@@ -73,26 +73,31 @@ const TYPES = [
 const MODES = [
   { id: 'beginner', icon: '🔰', name: '初心者モード', en: 'Beginner', badge: 'おすすめ', img: 'type_b789.jpg',
     desc: '管制の指示を日本語に訳し、次にやる操作を画面でガイド。羽田のゲートから出発します。',
-    slides: ['type', 'env'], scen: ['gate', 'rwy27', 'final'], preset: { scenario: 'gate', beginner: true, weather: 'clear', wind: 5, turb: 0, tod: 10 } },
+    slides: ['type', 'env', 'opts'], scen: ['gate', 'rwy27', 'final'], preset: { scenario: 'gate', beginner: true, weather: 'clear', wind: 5, turb: 0, tod: 10 } },
   { id: 'free', icon: '✈', name: 'フリーフライト', en: 'Free flight', img: 'type_b763.jpg',
     desc: 'すべての設定を自由に。離陸・進入・遊覧から選び、機種・重量・塗装・天候まで細かく決めます。',
     slides: ['flight', 'type', 'load', 'env', 'opts'], scen: null, preset: { beginner: false } },
   { id: 'auto', icon: '🤖', name: '自動操縦の旅', en: 'Auto flight', img: 'type_ma7.jpg',
     desc: '出発から着陸まで全自動。目的地を選んで、客室の窓や機内から空の旅を楽しめます。',
-    slides: ['flight', 'type', 'env'], scen: ['auto'], preset: { scenario: 'auto', beginner: false } },
+    slides: ['flight', 'type', 'env', 'opts'], scen: ['auto'], preset: { scenario: 'auto', beginner: false } },
   { id: 'landing', icon: '🛬', name: '着陸チャレンジ', en: 'Landing challenge', img: 'type_b738.jpg',
     desc: 'ILS 進入・ショートファイナル・目的地への最終進入。横風や悪天候で腕試し。',
-    slides: ['flight', 'type', 'env'], scen: ['ils27', 'final', 'apt2'], preset: { scenario: 'ils27', beginner: false } },
+    slides: ['flight', 'type', 'env', 'opts'], scen: ['ils27', 'final', 'apt2'], preset: { scenario: 'ils27', beginner: false } },
   { id: 'emergency', icon: '🚨', name: '緊急事態訓練', en: 'Emergency training', img: 'type_ma9.jpg',
     desc: 'エンジン火災や両エンジン停止を訓練。メーデー宣言、消防車の出動、緊急着陸まで。',
-    slides: ['flight', 'fail', 'type', 'env'], scen: ['ils27', 'rwy27', 'cruise'], preset: { scenario: 'ils27', beginner: false } },
+    slides: ['flight', 'fail', 'type', 'env', 'opts'], scen: ['ils27', 'rwy27', 'cruise'], preset: { scenario: 'ils27', beginner: false } },
   { id: 'sightseeing', icon: '🏙', name: '遊覧飛行', en: 'Sightseeing', img: 'type_ma3.jpg',
     desc: '東京の街やランドマークの上空をのんびり。夕焼けや夜景の時刻もおすすめ。',
-    slides: ['flight', 'type', 'env'], scen: ['city', 'cruise'], preset: { scenario: 'city', beginner: false, tod: 17.5 } },
+    slides: ['flight', 'type', 'env', 'opts'], scen: ['city', 'cruise'], preset: { scenario: 'city', beginner: false, tod: 17.5 } },
   { id: 'spotter', icon: '📷', name: 'スポッター', en: 'Plane spotting', img: 'type_b789.jpg',
     desc: '空港で行き交う飛行機を眺めるモード。カメラが離着陸機を自動で追います（B で次の機体）。',
-    slides: ['env'], scen: ['gate'], preset: { scenario: 'gate', beginner: false, spotter: true } },
+    slides: ['env', 'opts'], scen: ['gate'], preset: { scenario: 'gate', beginner: false, spotter: true } },
 ];
+// the hub's settings button: loading / livery and the options (radio, sound, graphics ...)
+// for the current scenario
+const SETTINGS_MODE = { id: 'settings', icon: '⚙', name: '詳細設定', en: 'Settings', slides: ['load', 'opts'], scen: null, preset: {} };
+// options remembered in this browser
+const SAVED_OPTS = ['traffic', 'atcVoice', 'atcNoise', 'sound', 'quality'];
 const FAILS = [
   { id: 'engineFire', icon: '🔥', name: 'エンジン火災', en: 'Engine fire' },
   { id: 'engineFail', icon: '⚙', name: 'エンジン停止', en: 'Engine failure' },
@@ -578,6 +583,18 @@ class App {
       b.onclick = () => this.selectMode(m.id);
       grid.appendChild(b);
     }
+    if ($('hubSettings')) $('hubSettings').onclick = () => this.selectMode('settings');
+    for (const id of SAVED_OPTS) {
+      const el = $(id);
+      if (!el) continue;
+      try {
+        const v = localStorage.getItem('b787.opt.' + id);
+        if (v != null) { if (el.type === 'checkbox') el.checked = v === '1'; else el.value = v; }
+      } catch (e) { /* storage unavailable */ }
+      el.addEventListener('change', () => {
+        try { localStorage.setItem('b787.opt.' + id, el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value); } catch (e) { /* storage unavailable */ }
+      });
+    }
     this.showModeHub();
   }
 
@@ -588,13 +605,13 @@ class App {
 
   // a mode opens its own compact slide show
   selectMode(id) {
-    const m = MODES.find((x) => x.id === id) || MODES[1];
+    const m = id === 'settings' ? SETTINGS_MODE : MODES.find((x) => x.id === id) || MODES[1];
     this.mode = m;
     const P = m.preset || {};
     // presets
     if (P.scenario) this.pickScenario(P.scenario);
     else if (m.scen && !m.scen.includes(this.scenario)) this.pickScenario(m.scen[0]);
-    if ($('beginner')) $('beginner').checked = !!P.beginner;
+    if ($('beginner') && 'beginner' in P) $('beginner').checked = !!P.beginner;
     if (P.weather) { $('weather').value = P.weather; $('weather').dispatchEvent(new Event('change')); this.refreshWeatherPick?.(); }
     const setR = (rid, v) => { if (v == null || !$(rid)) return; $(rid).value = v; $(rid).dispatchEvent(new Event('input')); };
     setR('windSpd', P.wind); setR('turb', P.turb); setR('tod', P.tod);

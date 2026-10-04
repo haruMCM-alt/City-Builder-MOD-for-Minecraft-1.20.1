@@ -82,7 +82,42 @@ HUMP = None        # dict(h, a, b, c, d, narrow): crown raised by h over station
 ENG2 = None        # dict(Y, Z, FWD[, KA, KR]): outboard engine pair
 PROP = None        # dict(R, blades, ...): turboprop nacelles and propellers
 BODY_GEAR = None   # dict(y, ds): second main gear pair (inboard, ds aft of the wing gear)
-WIN2 = None        # (z, s0, s1): upper-deck window row
+WIN2 = None        # (z, s0, s1) or (z, [(s0, s1), ...]): upper-deck window row(s)
+WIN_RUNS = None    # [(s0, s1), ...]: main-deck window runs as on the aircraft (else WIN_S minus doors)
+
+
+def window_stations(skip_exits=True):
+    """main-deck window centres"""
+    if WIN_RUNS:
+        out = []
+        for a, b in WIN_RUNS:
+            s = a
+            while s <= b + 1e-6:
+                out.append(round(s, 4))
+                s += WIN_PITCH
+        return out
+    out, s = [], WIN_S[0]
+    while s < WIN_S[1]:
+        if all(abs(s - d) > DOOR_GAP for d in DOORS) and \
+                (not skip_exits or all(abs(s - e[0]) > e[1] / 2 + 0.05 for e in EXITS)):
+            out.append(round(s, 4))
+        s += WIN_PITCH
+    return out
+
+
+def window_rows():
+    """[(z, [s ...]), ...]: main deck, then the upper deck (747)"""
+    rows = [(WIN_Z, window_stations())]
+    if WIN2:
+        z2, runs = WIN2[0], (WIN2[1] if isinstance(WIN2[1], list) else [(WIN2[1], WIN2[2])])
+        ws = []
+        for a, b in runs:
+            s = a
+            while s <= b + 1e-6:
+                ws.append(round(s, 4))
+                s += WIN_PITCH
+        rows.append((z2, ws))
+    return rows
 SPONSON = None     # dict(s0, s1, y, z, ry, rz): main-gear fairings (high-wing turboprops)
 
 
@@ -606,22 +641,31 @@ TYPES = {
     # winglets, wing and body gear (16 main wheels).  thrustSL is per side (two engines).
     "b744": dict(
         LENGTH=70.66, SPAN=64.44, HEIGHT=19.41, FUS_W=6.50, FUS_H=6.90, NL=12.6, T0=50.5,
-        GROUND_Z=-6.25, FLOOR_Z=-1.10, S_NOSE=6.9, WHEELBASE=25.6, TRACK=11.0,
+        GROUND_Z=-5.55, FLOOR_Z=-0.90, S_NOSE=7.6, WHEELBASE=25.6, TRACK=11.0,
         WING_C0=18.6, Y_KINK=12.0, Y_TIP=30.4, LE=40.0, TE_IN=0.0, TE_OUT=24.0, WING_Z0=-2.35,
         TC=[0.134, 0.122, 0.098, 0.085, 0.080], TWIST=[3.8, 3.4, 1.4, -1.2, -1.8],
         WINGLET=dict(r=0.35, theta=60.0, h=1.85, c_tip=0.9, sweep=55.0),
         ENG_Y=11.9, ENG_Z=-2.80, ENG_FWD=4.7, ENG_KA=0.82, ENG_KR=0.84, FAN_BLADES=38, ENG_FLAT=0.0,
         ENG2=dict(Y=21.3, Z=-1.45, FWD=4.2),
-        HT_S_LE0=57.6, HT_C0=7.6, HT_SEMI=11.1, HT_LE=40.0, HT_TIP_C=2.4, HT_Z0=1.15,
+        HT_S_LE0=58.6, HT_C0=7.6, HT_SEMI=11.1, HT_LE=40.0, HT_TIP_C=2.4, HT_Z0=1.5,
         VT_Z0=2.4, VT_S_LE0=54.0, VT_C0=11.0, VT_TIP_C=3.6, VT_LE=47.0, VT_FIL=(1.8, 3.2),
         NOSE_TIRE=(1.24, 0.46, 0.36), MAIN_TIRE=(1.25, 0.47, 0.56), MAIN_AXLE_DS=0.74,
         BODY_GEAR=dict(y=1.95, ds=3.4),
-        DOORS=[9.4, 20.2, 35.8, 47.2, 58.2], DOOR=(1.07, -1.04, 0.95), DOOR_GAP=0.95,
-        EXITS=[],
-        WIN=(0.22, 0.26, 0.40, 0.508), WIN_S=(5.8, 63.2), WIN2=(3.72, 12.6, 30.6),
-        HUMP=dict(h=1.55, a=2.6, b=10.8, c=29.8, d=37.5, narrow=0.30),
-        CARGO=[(15.0, 2.64, -3.05, -1.25), (52.0, 2.64, -2.95, -1.20), (56.2, 1.12, -2.4, -1.2)],
-        LABEL="747-400", REG="JA744C", CK=(1.12, 1.6, 1.06, 1.0, 1.25),
+        DOORS=[9.5, 19.3, 31.9, 42.4, 57.2], DOOR=(1.07, -0.86, 1.07), DOOR_GAP=0.95,
+        EXITS=[(15.65, 1.0, 2.20, 4.10)],       # upper-deck door
+        WIN=(0.51, 0.24, 0.40, 0.508), WIN_S=(1.2, 56.1), WIN2=(3.04, [(9.8, 14.75), (16.6, 22.05)]),
+        # window runs on the main deck (drawing): gaps at the doors, galleys and the wing box
+        WIN_RUNS=[(1.2, 8.15), (10.9, 10.95), (13.9, 17.65), (20.9, 26.35), (27.4, 27.45), (28.4, 28.45), (29.4, 29.95),
+                  (33.6, 40.55), (43.3, 46.15), (49.1, 56.05)],
+        HUMP=dict(h=1.06, a=3.5, b=8.0, c=23.0, d=30.0, narrow=0.30),
+        TAIL=dict(top=([58.0, 62.0, 66.0, 68.5, 69.6, 70.3, 70.66], [3.45, 3.44, 3.42, 3.30, 3.05, 2.75, 2.35]),
+                  bot=([44.0, 47.9, 52.0, 56.0, 60.0, 64.0, 67.0, 69.2, 70.2, 70.66],
+                       [-3.45, -3.05, -2.30, -1.53, -0.77, 0.0, 0.60, 1.10, 1.70, 2.30]),
+                  hw=([52.0, 54.0, 56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 69.5, 70.66],
+                      [3.25, 3.12, 2.84, 2.44, 2.03, 1.55, 1.14, 0.75, 0.42, 0.25, 0.12]),
+                  zw=([50.0, 56.0, 62.0, 66.0, 69.0, 70.66], [0.0, 0.0, 1.30, 1.95, 2.35, 2.33])),
+        CARGO=[(13.6, 2.64, -3.05, -0.95), (46.7, 2.64, -2.95, -0.95), (50.6, 1.12, -2.4, -1.0)],
+        LABEL="747-400", REG="JA744C", CK=(1.12, 1.6, 1.0, 1.04, 2.21),
         SPEC=dict(S=506.6, b=64.44, c=11.2, OEW=178756, MTOW=396894, MLW=285763, MZFW=246075,
                   fuelCapacity=173000, thrustSL=552000, VMO=365, MMO=0.92),
         ENGINE="GE CF6-80C2B5F", CHEVRONS=0,
@@ -677,7 +721,18 @@ NOSE_B763 = dict(
         [0, .26, .46, .69, .93, 1.52, 1.88, 2.24, 2.45, 2.51, 2.515]),
     zw=([0, 1.3, 3.3, 5.3, 9.6], [-.45, -.36, -.16, -.03, 0]),
 )
-NOSE = {"b738": NOSE_B738, "b763": NOSE_B763}
+# 747-400: measured from the Boeing 747 family side / top drawing (Wikimedia Commons,
+# "Boeing 747 family v1.0.png") scaled to the 70.66 m length; the crown here is the main-deck
+# nose, the upper deck is added by HUMP (total crown 4.51 m above the axis from s = 8 m)
+NOSE_B744 = dict(
+    top=([0, 0.2, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9.5, 11], [0.05, 0.59, 0.84, 1.24, 1.48, 1.73, 2.22, 2.674, 3.175, 3.45, 3.45, 3.45, 3.45, 3.45]),
+    bot=([0, .2, .5, 1, 1.5, 2, 3, 4, 5, 6, 7.5, 9, 11],
+         [.05, -.47, -.71, -1.13, -1.37, -1.62, -2.11, -2.36, -2.68, -2.85, -3.07, -3.25, -3.40]),
+    hw=([0, .2, .5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9.5, 11],
+        [0, .49, .73, 1.06, 1.25, 1.46, 1.83, 2.15, 2.44, 2.68, 2.88, 3.04, 3.22, 3.25]),
+    zw=([0, 2, 4, 6, 11], [.05, .03, .01, 0, 0]),
+)
+NOSE = {"b738": NOSE_B738, "b763": NOSE_B763, "b744": NOSE_B744}
 
 # nacelle outlines per type in the 787 (GEnx) units the engine is modelled in, scaled by
 # (ENG_KA, ENG_KR): outer cowl, fan nozzle exit, core cowl, core nozzle, plug
@@ -751,6 +806,11 @@ def apply_type(t):
     g["_bot"] = table(_bot.x, _bot(_bot.x), HR, "bot")
     g["_hw"] = table(_hw.x, _hw(_hw.x), WR, "hw")
     g["_zw"] = table(_zw.x, _zw(_zw.x), HR, "zw")
+    # measured tail cone (747: the upswept tail keeps the crown almost to the end)
+    for key, (ts, tv) in T.get("TAIL", {}).items():
+        f = g["_" + key]
+        keep = f.x < ts[0] - 1.0
+        g["_" + key] = PchipInterpolator(np.r_[f.x[keep], ts], np.r_[f(f.x[keep]), tv])
     # --- wing -----------------------------------------------------------------
     g["LE_SWEEP"] = T["LE"] * D2R
     g["TE_IN_SWEEP"] = T["TE_IN"] * D2R
@@ -807,7 +867,7 @@ def apply_type(t):
     g["WIN_Z"], g["WIN_W"], g["WIN_H"], g["WIN_PITCH"] = T["WIN"]
     g["EYE"] = tuple(float(v) for v in ck(EYE))
     # --- optional features ---------------------------------------------------------
-    for k in ("HUMP", "ENG2", "PROP", "BODY_GEAR", "WIN2", "SPONSON"):
+    for k in ("HUMP", "ENG2", "PROP", "BODY_GEAR", "WIN2", "SPONSON", "WIN_RUNS"):
         g[k] = T.get(k)
     if "HT_DIH" in T:
         g["HT_DIHEDRAL"] = T["HT_DIH"] * D2R
