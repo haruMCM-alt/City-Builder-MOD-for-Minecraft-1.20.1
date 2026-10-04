@@ -34,6 +34,9 @@ MIME = {".glb": "model/gltf-binary", ".json": "application/json", ".jpg": "image
 SKIP = {"jal_safety.webm", "title.jpg", "draco_decoder.js", "arff.json"}   # title.jpg: inlined in the CSS; JS decoder: wasm is used          # mp4 is enough (the embedded build always uses it)
 STRIP_TEX = re.compile(r"airport\d+\.glb$")   # same images as world.glb: the game reuses those
 MAX_TEX = 4096                        # aircraft textures above this are halved
+# secondary maps (and the cabin wall) are halved from 4096 too: keeps the file under the
+# 30 MiB limit with nine aircraft types (the colour map keeps its resolution)
+HALVE_4K = ("fuselage_normal", "fuselage_orm", "fuselage_emissive", "cabin_sidewall")
 DRACO = "vendor/three/examples/jsm/libs/draco/gltf"
 
 
@@ -77,12 +80,12 @@ def glb_parts(data):
     return J, blobs
 
 
-def shrink_image(blob, png):
+def shrink_image(blob, png, name=""):
     """textures larger than MAX_TEX are halved, big JPEGs re-encoded (None: keep as is)"""
     from PIL import Image
     src = Image.open(io.BytesIO(blob))
     w, h = src.size
-    if max(w, h) > MAX_TEX:
+    if max(w, h) > MAX_TEX or (max(w, h) >= 4096 and name in HALVE_4K):
         src = src.resize((max(1, w // 2), max(1, h // 2)), Image.LANCZOS)
     elif png or len(blob) < 60000:
         return None
@@ -133,7 +136,7 @@ def repack_glb(data, strip, shared=None, shared_out=None):
         for vi, im in img_views.items():
             png = im.get("mimeType") == "image/png"
             h = hashlib.sha1(blobs[vi]).hexdigest()
-            small = shrink_image(blobs[vi], png)
+            small = shrink_image(blobs[vi], png, im.get("name", ""))
             if shared is not None and h in shared:
                 key = SHARED_DIR + h[:16] + (".png" if png else ".jpg")
                 if key not in shared_out:
@@ -185,9 +188,9 @@ def reencode_video(path, kbps):
         print("no ffmpeg: video embedded as is")
         return None
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_video_tmp.mp4")
-    r = subprocess.run([ff, "-y", "-loglevel", "error", "-i", path, "-vf", "scale=360:-2", "-c:v", "libx264", "-preset", "slow",
+    r = subprocess.run([ff, "-y", "-loglevel", "error", "-i", path, "-vf", "scale=%d:-2" % (360 if kbps >= 24 else 240), "-c:v", "libx264", "-preset", "slow",
                         "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 2), "-bufsize", "%dk" % (kbps * 4),
-                        "-c:a", "aac", "-b:a", "24k", "-ac", "1", "-movflags", "+faststart", out], capture_output=True, text=True)
+                        "-c:a", "aac", "-b:a", "24k" if kbps >= 24 else "16k", "-ac", "1", "-movflags", "+faststart", out], capture_output=True, text=True)
     if r.returncode:
         print(r.stderr)
         return None
