@@ -35,6 +35,10 @@ export class AircraftVisual {
     // wing flex law (787-9: bends outboard of 3 m, ~ (y/27 m)^2, everything ahead of x = -15.5 m)
     const kS = (meta.span || 60.12) / 60.12, kL = (meta.length || 62.81) / 62.81, kW = (meta.fusW || 5.77) / 5.77;
     this.flexR = 3.0 * kW; this.flexD = (27 * kS) ** 2; this.flexX = -15.5 * kL;
+    // wing flex / broken-wing cut apply forward of flexX: between the wing tip trailing edge
+    // (incl. a swept winglet: 747) and the horizontal tail, from the model's light positions
+    const Lp = meta.lights;
+    if (Lp && Lp.Strobe_L && Lp.LogoLight_L) this.flexX = Math.min(Lp.Strobe_L[0] - 1.2, 0.5 * (Lp.Strobe_L[0] + Lp.LogoLight_L[0]));
     this.flexUniforms = {
       uFlex: { value: 0 }, uRootInv: { value: new THREE.Matrix4() }, uRootUp: { value: new THREE.Vector3(0, 1, 0) },
       uFlexK: { value: new THREE.Vector3(this.flexR, this.flexD, this.flexX) },
@@ -211,14 +215,15 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     u.set(cut(D.wing[0]), cut(D.wing[1]), D.tail > 0.55 ? base + (finTop - base) * 0.35 : 1e5, m.tailStrike[0] + 8 * ((m.length || 62.8) / 62.8));
     for (let i = 0; i < 2; i++) {
       const L = i === 0 ? '_L' : '_R';
-      for (const n of ['Nacelle', 'Fan', 'Pylon']) { const o = this.root.getObjectByName(n + L); if (o) o.visible = D.eng[i] < 2; }
+      // (four-engine types: the side's engines are one engine in the flight model)
+      for (const n of ['Nacelle', 'Fan', 'Pylon']) for (const k of ['', '2']) { const o = this.root.getObjectByName(n + L + k); if (o) o.visible = D.eng[i] < 2; }
       for (const l of this.lights) if (l.name.endsWith(L) && /Nav|Strobe/.test(l.name) && D.wing[i] > 0) { l.obj.visible = false; l.dead = true; }
     }
   }
 
   clearDamage() {
     this.flexUniforms.uCut.value.set(1e5, 1e5, 1e5, -1e5);
-    for (const n of ['Nacelle', 'Fan', 'Pylon']) for (const L of ['_L', '_R']) { const o = this.root.getObjectByName(n + L); if (o) o.visible = true; }
+    for (const n of ['Nacelle', 'Fan', 'Pylon']) for (const L of ['_L', '_R', '_L2', '_R2']) { const o = this.root.getObjectByName(n + L); if (o) o.visible = true; }
     for (const l of this.lights) { l.obj.visible = true; l.dead = false; }
   }
 
