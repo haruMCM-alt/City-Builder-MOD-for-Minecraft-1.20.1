@@ -20,7 +20,7 @@
 // Only FlightModel / Systems are used, so the headless test (tests/autoflight_test.mjs) runs
 // exactly the same code.  Manual stick input cancels it (main.js).
 import { headingVec, runwayDir, compassOf, northAt, wrap180, clamp, FT, FPM } from './util.js';
-import { FLAPS } from './flightmodel.js';
+import { FLAPS, SPEC } from './flightmodel.js';
 import { terrainHeight } from './terrain.js';
 import { obstacleAt } from './obstacles.js';
 
@@ -43,7 +43,8 @@ export class AutoFlight {
     this.fixFt = 3000;
     const dist = Math.hypot(this.wps[1].x - dep.threshold[0], this.wps[1].z - dep.threshold[2]);
     // cruise level from the distance (about FL140 for 170 km ... FL250 for 300 km and more)
-    this.cruiseFt = clamp(Math.round(dist / 1000 * 0.085) * 1000, 12000, 25000);
+    // (turboprops: FL200 at most)
+    this.cruiseFt = clamp(Math.round(dist / 1000 * 0.085) * 1000, 12000, fm.meta.prop ? 20000 : 25000);
     this.phase = 'TAKEOFF';
     this.t = 0; this.rotT = null;
     this.msg = '';
@@ -436,6 +437,9 @@ export class AutoFlight {
     this._say(`ILS ${(this.dest.name || this.dest.ident)} ${this.name} · APP armed`);
   }
 
+  // speed targets are the jets'; slower types (ATR 72: VMO 250 kt) stay below their VMO
+  _cap(kt) { return Math.min(kt, SPEC.VMO - 25, Math.max(190, SPEC.VMO - 60 + (kt - 190) * 0.3)); }
+
   _say(m) { this.msg = m; this.onMessage?.(m); }
 
   // a clipped wing: the ailerons run out of authority when slow - minimum control speed, and
@@ -527,11 +531,11 @@ export class AutoFlight {
         if (this.phase === 'CLIMB') {
           if (o.ias > vs.v2 + 30 && sys.flapLever > 1) sys.flapLever = 1;
           if (o.ias > vs.v2 + 50 && sys.flapLever > 0) sys.flapLever = 0;
-          mcp.spd = sys.flapLever > 0 ? Math.round(vs.v2 + 60) : alt < 10000 ? 250 : 290;
+          mcp.spd = sys.flapLever > 0 ? Math.round(vs.v2 + 60) : alt < 10000 ? this._spd(this._cap(250)) : this._spd(this._cap(290));
           mcp.vs = alt < 10000 ? 2200 : 1800;
           if (sys.ap.pitch === 'ALT' && Math.abs(alt - this.cruiseFt) < 200) { this.phase = 'CRUISE'; this._say(`巡航 FL${Math.round(this.cruiseFt / 100)} · ${this.name} まで ${Math.round(w.d / 1000)} km`); }
         }
-        if (this.phase === 'CRUISE') mcp.spd = 290;
+        if (this.phase === 'CRUISE') mcp.spd = this._spd(this._cap(290));
         // top of descent: 3,000 ft at the fix on a ~3 degree path, plus room to slow down
         if (this.wi === last && this.phase !== 'DESCENT') {
           const need = ((alt - FX) / 280 + 10) * NM;
@@ -553,7 +557,7 @@ export class AutoFlight {
             if (alt > FX + 250) mcp.vs = Math.round(clamp(need * 1.15, -3500, -700) / 100) * 100;
             else mcp.vs = alt < FX - 150 ? (alt < FX - 800 ? 2000 : 1000) : -300;   // at / below the target (emergency start, terrain)
           }
-          mcp.spd = alt > 11000 ? 290 : rem > 18 * NM ? 250 : rem > 9 * NM ? 210 : 190;
+          mcp.spd = alt > 11000 ? this._spd(this._cap(290)) : rem > 18 * NM ? this._spd(this._cap(250)) : rem > 9 * NM ? this._spd(this._cap(210)) : this._spd(this._cap(190));
           if (this.emerg) mcp.spd = this._spd(Math.min(mcp.spd, rem > 9 * NM ? 230 : 190));
           // speedbrakes when fast (steep descent at idle)
           if (o.ias > mcp.spd + 12) sys.speedbrakeLever = 0.6; else if (o.ias < mcp.spd + 3) sys.speedbrakeLever = 0;
@@ -571,6 +575,9 @@ export class AutoFlight {
           const d = runwayDir(this.dest);
           const along = (fm.pos.x - this.dest.threshold[0]) * d.x + (fm.pos.z - this.dest.threshold[2]) * d.z;
           if (along > -1500 && sys.ap.pitch !== 'GS' && sys.ap.pitch !== 'FLARE' && o.raFt > 150) { this._goAround(); break; }
+          // ... or still well off the centre line (a clipped wing slows the localizer capture)
+          const lat = (fm.pos.x - this.dest.threshold[0]) * -d.z + (fm.pos.z - this.dest.threshold[2]) * d.x;
+          if (along > -2500 && Math.abs(lat) > 90 && o.raFt > 150) { this._goAround(); break; }
         }
         if (sys.ap.roll === 'HDG') {
           // intercept the localizer: up to 40 degrees towards the centre line

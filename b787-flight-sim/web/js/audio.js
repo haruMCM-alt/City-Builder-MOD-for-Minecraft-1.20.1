@@ -34,14 +34,20 @@ const PHRASES = {
 
 // engine type (set when the aircraft type changes): N1 100 % shaft rate and fan blade count
 // GEnx-1B ~2560 rpm / 18 blades, CFM56-7B 5380 rpm / 24, CF6-80C2 3280 rpm / 38
-// MA-300 MX-1G geared fan ~3300 rpm / 18, MA-700 MX-9 ~2500 / 16, MA-900 MX-12 ~2100 / 16
-// size: take-off thrust relative to the GEnx (a bigger engine is louder, and its roar deeper)
-export const ENGINE_SOUND = { shaftHz: 2560 / 60, blades: 18, thrust: 329600, size: 1 };
-export function setEngineSound(type, thrustSL) {
-  const T = { b789: [2560, 18], b738: [5380, 24], b763: [3280, 38], ma3: [3300, 18], ma7: [2500, 16], ma9: [2100, 16] }[type] || [2560, 18];
+// MA-300 MX-1G geared fan ~3300 rpm / 18, MA-700 MX-9 ~2500 / 16, MA-900 MX-6 (x4) ~3400 / 18
+// 747-400 CF6-80C2B5F (x4) 3280 / 38; ATR 72-600 PW127M: propeller 1200 rpm (Np 100 %), 6 blades
+// size: take-off thrust relative to the GEnx (a bigger engine is louder, and its roar deeper);
+// four-engine types: thrustSL is per side (two engines), the size is that of one engine
+// prop: the 120 Hz blade-passing drone and its harmonics replace most of the jet roar
+export const ENGINE_SOUND = { shaftHz: 2560 / 60, blades: 18, thrust: 329600, size: 1, prop: false, perSide: 1 };
+export function setEngineSound(type, thrustSL, engineCount = 2, prop = false) {
+  const T = { b789: [2560, 18], b738: [5380, 24], b763: [3280, 38], ma3: [3300, 18], ma7: [2500, 16], ma9: [3400, 18],
+    b744: [3280, 38], at76: [1200, 6] }[type] || [2560, 18];
   ENGINE_SOUND.shaftHz = T[0] / 60; ENGINE_SOUND.blades = T[1];
   ENGINE_SOUND.thrust = thrustSL || 329600;
-  ENGINE_SOUND.size = ENGINE_SOUND.thrust / 329600;
+  ENGINE_SOUND.perSide = Math.max(1, engineCount / 2);
+  ENGINE_SOUND.size = ENGINE_SOUND.thrust / ENGINE_SOUND.perSide / 329600;
+  ENGINE_SOUND.prop = !!prop;
 }
 // soft-clipping curve: adds harmonics to the low end so the body of the roar is heard (and
 // felt) even on small speakers that cannot reproduce 40 Hz
@@ -548,9 +554,14 @@ export class Audio {
       // fan tones are masked by broadband roar and the ear hears a deep, rounded sound
       const dop = 1;       // Doppler comes from the delay line now
       const shaft = ENGINE_SOUND.shaftHz * n1 * dop * TONE_SCALE * (ENGINE_SOUND.blades === 18 ? 1 : 0.8) * (i ? 1.0035 : 1);
-      const bpf = shaft * ENGINE_SOUND.blades;
+      const prop = ENGINE_SOUND.prop;
+      // propeller: constant-speed, ~70 % Np at ground idle rising to 100 % at take-off power
+      const np = prop ? ENGINE_SOUND.shaftHz * Math.min(1, n1 / 0.25) * (0.7 + 0.3 * smoothstep(0.3, 0.95, n1)) : 0;
+      const bpf = prop ? np * ENGINE_SOUND.blades : shaft * ENGINE_SOUND.blades;
       const thrust = clamp(Math.abs(e.thrust) / ENGINE_SOUND.thrust, 0, 1.1);
-      const size = ENGINE_SOUND.size, big = Math.sqrt(size);       // big engines: louder, deeper
+      // two engines on a side: ~+3 dB and a fuller sound than one engine of the same thrust
+      const size = ENGINE_SOUND.size, big = Math.sqrt(size) * Math.sqrt(ENGINE_SOUND.perSide);
+      const roarK = prop ? 0.35 : 1;
       const rev = e.reverse;
       // stereo placement from the engine position relative to the camera
       if (E.out.pan) {
@@ -561,13 +572,14 @@ export class Audio {
       const near = cabin ? (i === 0 ? 1.6 : 0.55) : 1;
       // fan tone
       set(E.fan.frequency, bpf, 0.05);
-      set(E.fanG.gain, on * near * fanDir * (0.006 + 0.03 * n1 * n1), 0.08);
+      set(E.fanG.gain, on * near * (prop ? (0.5 + 0.5 * fanDir) * (0.03 + 0.09 * n1) : fanDir * (0.006 + 0.03 * n1 * n1)), 0.08);
       set(E.fanNoiseF.frequency, bpf * 0.8, 0.05);
       set(E.fanNoiseG.gain, on * near * fanDir * 0.12 * n1 * n1, 0.08);
       // buzzsaw above ~78 % N1
-      set(E.buzz.frequency, shaft, 0.05);
-      set(E.buzzLP.frequency, 450 + 1300 * n1, 0.1);
-      set(E.buzzG.gain, on * near * fanDir * 0.11 * smoothstep(0.76, 0.96, n1), 0.1);
+      // (prop: the harmonic-rich blade-passing rasp of the propeller instead)
+      set(E.buzz.frequency, prop ? bpf : shaft, 0.05);
+      set(E.buzzLP.frequency, prop ? 600 + 900 * n1 : 450 + 1300 * n1, 0.1);
+      set(E.buzzG.gain, on * near * (prop ? 0.05 + 0.1 * n1 : fanDir * 0.11 * smoothstep(0.76, 0.96, n1)), 0.1);
       // core whine: loudest (relatively) at idle, the classic GEnx whistle
       const cf = (1150 + 1500 * n2) * dop * (i ? 1.0025 : 1);
       set(E.core1.frequency, cf, 0.08);
@@ -580,10 +592,10 @@ export class Audio {
 
       set(E.jetLP.frequency, (220 + 1100 * Math.min(jet, 1) * (inside ? 0.5 : 1)) / Math.pow(size, 0.25), 0.12);
       set(E.jetBody.frequency, 110 / Math.pow(size, 0.3), 0.3);
-      const jetLvl = on * near * (jetDir + rev * 0.8) * (0.02 + 0.55 * jet) * big;
+      const jetLvl = on * near * (jetDir + rev * 0.8) * (0.02 + 0.55 * jet) * big * roarK;
       set(E.jetG.gain, jetLvl, 0.12);
       // crackle at high thrust, aft
-      set(E.crkG.gain, on * near * jetDir * 0.35 * smoothstep(0.6, 1.0, thrust) * big, 0.12);
+      set(E.crkG.gain, on * near * jetDir * 0.35 * smoothstep(0.6, 1.0, thrust) * big * (prop ? 0 : 1), 0.12);
       // rumble
       set(E.rumG.gain, on * near * (0.16 + 0.65 * n1) * (inside ? 1.6 : 1) * big, 0.1);
       // sub body: grows with thrust, carried through the airframe into the cabin / flight deck
@@ -591,7 +603,7 @@ export class Audio {
       set(E.subG.gain, subLvl, 0.15);
       set(E.subLP.frequency, 65 + 25 * Math.min(jet, 1), 0.2);
       // tearing mid band: the "ripping" quality of full power, aft and outside
-      const tearLvl = on * near * jetDir * 0.32 * smoothstep(0.35, 1.0, thrust) * (outsideProp ? 1 : 0.25) * big;
+      const tearLvl = on * near * jetDir * 0.32 * smoothstep(0.35, 1.0, thrust) * (outsideProp ? 1 : 0.25) * big * roarK;
       set(E.tearG.gain, tearLvl, 0.15);
       set(E.tearF.frequency, (300 + 260 * thrust) / Math.pow(size, 0.2), 0.2);
       // swell depth: ~35 % of the roar level (the modulator noise is ~+-1)

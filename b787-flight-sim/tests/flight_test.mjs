@@ -19,7 +19,9 @@ const meta = JSON.parse(fs.readFileSync(path.join(here, `../web/assets/${process
 if (meta.spec) Object.assign(SPEC, meta.spec);
 const KM = SPEC.MTOW / 254011;                    // loads scale with the type's weight
 const GY = -meta.groundY - 0.2;
-const MC = Math.min(0.85, SPEC.MMO - 0.04);       // cruise Mach
+const PROP = !!meta.prop;                         // turboprop (ATR 72): FL200, M0.44
+const MC = PROP ? 0.44 : Math.min(0.85, SPEC.MMO - 0.04);       // cruise Mach
+const CRZ_FT = PROP ? 20000 : 35000, A_CRZ = PROP ? 316.0 : 296.5;
 console.log('type', meta.name || 'Boeing 787-9');
 const world = JSON.parse(fs.readFileSync(path.join(here, '../web/assets/world.json')));
 configureTerrain(world);
@@ -72,12 +74,12 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
   });
   console.log('liftoff', liftoff);
   console.log('at 1500ft:', fmt(o));
-  check(liftoff && liftoff.dist > 900 && liftoff.dist < 3200, 'takeoff roll ' + (liftoff && liftoff.dist.toFixed(0)) + ' m');
+  check(liftoff && liftoff.dist > (PROP ? 600 : 900) && liftoff.dist < 3200, 'takeoff roll ' + (liftoff && liftoff.dist.toFixed(0)) + ' m');
   check(o.altFt >= 1400, 'climbed through 1500 ft');
   // --- flap retraction, AP on, climb to 5000 and hold 250 kt ---
   sys.pilot.pitch = 0;
   sys.flapLever = 0;
-  sys.mcp.alt = 5000; sys.mcp.spd = 250; sys.mcp.hdg = Math.round(H(250)); sys.mcp.vs = 2000;
+  sys.mcp.alt = 5000; sys.mcp.spd = PROP ? 210 : 250; sys.mcp.hdg = Math.round(H(250)); sys.mcp.vs = 2000;
   sys.ap.roll = 'HDG'; sys.ap.pitch = 'VS';
   sys.engageAP();
   sys.at.on = true; sys.at.mode = 'SPD';
@@ -85,7 +87,8 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
   console.log('after 240 s AP:', fmt(o), 'stab', (fm.ctl.stab / DEG).toFixed(2), 'elev', (fm.ctl.elevator / DEG).toFixed(2), 'N1', fm.engines[0].n1.toFixed(1));
   check(Math.abs(o.altFt - 5000) < 60, 'AP altitude hold 5000 ft (' + o.altFt.toFixed(0) + ')');
   check(Math.abs(((o.hdg - Math.round(H(250))) % 360 + 540) % 360 - 180) < 2, 'AP heading ' + Math.round(H(250)));
-  check(Math.abs(o.ias - 250) < 6, 'A/T speed 250 kt (' + o.ias.toFixed(1) + ')');
+  const S5 = PROP ? 210 : 250;
+  check(Math.abs(o.ias - S5) < 6, 'A/T speed ' + S5 + ' kt (' + o.ias.toFixed(1) + ')');
   // --- cruise check: FL350 M0.85 trim
 }
 
@@ -94,11 +97,11 @@ function check(cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); ok = 
   const fm = new FlightModel(meta);
   const sys = new Systems(fm, world);
   fm.payload = 26000 * KM; fm.fuel = Math.min(60000 * KM, SPEC.fuelCapacity * 0.8);
-  const alt = 35000 * FT;
-  fm.reset(new V3(0, alt, -30000), H(270, 0, -30000), MC * 296.5, 2.0, false);
+  const alt = CRZ_FT * FT;
+  fm.reset(new V3(0, alt, -30000), H(270, 0, -30000), MC * A_CRZ, 2.0, false);
   sys.flapLever = 0; sys.gearLever = false; fm.ctl.gearPos = 1; fm.ctl.flapAngle = 0;
   sys.airTime = 5; sys.gammaT = 0;
-  sys.mcp.alt = 35000; sys.mcp.hdg = Math.round(H(270, 0, -30000)); sys.mcp.spd = 262;
+  sys.mcp.alt = CRZ_FT; sys.mcp.hdg = Math.round(H(270, 0, -30000)); sys.mcp.spd = 262;
   sys.ap.roll = 'HDG'; sys.ap.pitch = 'ALT'; sys.ap.on = true;
   // hold Mach 0.85 with A/T: set IAS target equal to M.85 CAS at FL350
   run(fm, sys, 5);

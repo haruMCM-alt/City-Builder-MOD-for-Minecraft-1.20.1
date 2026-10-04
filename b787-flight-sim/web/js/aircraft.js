@@ -51,6 +51,11 @@ export class AircraftVisual {
       this.parts[p.name] = { obj: o, rest: o.quaternion.clone(), pos: o.position.clone(), info: p };
     }
     this.wheelParts = meta.parts.filter((p) => p.kind === 'wheel').map((p) => [p.name, p.gear]);
+    // 747 body gear (MainGear_L2 ...) and four-engine types (Fan_L2 ...) share the side's state
+    this.mainLegs = meta.parts.filter((p) => p.kind === 'gear' && p.name.startsWith('MainGear_'))
+      .map((p) => [p.name, p.name.startsWith('MainGear_L') ? 1 : 2]);
+    this.mainDoors = meta.parts.filter((p) => p.kind === 'door' && p.name.startsWith('MainDoor_')).map((p) => p.name);
+    this.fanParts = meta.parts.filter((p) => p.kind === 'fan').map((p) => [p.name, p.name.startsWith('Fan_R') ? 1 : 0]);
     const wr = (g) => (meta.parts.find((p) => p.kind === 'wheel' && p.gear === g) || { radius: 0.6 }).radius;
     this.wheelR = [wr(0), wr(1)];
     this.cockpit = COCKPIT_PARTS.map((n) => this.root.getObjectByName(n)).filter(Boolean);
@@ -367,17 +372,17 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     const legT = smoothstep(0.18, 0.86, gp);
     const doorT = gp <= 0.001 ? 0 : clamp(Math.min(gp / 0.16, (1 - gp) / 0.12), 0, 1);
     this.setPart('NoseGear', legT * 100 * DEG);
-    this.setPart('MainGear_L', legT * 90 * DEG);
-    this.setPart('MainGear_R', legT * 90 * DEG);
+    for (const [n] of this.mainLegs) this.setPart(n, legT * 90 * DEG);
     this.setPart('NoseDoor_L', doorT * 88 * DEG); this.setPart('NoseDoor_R', doorT * 88 * DEG);
-    this.setPart('MainDoor_L', doorT * 85 * DEG); this.setPart('MainDoor_R', doorT * 85 * DEG);
+    for (const n of this.mainDoors) this.setPart(n, doorT * 85 * DEG);
     const gearVis = gp < 0.97;
-    const strut = [['NoseGear', fm.gear[0]], ['MainGear_L', fm.gear[1]], ['MainGear_R', fm.gear[2]]];
+    const strut = this._strut || (this._strut = [['NoseGear', 0], ...this.mainLegs]);
     // main gear: in the last part of the swing the leg also moves up / inboard so the
     // bogie (axles vertical, tyres flat) tucks into the belly wheel well instead of
     // poking out beside the fuselage
     const stow = smoothstep(0.55, 1.0, legT);
-    for (const [n, g] of strut) {
+    for (const [n, gi] of strut) {
+      const g = fm.gear[gi];
       const p = this.parts[n];
       if (!p) continue;
       p.obj.visible = gearVis;
@@ -410,8 +415,8 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     for (let i = 0; i < 2; i++) {
       const rps = fm.engines[i].n1 / 100 * 7.5;      // visual rate (avoids wagon-wheel aliasing)
       this.fanAngle[i] = (this.fanAngle[i] + rps * dt * Math.PI * 2) % (Math.PI * 2);
-      this.setPart(i === 0 ? 'Fan_L' : 'Fan_R', this.fanAngle[i]);
     }
+    for (const [n, i] of this.fanParts) this.setPart(n, this.fanAngle[i]);
     // cockpit levers
     this.setPart('Throttle_L', (sys.tla[0] * 32 - 8) * DEG);
     this.setPart('Throttle_R', (sys.tla[1] * 32 - 8) * DEG);
@@ -522,7 +527,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
       this._contrail = (this._contrail || 0) + dt;
       while (this._contrail > 0.012) {
         this._contrail -= 0.012;
-        for (const ax of [this.meta.engineAxisL, this.meta.engineAxisR]) {
+        for (const ax of this.meta.engineAxes || [this.meta.engineAxisL, this.meta.engineAxisR]) {
           // contrails condense ~60 m behind the nozzle as thin lines that spread slowly
           const wp = new THREE.Vector3(ax[0] - 60 - Math.random() * 20, ax[1], ax[2]).applyMatrix4(this.root.matrixWorld);
           this.emit(wp, { x: (Math.random() - 0.5) * 0.4, y: -0.3, z: (Math.random() - 0.5) * 0.4 }, 10, 2.4, 6, 0.13);

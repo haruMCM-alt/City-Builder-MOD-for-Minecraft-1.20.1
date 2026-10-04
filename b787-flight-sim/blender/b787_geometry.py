@@ -13,6 +13,7 @@ Published figures this geometry is built to (see ../docs/SPECS.md):
     GEnx-1B fan diameter 2.82 m (111 in).
 """
 import math
+from contextlib import contextmanager
 import os
 
 import numpy as np
@@ -26,9 +27,10 @@ from scipy.interpolate import PchipInterpolator
 # ---------------------------------------------------------------------------
 TYPE = os.environ.get("AC_TYPE", "b789")
 ASSET = {"b789": "b787-9", "b738": "b737-800", "b763": "b767-300er",
-         "ma3": "ma-300", "ma7": "ma-700", "ma9": "ma-900"}[TYPE]
+         "ma3": "ma-300", "ma7": "ma-700", "ma9": "ma-900", "b744": "b747-400", "at76": "atr72-600"}[TYPE]
 NAME = {"b789": "Boeing 787-9", "b738": "Boeing 737-800", "b763": "Boeing 767-300ER",
-        "ma3": "Micomsoft MA-300 Tsubame", "ma7": "Micomsoft MA-700 Hayabusa", "ma9": "Micomsoft MA-900 Otori"}[TYPE]
+        "ma3": "Micomsoft MA-300 Tsubame", "ma7": "Micomsoft MA-700 Hayabusa", "ma9": "Micomsoft MA-900 Otori",
+        "b744": "Boeing 747-400", "at76": "ATR 72-600"}[TYPE]
 
 # ---------------------------------------------------------------------------
 # Global figures
@@ -74,9 +76,26 @@ _zw = PchipInterpolator([0.0, 2.0, 5.0, 8.5, 44.0, 50.0, 56.0, LENGTH],
                         [-0.55, -0.42, -0.18, 0.0, 0.0, 0.25, 0.75, 1.32])
 
 
+# optional features of some types (set by apply_type): an upper-deck hump (747), a second
+# engine pair, propellers instead of fans, body gear, a second row of windows
+HUMP = None        # dict(h, a, b, c, d, narrow): crown raised by h over stations a-b-c-d
+ENG2 = None        # dict(Y, Z, FWD[, KA, KR]): outboard engine pair
+PROP = None        # dict(R, blades, ...): turboprop nacelles and propellers
+BODY_GEAR = None   # dict(y, ds): second main gear pair (inboard, ds aft of the wing gear)
+WIN2 = None        # (z, s0, s1): upper-deck window row
+SPONSON = None     # dict(s0, s1, y, z, ry, rz): main-gear fairings (high-wing turboprops)
+
+
+def _hump(s):
+    if not HUMP:
+        return np.zeros_like(np.asarray(s, dtype=np.float64))
+    H = HUMP
+    return H["h"] * _bump(s, H["a"], H["b"], H["c"], H["d"])
+
+
 def fus_profile(s):
     s = np.asarray(s, dtype=np.float64)
-    return _top(s), _bot(s), _hw(s), _zw(s)
+    return _top(s) + _hump(s), _bot(s), _hw(s), _zw(s)
 
 
 def _bump(s, a, b, c, d):
@@ -121,6 +140,17 @@ def fus_section(s, phi):
     z_up = zw + (zt - zw) * np.abs(cp) ** (2.0 / n_z)
     z_dn = zw - (zw - zb) * np.abs(cp) ** (2.0 / n_z)
     z = np.where(lower, z_dn, z_up)
+    if HUMP:
+        # upper deck: the crown rises and narrows into a second, smaller lobe
+        hh = _hump(s)
+        zt0 = zt - hh
+        up = np.where(lower, 0.0, np.abs(cp))
+        z_up0 = zw + (zt0 - zw) * up ** (2.0 / n_z)
+        k = np.clip((up - 0.25) / 0.5, 0, 1)
+        k = k * k * (3 - 2 * k)
+        z = np.where(lower, z, z_up0 + hh * k)
+        n = np.clip((up - 0.30) / 0.55, 0, 1)
+        y = y * (1.0 - HUMP.get("narrow", 0.24) * (hh / max(HUMP["h"], 1e-6)) * n * n * (3 - 2 * n))
     # wing-to-body (belly) fairing: broadens and deepens the lower lobe
     A = _bump(s, *BUMP)
     d = np.where(lower, np.abs(cp), 0.0)
@@ -143,10 +173,12 @@ def section_arc(s, n=512):
 def fus_stations():
     """Station distribution: dense at nose and tail."""
     a = np.linspace(0.0, 1.0, 40) ** 2 * 1.2          # 0 .. 1.2 (blunt tip)
-    b = np.linspace(1.2, 11.0, 70)[1:]
-    c = np.linspace(11.0, 40.0, 70)[1:]
-    d = np.linspace(40.0, LENGTH, 110)[1:]
+    s1, s2 = (11.0, 40.0) if LENGTH > 35.0 else (0.3 * LENGTH, 0.66 * LENGTH)   # short types (ATR)
+    b = np.linspace(1.2, s1, 70)[1:]
+    c = np.linspace(s1, s2, 70)[1:]
+    d = np.linspace(s2, LENGTH, 110)[1:]
     st = np.unique(np.r_[a, b, c, d])
+    st = st[st <= max(LENGTH, 40.0)]
     st[0] = 0.0015
     return st
 
@@ -548,15 +580,16 @@ TYPES = {
                   fuelCapacity=118000, thrustSL=380000, VMO=360, MMO=0.93),
         ENGINE="Micomsoft MX-9 high-bypass turbofan", CHEVRONS=20,
     ),
-    # MA-900 "Otori": a super-widebody twin -- a 7.05 m fuselage (3-4-3 at 20 in seats), five
-    # door pairs, a 75 m raked wing and the largest fans ever hung on an airliner (3.5 m)
+    # MA-900 "Otori": a super-widebody -- a 7.05 m fuselage (3-4-3 at 20 in seats), five door
+    # pairs, a 75 m raked wing carrying four small, quiet high-bypass engines (2.5 m fans)
     "ma9": dict(
         LENGTH=76.40, SPAN=74.80, HEIGHT=20.40, FUS_W=7.05, FUS_H=7.45, NL=13.4, T0=54.0,
         GROUND_Z=-6.30, FLOOR_Z=-1.25, S_NOSE=9.6, WHEELBASE=31.0, TRACK=12.4,
         WING_C0=15.6, Y_KINK=12.4, Y_TIP=37.4, Y_RAKE=33.0, LE=33.5, TE_IN=6.0, TE_OUT=24.0, WING_Z0=-2.40,
         TC=[0.150, 0.138, 0.110, 0.096, 0.090], TWIST=[4.2, 3.8, 1.6, -1.2, -2.0],
         WINGLET=None,
-        ENG_Y=12.4, ENG_Z=-3.30, ENG_FWD=6.4, ENG_KA=1.22, ENG_KR=1.26, FAN_BLADES=16, ENG_FLAT=0.0,
+        ENG_Y=11.4, ENG_Z=-3.05, ENG_FWD=5.4, ENG_KA=0.86, ENG_KR=0.88, FAN_BLADES=18, ENG_FLAT=0.0,
+        ENG2=dict(Y=21.6, Z=-1.62, FWD=4.6),
         HT_S_LE0=61.8, HT_C0=8.0, HT_SEMI=12.4, HT_LE=38.0, HT_TIP_C=2.3, HT_Z0=1.25,
         VT_Z0=2.5, VT_S_LE0=59.8, VT_C0=10.6, VT_TIP_C=3.9, VT_LE=43.0, VT_FIL=(2.0, 4.2),
         NOSE_TIRE=(1.27, 0.46, 0.42), MAIN_TIRE=(1.52, 0.57, 0.82), MAIN_AXLE_DS=1.55, AXLES=3,
@@ -566,8 +599,55 @@ TYPES = {
         CARGO=[(18.2, 2.90, -3.25, -1.25), (56.6, 2.90, -3.15, -1.20), (61.0, 1.00, -2.60, -1.20)],
         LABEL="MA-900", REG="JA900M", CK=(1.218, 0.0, 1.10, 1.10, 0.10),
         SPEC=dict(S=589.8, b=74.8, c=9.53, OEW=175000, MTOW=362000, MLW=262000, MZFW=246000,
-                  fuelCapacity=150000, thrustSL=500000, VMO=355, MMO=0.88),
-        ENGINE="Micomsoft MX-12 ultra-high-bypass turbofan", CHEVRONS=0,
+                  fuelCapacity=150000, thrustSL=520000, VMO=355, MMO=0.88),
+        ENGINE="Micomsoft MX-6 high-bypass turbofan", CHEVRONS=0,
+    ),
+    # ---- Boeing 747-400: the upper-deck hump, four CF6-80C2 under a 64 m wing with canted
+    # winglets, wing and body gear (16 main wheels).  thrustSL is per side (two engines).
+    "b744": dict(
+        LENGTH=70.66, SPAN=64.44, HEIGHT=19.41, FUS_W=6.50, FUS_H=6.90, NL=12.6, T0=50.5,
+        GROUND_Z=-6.25, FLOOR_Z=-1.10, S_NOSE=6.9, WHEELBASE=25.6, TRACK=11.0,
+        WING_C0=18.6, Y_KINK=12.0, Y_TIP=30.4, LE=40.0, TE_IN=0.0, TE_OUT=24.0, WING_Z0=-2.35,
+        TC=[0.134, 0.122, 0.098, 0.085, 0.080], TWIST=[3.8, 3.4, 1.4, -1.2, -1.8],
+        WINGLET=dict(r=0.35, theta=60.0, h=1.85, c_tip=0.9, sweep=55.0),
+        ENG_Y=11.9, ENG_Z=-2.80, ENG_FWD=4.7, ENG_KA=0.82, ENG_KR=0.84, FAN_BLADES=38, ENG_FLAT=0.0,
+        ENG2=dict(Y=21.3, Z=-1.45, FWD=4.2),
+        HT_S_LE0=57.6, HT_C0=7.6, HT_SEMI=11.1, HT_LE=40.0, HT_TIP_C=2.4, HT_Z0=1.15,
+        VT_Z0=2.4, VT_S_LE0=54.0, VT_C0=11.0, VT_TIP_C=3.6, VT_LE=47.0, VT_FIL=(1.8, 3.2),
+        NOSE_TIRE=(1.24, 0.46, 0.36), MAIN_TIRE=(1.25, 0.47, 0.56), MAIN_AXLE_DS=0.74,
+        BODY_GEAR=dict(y=1.95, ds=3.4),
+        DOORS=[9.4, 20.2, 35.8, 47.2, 58.2], DOOR=(1.07, -1.04, 0.95), DOOR_GAP=0.95,
+        EXITS=[],
+        WIN=(0.22, 0.26, 0.40, 0.508), WIN_S=(5.8, 63.2), WIN2=(3.72, 12.6, 30.6),
+        HUMP=dict(h=1.55, a=2.6, b=10.8, c=29.8, d=37.5, narrow=0.30),
+        CARGO=[(15.0, 2.64, -3.05, -1.25), (52.0, 2.64, -2.95, -1.20), (56.2, 1.12, -2.4, -1.2)],
+        LABEL="747-400", REG="JA744C", CK=(1.12, 1.6, 1.06, 1.0, 1.25),
+        SPEC=dict(S=506.6, b=64.44, c=11.2, OEW=178756, MTOW=396894, MLW=285763, MZFW=246075,
+                  fuelCapacity=173000, thrustSL=552000, VMO=365, MMO=0.92),
+        ENGINE="GE CF6-80C2B5F", CHEVRONS=0,
+    ),
+    # ---- ATR 72-600: high wing, T-tail, two PW127M turboprops with six-blade propellers, main
+    # gear in fuselage sponsons, 2-2 cabin.  (thrustSL: equivalent static thrust per engine)
+    "at76": dict(
+        LENGTH=27.17, SPAN=27.05, HEIGHT=7.65, FUS_W=2.77, FUS_H=2.90, NL=4.9, T0=19.2,
+        GROUND_Z=-2.42, FLOOR_Z=-0.56, S_NOSE=2.55, WHEELBASE=10.77, TRACK=4.10,
+        WING_C0=2.84, Y_KINK=4.1, Y_TIP=13.52, LE=2.5, TE_IN=0.0, TE_OUT=-5.0, WING_Z0=1.18,
+        TC=[0.180, 0.175, 0.160, 0.135, 0.130], TWIST=[2.0, 2.0, 1.0, 0.0, -1.0], DIHEDRAL=1.5,
+        WINGLET=None, BUMP_D=0.0,
+        ENG_Y=4.10, ENG_Z=0.72, ENG_FWD=2.65, ENG_KA=0.6, ENG_KR=1.40, FAN_BLADES=6, ENG_FLAT=0.0,
+        PROP=dict(R=1.98, blades=6, L=6.9, Rn=0.58),
+        HT_S_LE0=24.25, HT_C0=1.95, HT_SEMI=3.65, HT_LE=9.0, HT_TIP_C=1.35, HT_Z0=4.95, HT_DIH=0.0,
+        VT_Z0=1.25, VT_S_LE0=20.6, VT_C0=4.4, VT_TIP_C=2.35, VT_LE=34.0, VT_FIL=(0.9, 3.6),
+        NOSE_TIRE=(0.45, 0.16, 0.16), MAIN_TIRE=(0.84, 0.29, 0.26), MAIN_AXLE_DS=0.0,
+        SPONSON=dict(s0=10.6, s1=16.4, y=1.38, z=-1.02, ry=0.62, rz=0.58),
+        DOORS=[4.15, 20.7], DOOR=(0.72, -0.50, 1.16), DOOR_GAP=0.5,
+        EXITS=[],
+        WIN=(0.36, 0.22, 0.34, 0.762), WIN_S=(5.4, 19.8),
+        CARGO=[],
+        LABEL="ATR 72-600", REG="JA72AT", CK=(0.56, 0.05, 0.64, 0.66, -0.22),
+        SPEC=dict(S=61.2, b=27.05, c=2.35, OEW=13500, MTOW=23000, MLW=22350, MZFW=21000,
+                  fuelCapacity=5000, thrustSL=42000, VMO=250, MMO=0.55),
+        ENGINE="Pratt & Whitney Canada PW127M", CHEVRONS=0,
     ),
 }
 
@@ -628,12 +708,14 @@ NACELLES = {
         core_lip=5.5, plug=[(5.0, 0.54), (5.5, 0.52), (6.0, 0.42), (6.5, 0.24), (6.95, 0.02)]),
     # MX-9 / MX-12: GEnx-like long fan cowls (the 787's own outlines)
     "ma7": dict(outer=NAC_OUTER, nozzle=NOZZLE_A, core=CORE_PROF, core_lip=CORE_LIP, plug=PLUG_PROF),
+    "at76": dict(outer=NAC_OUTER, nozzle=NOZZLE_A, core=CORE_PROF, core_lip=CORE_LIP, plug=PLUG_PROF),   # (unused: propellers)
     "ma9": dict(
         outer=[(0.00, 1.520), (0.03, 1.595), (0.10, 1.650), (0.25, 1.700), (0.55, 1.742), (1.00, 1.765),
                (1.70, 1.770), (2.50, 1.752), (3.30, 1.705), (4.00, 1.625), (4.60, 1.515), (5.00, 1.420)],
         nozzle=5.00, core=[(3.5, 0.96), (4.2, 1.00), (4.9, 0.96), (5.7, 0.84), (6.5, 0.66)],
         core_lip=6.5, plug=[(6.0, 0.50), (6.5, 0.48), (6.9, 0.41), (7.3, 0.25), (7.6, 0.02)]),
 }
+NACELLES["b744"] = NACELLES["b763"]
 WS_ZONES = {"b738": ((1.3, 1.6, 2.45, 3.0), 1.62), "b763": ((1.54, 1.79, 2.39, 3.04), 1.72)}
 # side windows (No. 2 / No. 3) length scale: the 767's window band is ~2.4 m long in photos
 
@@ -724,6 +806,36 @@ def apply_type(t):
     g["DOOR_W"], g["DOOR_Z0"], g["DOOR_Z1"] = T["DOOR"]
     g["WIN_Z"], g["WIN_W"], g["WIN_H"], g["WIN_PITCH"] = T["WIN"]
     g["EYE"] = tuple(float(v) for v in ck(EYE))
+    # --- optional features ---------------------------------------------------------
+    for k in ("HUMP", "ENG2", "PROP", "BODY_GEAR", "WIN2", "SPONSON"):
+        g[k] = T.get(k)
+    if "HT_DIH" in T:
+        g["HT_DIHEDRAL"] = T["HT_DIH"] * D2R
+    if "DIHEDRAL" in T:
+        g["DIHEDRAL"] = T["DIHEDRAL"] * D2R
+    if "BUMP_D" in T:
+        g["BUMP_D"] = T["BUMP_D"]
+
+
+def engine_set():
+    """engine stations of one side: the inboard (or only) engine, then ENG2"""
+    out = [dict(Y=ENG_Y, Z=ENG_Z, S=ENG_S_HL, KA=ENG_KA, KR=ENG_KR)]
+    if ENG2:
+        E = ENG2
+        out.append(dict(Y=E["Y"], Z=E["Z"], S=float(wing_le(E["Y"])) - E["FWD"], KA=E.get("KA", ENG_KA), KR=E.get("KR", ENG_KR)))
+    return out
+
+
+@contextmanager
+def engine_at(e):
+    """build one engine: the engine globals are set to that station for the duration"""
+    g = globals()
+    keep = {k: g[k] for k in ("ENG_Y", "ENG_Z", "ENG_S_HL", "ENG_KA", "ENG_KR", "FAN_R")}
+    g.update(ENG_Y=e["Y"], ENG_Z=e["Z"], ENG_S_HL=e["S"], ENG_KA=e["KA"], ENG_KR=e["KR"], FAN_R=1.41 * e["KR"])
+    try:
+        yield
+    finally:
+        g.update(keep)
 
 
 if TYPE != "b789":

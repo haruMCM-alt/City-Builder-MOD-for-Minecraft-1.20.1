@@ -63,6 +63,7 @@ export class Engine {
     this.side = side;       // -1 left, +1 right (body z)
     this.n1 = 21; this.n2 = 62; this.egt = 420; this.ff = 0.28;
     this.thrust = 0; this.reverse = 0; this.running = true;
+    this.prop = false;      // turboprop: constant power, so thrust falls off with speed
   }
   // tla: 0 idle .. 1 max takeoff.  reverseCmd: 0..1 reverse lever
   update(dt, tla, reverseCmd, atm, mach, onGround) {
@@ -79,12 +80,17 @@ export class Engine {
     // thrust: fraction of static rating vs. N1, altitude and Mach lapse
     const nf = clamp((this.n1 - 19) / (100 - 19), 0, 1.02);
     const frac = 0.035 + 0.965 * Math.pow(nf, 2.2);
-    const lapse = Math.pow(atm.sigma, 0.72) * (1 - 1.05 * mach + 0.85 * mach * mach);
+    const lapse = this.prop
+      ? Math.pow(atm.sigma, 0.7) * Math.max(0.15, 1 - 2.2 * mach + 1.6 * mach * mach)   // ~P eta / V
+      : Math.pow(atm.sigma, 0.72) * (1 - 1.05 * mach + 0.85 * mach * mach);
     let T = SPEC.thrustSL * frac * lapse;
+    // turboprop at flight idle: the fine-pitch propeller windmills and acts as an air brake
+    if (this.prop) T -= SPEC.thrustSL * 0.12 * Math.pow(1 - nf, 2) * atm.sigma * clamp(mach / 0.3, 0, 1);
     if (this.reverse > 0.05) T = -T * 0.32 * this.reverse + T * (1 - this.reverse);
     this.thrust = this.running ? T : 0;
     // fuel flow (kg/s), EGT
-    const tsfc = 0.0118e-3 * (1 + 0.45 * mach);       // kg/(N s)  (~0.57 lb/lbf/h in cruise)
+    const tsfc = this.prop ? 0.004e-3 + 0.03e-3 * mach   // turboprop: BSFC ~0.46 lb/shp/h
+      : 0.0118e-3 * (1 + 0.45 * mach);                  // kg/(N s)  (~0.57 lb/lbf/h in cruise)
     this.ff = this.running ? Math.max(0.12, Math.abs(this.thrust) * tsfc) : 0;
     this.egt = this.running ? 380 + 560 * Math.pow(nf, 1.8) + (1 - atm.sigma) * 40 : 20;
   }
@@ -115,6 +121,8 @@ export class FlightModel {
       { name: 'wingtipR', p: P(meta.wingTipR) },
       { name: 'engineL', p: P(meta.engineL) },
       { name: 'engineR', p: P(meta.engineR) },
+      // outboard pods of four-engine types (747-400, MA-900)
+      ...(meta.enginePods || []).slice(2).map((e) => ({ name: e[2] < 0 ? 'engineOutL' : 'engineOutR', p: P(e) })),
       { name: 'nose', p: P([meta.noseTip[0] - 1.0 * this.kL, meta.noseTip[1] - 2.2 * kH, 0]) },
       { name: 'belly', p: P([0, -3.3 * kH, 0]) },
       // extra points used against buildings (not the ground): mid-span, fin tip, cabin roof
@@ -129,6 +137,7 @@ export class FlightModel {
     this.resetDamage();
     this.engAxis = [P(meta.engineAxisL), P(meta.engineAxisR)];
     this.engines = [new Engine(-1), new Engine(1)];
+    for (const e of this.engines) e.prop = !!meta.prop;
 
     // ---- state ------------------------------------------------------------------
     this.pos = new V3();
@@ -208,7 +217,7 @@ export class FlightModel {
       D.eng[side] = lost ? 2 : 1;
       D.engFire[side] = true;
       this.engines[side].running = false;
-      if (lost) this.hard.find((h) => h.name === (side ? 'engineR' : 'engineL')).gone = true;
+      if (lost) for (const h of this.hard) if (h.name === part) h.gone = true;
       ev('engine', `${side ? '右' : '左'}エンジン ${lost ? '脱落' : '損傷'}・火災`);
     } else if (part === 'fin' || part === 'tail') {
       const t = part === 'fin' ? 0.6 : clamp(0.2 + sev * 0.05, 0.2, 0.6);
@@ -418,7 +427,8 @@ export class FlightModel {
       this.fuel = Math.max(0, this.fuel - e.ff * dt);
       if (this.fuel <= 0) e.running = false;
     }
-    if (this.dmg.leak) this.fuel = Math.max(0, this.fuel - this.dmg.leak * dt);
+    // (leak rates are the 787's: smaller tanks, smaller pipes)
+    if (this.dmg.leak) this.fuel = Math.max(0, this.fuel - this.dmg.leak * Math.min(1, SPEC.fuelCapacity / 101100) * dt);
 
     // ---- to world, gravity ----------------------------------------------------------
     const Fw = q.rotate(F);

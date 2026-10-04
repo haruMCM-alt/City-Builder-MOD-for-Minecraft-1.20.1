@@ -81,6 +81,8 @@ def make_materials():
                               metallic=0.15, clearcoat=0.4)
     M["fan_le"] = C.pbr_material("B787_FanBladeLE", color=C.hex_color("#9aa0a6"), roughness=0.3,
                                  metallic=0.9)
+    M["prop"] = C.pbr_material("B787_Prop", color=C.hex_color("#1b1d20"), roughness=0.5, metallic=0.1)
+    M["prop_tip"] = C.pbr_material("B787_PropTip", color=C.hex_color("#e8c21a"), roughness=0.45)
     M["spinner"] = C.pbr_material("B787_Spinner", color=C.hex_color("#1c1f23"), roughness=0.36,
                                   metallic=0.3, base_tex=tex("spinner_base.jpg"))
     M["turbine"] = C.pbr_material("B787_Turbine", color=C.hex_color("#4a4039"), roughness=0.55,
@@ -547,8 +549,8 @@ def revolve_grid(prof, center, n=96, theta=None, a_override=None, r_override=Non
     return P, N, UV
 
 
-def build_engine(M, root, col, side):
-    L = "L" if side > 0 else "R"
+def build_engine(M, root, col, side, tag=""):
+    L = ("L" if side > 0 else "R") + tag
     cen = np.array([G.ENG_S_HL, side * G.ENG_Y, G.ENG_Z])
     K = (G.ENG_KA, G.ENG_KR, G.ENG_KR)
     TBe = G.ScaledTB(cen, K, G.ENG_FLAT) if G.TYPE != "b789" else TB
@@ -740,11 +742,106 @@ def build_engine(M, root, col, side):
     PARTS.append(dict(name="Fan_" + L, kind="fan", max=0))
 
     # ---- pylon ------------------------------------------------------------------
-    build_pylon(M, root, col, side, cen)
+    build_pylon(M, root, col, side, cen, tag)
 
 
-def build_pylon(M, root, col, side, cen):
-    L = "L" if side > 0 else "R"
+def build_sponsons(M, root, col):
+    """Main-gear fairings on the lower fuselage sides (high-wing turboprops)."""
+    S_ = G.SPONSON
+    mb = C.MeshBuilder(TB)
+    for side in (1, -1):
+        s0, s1, y, z, ry, rz = S_["s0"], S_["s1"], side * S_["y"], S_["z"], S_["ry"], S_["rz"]
+        ns, na = RS(40, 12), RS(32, 10)
+        ss = np.linspace(s0, s1, ns)
+        t = (ss - s0) / (s1 - s0)
+        k = np.sin(np.pi * np.clip(t, 0, 1)) ** 0.45
+        th = np.linspace(0, 2 * math.pi, na + 1)
+        P = np.zeros((ns, na + 1, 3))
+        P[..., 0] = ss[:, None]
+        P[..., 1] = y + (ry * k)[:, None] * np.sin(th)[None]
+        P[..., 2] = z + (rz * k)[:, None] * -np.cos(th)[None]
+        mb.add_grid(P, outward=(0.5 * (s0 + s1), y, z), mat=0)
+    ob = mb.build("Sponsons", [M["fuselage"]], col=col)
+    C.set_parent(ob, root)
+
+
+def build_prop_engine(M, root, col, side, tag=""):
+    """Turboprop (PROP types): a slender nacelle slung under the wing and a propeller (separate
+    object "Fan_*" so the game spins it like a fan).  Real dimensions in metres:
+    ENG_S_HL = spinner tip station, ENG_Z = axis height, PROP = dict(R, blades, L, Rn)."""
+    P_ = G.PROP
+    L = ("L" if side > 0 else "R") + tag
+    y = side * G.ENG_Y
+    cen = np.array([G.ENG_S_HL, y, G.ENG_Z])
+    Rn, Ln = P_.get("Rn", 0.62), P_.get("L", 7.0)
+    # nacelle: from behind the spinner to a pointed tail cone behind the wing, with a chin
+    # intake below the spinner and an exhaust stub on the outboard side
+    prof = [(0.70, 0.30), (0.78, 0.44), (0.95, 0.53), (1.30, Rn * 0.96), (2.2, Rn), (3.6, Rn * 0.98),
+            (4.6, Rn * 0.88), (5.6, Rn * 0.62), (Ln - 0.5, Rn * 0.28), (Ln, 0.06)]
+    Pn, Nn, UVn = revolve_grid(prof, cen, RS(64, 14))
+    # flatten the top into the wing a little, deepen the belly (oil cooler / intake duct)
+    mb = C.MeshBuilder(TB)
+    rel = Pn[..., 2] - cen[2]
+    Pn[..., 2] = cen[2] + np.where(rel < 0, rel * 1.12, rel * 0.92)
+    mb.add_grid(Pn, UVn, N=Nn, mat=0)
+    mb.add_poly(Pn[0, :-1], mat=4, outward=("dir", (-1, 0, 0)))
+    # chin intake
+    zi = cen[2] - Rn * 0.95
+    mb.add_box((cen[0] + 1.25, y, zi + 0.12), (0.55, 0.46, 0.26), mat=0)
+    mb.add_box((cen[0] + 0.98, y, zi + 0.12), (0.02, 0.36, 0.17), mat=4)
+    # exhaust stub (outboard side)
+    ex = cen[0] + 3.2
+    cyl(mb, (ex, y + side * Rn * 0.80, cen[2] + 0.05), (ex + 0.55, y + side * (Rn * 0.80 + 0.12), cen[2] + 0.05), 0.15, 6, n=16)
+    ob = mb.build("Nacelle_" + L, [M["nacelle"], M["lip"], M["inlet"], M["core"], M["eng_dark"],
+                                   M["core"], M["exhaust"], M["turbine"]], col=col)
+    C.set_parent(ob, root)
+    # propeller: spinner + blades
+    fb = C.MeshBuilder(TB)
+    spin = [(0.0, 0.0), (0.06, 0.14), (0.18, 0.25), (0.36, 0.33), (0.56, 0.37), (0.74, 0.38)]
+    Ps, Ns, UVs = revolve_grid(spin, cen, RS(48, 12))
+    Ns[0] = (-1, 0, 0)
+    if Ns[3, 0, 2] < 0:
+        Ns = -Ns
+        Ns[0] = (-1, 0, 0)
+    fb.add_grid(Ps, UVs, N=Ns, mat=1)
+    R, nb = P_["R"], P_["blades"]
+    a0 = cen[0] + 0.42                                   # blade pitch axis station
+    nr, nc = RS(16, 4), RS(9, 4)
+    rr = np.linspace(0.36, R, nr)
+    t = (rr - rr[0]) / (R - rr[0])
+    beta = np.radians(58 - 40 * t)                       # twist: coarse at the root, fine at the tip
+    chord = 0.34 * (1 - 0.15 * t) * np.where(t < 0.12, 0.7 + 2.5 * t, 1.0) * (1 - 0.55 * t ** 3)
+    sweep = 0.10 * t ** 2                                # scimitar tips
+    xs = G.cos_space(0, 1, nc)
+    for b in range(nb):
+        th0 = 2 * math.pi * b / nb
+        surfs = []
+        for sgn in (1, -1):
+            thk = 0.06 * (1 - 0.8 * t)[:, None] * np.sin(math.pi * xs[None]) ** 0.8 * chord[:, None]
+            camber = 0.05 * np.sin(math.pi * xs)[None] * chord[:, None]
+            u = (xs[None] - 0.5) * chord[:, None]
+            A = a0 + u * np.sin(beta)[:, None] - (camber + sgn * thk * 0.5) * np.cos(beta)[:, None]
+            T = u * np.cos(beta)[:, None] + (camber + sgn * thk * 0.5) * np.sin(beta)[:, None] + sweep[:, None]
+            ang = th0 + T / rr[:, None] * side
+            surfs.append(np.stack([A, y + rr[:, None] * np.sin(ang), cen[2] + rr[:, None] * np.cos(ang)], -1))
+        loop = np.concatenate([surfs[0], surfs[1][:, ::-1][:, 1:]], 1)
+        Nb, _ = fb.grid_normals(loop)
+        mid = 0.5 * (surfs[0] + surfs[1])
+        d = np.concatenate([surfs[0] - mid, (surfs[1] - mid)[:, ::-1][:, 1:]], 1)
+        if np.sum(Nb * d) < 0:
+            Nb = -Nb
+        fb.add_grid(loop, N=Nb, mat=0)
+        fb.add_poly(loop[-1], mat=0)
+        # yellow tip warning band
+        fb.add_grid(loop[-2:], N=Nb[-2:], mat=2)
+    Mf = pivot_matrix(TB(np.array([a0, y, cen[2]])), (1, 0, 0))
+    fan = fb.build("Fan_" + L, [M["prop"], M["spinner"], M["prop_tip"]], col=col, matrix=Mf)
+    C.set_parent(fan, root)
+    PARTS.append(dict(name="Fan_" + L, kind="fan", max=0))
+
+
+def build_pylon(M, root, col, side, cen, tag=""):
+    L = ("L" if side > 0 else "R") + tag
     y = G.ENG_Y
     le = float(G.wing_le(y))
     te = float(G.wing_te(y))
@@ -1058,6 +1155,20 @@ def build_gear(M, root, col):
         test = P[:, 0]
         add_part("NoseDoor_" + L, "door", mbd, [M["fuselage"], M["bay"]], h0, h1, test, TE_DOWN, 88, root, col)
 
+    build_main_gear(M, root, col)
+    # body gear (747): a second pair of main legs inboard and aft of the wing gear
+    if G.BODY_GEAR:
+        bg = G.BODY_GEAR
+        keep = (G.S_MAIN, G.Y_MAIN)
+        G.S_MAIN, G.Y_MAIN = G.S_MAIN + bg["ds"], bg["y"]
+        try:
+            build_main_gear(M, root, col, "2")
+        finally:
+            G.S_MAIN, G.Y_MAIN = keep
+
+
+def build_main_gear(M, root, col, tag=""):
+    g = G.GROUND_Z
     # ---------------- main gear --------------------------------------------------
     sM = G.S_MAIN
     rM = G.MAIN_TIRE_D / 2
@@ -1071,7 +1182,7 @@ def build_gear(M, root, col):
     AX = G.MAIN_AXLES
     WDY = G.MAIN_WHEEL_DY
     for side in (1, -1):
-        L = "L" if side > 0 else "R"
+        L = ("L" if side > 0 else "R") + tag
         yM = side * G.Y_MAIN
         top = np.array([sM - 0.25 * SG, yM, zm(-2.05)])
         pivot_bog = np.array([sM - 0.05 * SG, yM, axle_z + 0.05 * SG])
@@ -1401,6 +1512,17 @@ def build_details(M, root, col):
 COCKPIT_META = {}
 
 
+def engine_points():
+    """every engine's axis point and lowest pod point (four-engine types: contrails, ground strike)"""
+    axes, pods = [], []
+    for eng in G.engine_set():
+        with G.engine_at(eng):
+            for sg in (1, -1):
+                axes.append(G.to_three([G.ENG_S_HL + 5.0 * G.ENG_KA, sg * G.ENG_Y, G.ENG_Z]))
+                pods.append(G.to_three([G.ENG_S_HL + 3.0 * G.ENG_KA, sg * G.ENG_Y, G.ENG_Z - 1.76 * G.ENG_KR]))
+    return dict(engineAxes=axes, enginePods=pods)
+
+
 def build_cockpit(M, root, col):
     Mi = {
         "shell": C.pbr_material("Cockpit_Shell", color=C.hex_color("#3a3f45"), roughness=0.8,
@@ -1613,9 +1735,14 @@ def main():
     build_fuselage(M, root, col)
     for side in (1, -1):
         build_wing(M, root, col, side)
-        build_engine(M, root, col, side)
+        # one or two engines per side (four-engine types: ENG2 = the outboard pair)
+        for k, eng in enumerate(G.engine_set()):
+            with G.engine_at(eng):
+                (build_prop_engine if G.PROP else build_engine)(M, root, col, side, "" if k == 0 else str(k + 1))
     build_htail(M, root, col)
     build_vtail(M, root, col)
+    if G.SPONSON:
+        build_sponsons(M, root, col)
     build_gear(M, root, col)
     if LOD:
         # parked-aircraft level of detail: no cockpit / antennas / lights
@@ -1635,7 +1762,9 @@ def main():
         engineName=G.ENGINE_NAME, fanBlades=G.FAN_BLADES, fanRadius=round(G.FAN_R, 3),
         spec=G.SPEC, ao=G.TYPE == "b789", sCG=G.S_CG, fusW=G.FUS_W, fusH=G.FUS_H,
         doors=[round(G.S_CG - d, 3) for d in G.DOORS],
-        cargo=[[round(G.S_CG - c[0], 3), c[2], c[3]] for c in G.CARGO],
+        # no underfloor hold doors (ATR 72): the belt loader serves the forward (cargo) door
+        cargo=[[round(G.S_CG - c[0], 3), c[2], c[3]] for c in G.CARGO] or
+              [[round(G.S_CG - G.DOORS[0], 3), G.FLOOR_Z - 0.3, G.FLOOR_Z + 0.3]],
         seats=None,
         frame="three.js aircraft frame: +x forward, +y up, +z right; origin = reference CG",
         length=G.LENGTH, span=G.SPAN, height=G.HEIGHT,
@@ -1648,11 +1777,13 @@ def main():
         tailStrike=G.to_three([float(G.SMAP(56.5)), 0, float(G.fus_profile(G.SMAP(56.5))[1])]),
         wingTipL=G.to_three(list(G.wing_point(np.array(G.Y_TIP), np.array(0.5), np.array(False), 1))),
         wingTipR=G.to_three(list(G.wing_point(np.array(G.Y_TIP), np.array(0.5), np.array(False), -1))),
+        engineCount=2 * len(G.engine_set()), prop=bool(G.PROP),
         engineL=G.to_three([G.ENG_S_HL + 3.0 * G.ENG_KA, G.ENG_Y, G.ENG_Z - 1.76 * G.ENG_KR]),
         engineR=G.to_three([G.ENG_S_HL + 3.0 * G.ENG_KA, -G.ENG_Y, G.ENG_Z - 1.76 * G.ENG_KR]),
         engineAxisL=G.to_three([G.ENG_S_HL + 5.0 * G.ENG_KA, G.ENG_Y, G.ENG_Z]),
         engineAxisR=G.to_three([G.ENG_S_HL + 5.0 * G.ENG_KA, -G.ENG_Y, G.ENG_Z]),
         engineExit=G.to_three([G.ENG_S_HL + 7.7 * G.ENG_KA, G.ENG_Y, G.ENG_Z]),
+        **engine_points(),
         noseTip=G.to_three([0, 0, float(G.fus_profile(0.0)[3])]),
         # condensation sources: outboard flap tip (trailing edge) and upper-surface points
         flapTipL=G.to_three(list(G.wing_point(np.array(G.FLAP_OUT["y1"]), np.array(1.0), np.array(True), 1))),

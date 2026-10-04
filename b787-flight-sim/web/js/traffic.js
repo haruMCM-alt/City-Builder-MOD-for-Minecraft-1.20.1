@@ -60,11 +60,15 @@ function mergeList(meshes, inv) {
   return group;
 }
 
-const MOVABLE = new Set(['NoseGear', 'MainGear_L', 'MainGear_R', 'NoseWheels', 'MainWheels_L0', 'MainWheels_L1',
-  'MainWheels_R0', 'MainWheels_R1', 'NoseDoor_L', 'NoseDoor_R', 'MainDoor_L', 'MainDoor_R', 'FlapInbd_L', 'FlapInbd_R',
-  'FlapOutbd_L', 'FlapOutbd_R', 'Flaperon_L', 'Flaperon_R', 'Fan_L', 'Fan_R',
+// articulated part names; main gear / wheels / doors / fans may carry a suffix (3-axle bogies
+// MainWheels_L2, 747 body gear MainGear_L2 / MainWheels_L20, outboard engines Fan_L2)
+const MAIN_GEAR = /^MainGear_[LR]\d?$/, MAIN_WHEELS = /^MainWheels_[LR]\d+$/, MAIN_DOOR = /^MainDoor_[LR]\d?$/,
+  FAN = /^Fan_[LR]\d?$/;
+const MOVABLE_FIXED = new Set(['NoseGear', 'NoseWheels', 'NoseDoor_L', 'NoseDoor_R', 'FlapInbd_L', 'FlapInbd_R',
+  'FlapOutbd_L', 'FlapOutbd_R', 'Flaperon_L', 'Flaperon_R',
   ...[1, 2, 3, 4, 5, 6].flatMap((i) => ['Slat' + i + '_L', 'Slat' + i + '_R']),
   ...[1, 2, 3, 4, 5, 6, 7].flatMap((i) => ['Spoiler' + i + '_L', 'Spoiler' + i + '_R'])]);
+const MOVABLE = { has: (n) => MOVABLE_FIXED.has(n) || MAIN_GEAR.test(n) || MAIN_WHEELS.test(n) || MAIN_DOOR.test(n) || FAN.test(n) };
 
 // LOD 787 split into one merged static body + articulated parts (gear, flaps, slats,
 // spoilers, fans) that keep their hinge frames (hinge axis = local X, as in the Blender file)
@@ -101,6 +105,11 @@ class ArticulatedModel {
     this.tm = tm;
     this.parts = {};
     obj.traverse((o) => { if (MOVABLE.has(o.name)) this.parts[o.name] = { obj: o, rest: o.quaternion.clone(), pos: o.position.clone() }; });
+    const names = Object.keys(this.parts);
+    this.legs = names.filter((n) => MAIN_GEAR.test(n));
+    this.mainDoors = names.filter((n) => MAIN_DOOR.test(n));
+    this.mainWheels = names.filter((n) => MAIN_WHEELS.test(n));
+    this.fans = names.filter((n) => FAN.test(n)).map((n) => [n, n.startsWith('Fan_R') ? 1 : 0]);
     this.q = new THREE.Quaternion();
     this.ax = new THREE.Vector3(1, 0, 0);
     this.wheelA = [0, 0];
@@ -126,12 +135,12 @@ class ArticulatedModel {
     const legT = smoothstep(0.18, 0.86, gp);
     const doorT = gp <= 0.001 ? 0 : clamp(Math.min(gp / 0.16, (1 - gp) / 0.12), 0, 1);
     this.set('NoseGear', legT * 100 * DEG);
-    this.set('MainGear_L', legT * 90 * DEG); this.set('MainGear_R', legT * 90 * DEG);
+    for (const n of this.legs) this.set(n, legT * 90 * DEG);
     this.set('NoseDoor_L', doorT * 88 * DEG); this.set('NoseDoor_R', doorT * 88 * DEG);
-    this.set('MainDoor_L', doorT * 85 * DEG); this.set('MainDoor_R', doorT * 85 * DEG);
+    for (const n of this.mainDoors) this.set(n, doorT * 85 * DEG);
     const stow = smoothstep(0.55, 1.0, legT);
     const kW = this.tm.kW;
-    for (const n of ['NoseGear', 'MainGear_L', 'MainGear_R']) {
+    for (const n of ['NoseGear', ...this.legs]) {
       const p = this.parts[n];
       if (!p) continue;
       p.obj.visible = gp < 0.97;
@@ -145,11 +154,9 @@ class ArticulatedModel {
       this.wheelA[i] = (this.wheelA[i] + (onG ? ac.v * ac.dirSign / R : 0) * dt) % (Math.PI * 2);
     }
     this.set('NoseWheels', this.wheelA[0]);
-    for (const n of ['MainWheels_L0', 'MainWheels_L1', 'MainWheels_R0', 'MainWheels_R1']) this.set(n, this.wheelA[1]);
-    for (let i = 0; i < 2; i++) {
-      this.fanA[i] = (this.fanA[i] + ac.n1 / 100 * 7.5 * dt * Math.PI * 2) % (Math.PI * 2);
-      this.set(i === 0 ? 'Fan_L' : 'Fan_R', this.fanA[i]);
-    }
+    for (const n of this.mainWheels) this.set(n, this.wheelA[1]);
+    for (let i = 0; i < 2; i++) this.fanA[i] = (this.fanA[i] + ac.n1 / 100 * 7.5 * dt * Math.PI * 2) % (Math.PI * 2);
+    for (const [n, i] of this.fans) this.set(n, this.fanA[i]);
   }
 }
 
@@ -244,7 +251,7 @@ export function typeModel(meta) {
   const kL = (meta.length || 62.81) / 62.81, kS = (meta.span || 60.12) / 60.12, kW = (meta.fusW || 5.77) / 5.77;
   const wr = (g) => (meta.parts.find((p) => p.kind === 'wheel' && p.gear === g) || { radius: 0.6 }).radius;
   const doors = meta.doors || [24.9, 14.3, -8.6, -22.0];
-  const cargo = meta.cargo || [[-16, -2.05, -0.95]];
+  const cargo = meta.cargo && meta.cargo.length ? meta.cargo : [[-16, -2.05, -0.95]];
   const cz = cargo[cargo.length - 1];
   const gy = -meta.groundY;
   return {

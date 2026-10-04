@@ -64,7 +64,9 @@ const TYPES = [
   { id: 'b789', asset: 'b787-9', weight: 1, maker: 'Boeing', short: '787-9', cls: '双通路 Wide-body' },
   { id: 'ma3', asset: 'ma-300', weight: 0.6, maker: 'Micomsoft', short: 'MA-300 Tsubame', cls: '次世代単通路 Next-gen narrow-body' },
   { id: 'ma7', asset: 'ma-700', weight: 0.6, maker: 'Micomsoft', short: 'MA-700 Hayabusa', cls: '高速長距離 High-speed long-haul' },
-  { id: 'ma9', asset: 'ma-900', weight: 0.5, maker: 'Micomsoft', short: 'MA-900 Otori', cls: '超大型双発 Super-widebody twin' },
+  { id: 'ma9', asset: 'ma-900', weight: 0.5, maker: 'Micomsoft', short: 'MA-900 Otori', cls: '超大型4発 Super-widebody quad' },
+  { id: 'b744', asset: 'b747-400', weight: 0.5, maker: 'Boeing', short: '747-400', cls: 'ジャンボ 4発 Jumbo quad' },
+  { id: 'at76', asset: 'atr72-600', weight: 0.8, maker: 'ATR', short: '72-600', cls: 'ターボプロップ Turboprop' },
 ];
 // play modes on the menu's first screen: each opens a compact slide show with only the
 // slides it needs (keys of the <section data-key> slides) and presets its scenario
@@ -366,7 +368,7 @@ class App {
     this.fm = new FlightModel(T.meta);
     this.sys = new Systems(this.fm, this.worldData);
     this.rig.meta = T.meta;
-    setEngineSound(id, T.meta.spec && T.meta.spec.thrustSL);
+    setEngineSound(id, T.meta.spec && T.meta.spec.thrustSL, T.meta.engineCount || 2, T.meta.prop);
     if (this.traffic) this.traffic.setPlayerMeta(T.meta);
     this.applyLivery();
     this.updateWeights();
@@ -645,7 +647,7 @@ class App {
       b.innerHTML = `<img alt="" src="${assetURL(ASSET + 'type_' + t.id + '.jpg')}" onerror="this.style.display='none'">` +
         `<div class="tb"><div class="tn">${t.maker} ${t.short}<em>${t.cls}</em></div>` +
         `<div class="ts">全長 ${m.length.toFixed(2)} m · 全幅 ${m.span.toFixed(2)} m · 全高 ${m.height.toFixed(2)} m<br>` +
-        `最大離陸重量 ${(s.MTOW / 1000).toFixed(1)} t · 座席 ${seats}<br>${m.engineName || ''} ×2 · Mmo ${s.MMO}</div></div>`;
+        `最大離陸重量 ${(s.MTOW / 1000).toFixed(1)} t · 座席 ${seats}<br>${m.engineName || ''} ×${m.engineCount || 2} · Mmo ${s.MMO}</div></div>`;
       b.onclick = () => this.selectType(t.id);
       box.appendChild(b);
     }
@@ -658,7 +660,7 @@ class App {
     if (note && this.cur) {
       const s = SPEC;
       note.textContent = `${this.cur.short}: 燃料容量 ${(s.fuelCapacity / 1000).toFixed(1)} t · 最大着陸重量 ${(s.MLW / 1000).toFixed(1)} t · ` +
-        `推力 ${(s.thrustSL / 1000).toFixed(0)} kN ×2 — 機種を変えると重量の範囲も切り替わります。`;
+        `推力 ${(s.thrustSL / 1000 / ((this.meta.engineCount || 2) / 2)).toFixed(0)} kN ×${this.meta.engineCount || 2} — 機種を変えると重量の範囲も切り替わります。`;
     }
     this.updateSummary();
   }
@@ -1076,10 +1078,12 @@ class App {
       Object.assign(L, { strobe: true, landing: true });
       this.rig.setView('chase');
     } else if (id === 'cruise') {
-      const alt = 35000 * FT;
-      fm.reset(new V3(-70000, alt, 9000), compassOf(70000, -9000, -70000, 9000), Math.min(0.85, SPEC.MMO - 0.04) * 296.5, 2, false);
+      // turboprop (ATR 72): FL200 at ~275 kt true air speed
+      const prop = !!this.meta.prop, altFt = prop ? 20000 : 35000, alt = altFt * FT;
+      fm.reset(new V3(-70000, alt, 9000), compassOf(70000, -9000, -70000, 9000),
+        prop ? 0.44 * 316.0 : Math.min(0.85, SPEC.MMO - 0.04) * 296.5, 2, false);
       setAir(0, false);
-      sys.mcp = { spd: 270, hdg: Math.round(compassOf(70000, -9000, -70000, 9000)), alt: 35000, vs: -1500 };
+      sys.mcp = { spd: prop ? 200 : 270, hdg: Math.round(compassOf(70000, -9000, -70000, 9000)), alt: altFt, vs: -1500 };
       sys.ap.roll = 'HDG'; sys.ap.pitch = 'ALT'; sys.ap.on = true;
       sys.at.on = true; sys.at.mode = 'SPD';
       sys.gammaT = 0;

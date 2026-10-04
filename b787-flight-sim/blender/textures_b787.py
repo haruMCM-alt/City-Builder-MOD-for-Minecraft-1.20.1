@@ -223,7 +223,7 @@ def side_feature(fm, s_c, z_c, hs, ha, side, r, pad=0.05):
 # sliding side window, No. 3 small fixed aft window with its sill rising steeply aft.
 # Layout coordinates are the 787 flight deck's, mapped to the type (CK) so the panes sit where
 # the pilots' eyes are.
-SIX = G.TYPE in ("b738", "b763")
+SIX = G.TYPE in ("b738", "b763", "b744")
 if SIX:
     # No. 1: narrow flat panes on the top front of the nose (a slanted wedge seen from the side)
     FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
@@ -270,7 +270,8 @@ def skin_y_at(s, z_target):
 # ytop: half-width of No. 1 at its top outer corner (m); the corners are found on the skin
 # from it and the post rake, so post 1 is a straight line on the side of the nose.
 WIN6 = {"b738": dict(ytop=0.42, rake1=0.70, w2=1.10, d2=0.30, rake2=0.25, w3=1.35, e3=-0.02),
-        "b763": dict(ytop=0.70, rake1=0.27, w2=1.15, d2=0.22, rake2=0.05, w3=0.90, e3=-0.22)}
+        "b763": dict(ytop=0.70, rake1=0.27, w2=1.15, d2=0.22, rake2=0.05, w3=0.90, e3=-0.22),
+        "b744": dict(ytop=0.78, rake1=0.35, w2=1.10, d2=0.20, rake2=0.08, w3=0.95, e3=-0.15)}
 _SIX_CACHE = {}
 
 
@@ -497,9 +498,14 @@ def fuselage_textures(W=8192, H=2048):
         if all(abs(s - d) > G.DOOR_GAP for d in DOORS) and all(abs(s - e[0]) > e[1] / 2 + 0.05 for e in G.EXITS):
             wins.append(s)
         s += WIN_PITCH
+    rows = [(WIN_Z, wins)]
+    if G.WIN2:
+        # upper-deck windows (747): a second, shorter row along the hump
+        z2, s0, s1 = G.WIN2
+        rows.append((z2, [float(v) for v in np.arange(s0, s1, WIN_PITCH)]))
     for side in (1, -1):
-        for sc in wins:
-            sl, d = side_feature(fm, sc, WIN_Z, WIN_W / 2, WIN_H / 2, side, 0.11)
+        for wz, sc in ((wz, sc) for wz, ws in rows for sc in ws):
+            sl, d = side_feature(fm, sc, wz, WIN_W / 2, WIN_H / 2, side, 0.11)
             if sl is None:
                 continue
             g = aa(d, px)
