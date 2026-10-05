@@ -33,12 +33,12 @@ import net.minecraft.world.level.material.FluidState;
  */
 public final class BuildJob {
     private static final TicketType<ChunkPos> TICKET =
-            TicketType.create("citybuilder", Comparator.comparingLong(ChunkPos::toLong), 200);
+            TicketType.create("citybuilder", Comparator.comparingLong(ChunkPos::toLong), 1200);
 
     /** Send to clients, skip neighbour shape updates (done in our own pass), never drop items. */
     private static final int FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
 
-    enum Phase { PLAN, PLACE, SHAPE, FINISH, DONE }
+    enum Phase { LOAD, PLAN, PLACE, SHAPE, FINISH, DONE }
 
     final long id;
     final Component label;
@@ -52,6 +52,10 @@ public final class BuildJob {
     @Nullable final UndoRecord undo;
 
     Phase phase;
+    /** Chunks to load (asynchronously, via tickets) before planning reads the world. */
+    private final LongArrayList preload = new LongArrayList();
+    private int preloadIdx;
+    private int preloadTotal;
     private Long2ObjectMap<BlockCanvas.Section> source;
     private LongArrayList order;
     private int sectionIdx;
@@ -79,8 +83,19 @@ public final class BuildJob {
         }
     }
 
-    static BuildJob build(long id, Component label, @Nullable UUID owner, ServerLevel level, Deque<Consumer<BlockCanvas>> steps) {
-        return new BuildJob(id, label, owner, level, new ArrayDeque<>(steps), null);
+    static BuildJob build(long id, Component label, @Nullable UUID owner, ServerLevel level, Deque<Consumer<BlockCanvas>> steps,
+                          @Nullable int[] bounds) {
+        BuildJob job = new BuildJob(id, label, owner, level, new ArrayDeque<>(steps), null);
+        if (bounds != null) {
+            for (int cx = bounds[0] >> 4; cx <= bounds[2] >> 4; cx++) {
+                for (int cz = bounds[1] >> 4; cz <= bounds[3] >> 4; cz++) {
+                    job.preload.add(ChunkPos.asLong(cx, cz));
+                }
+            }
+            job.preloadTotal = job.preload.size();
+            job.phase = Phase.LOAD;
+        }
+        return job;
     }
 
     static BuildJob restore(long id, @Nullable UUID owner, ServerLevel level, UndoRecord record) {
@@ -94,6 +109,7 @@ public final class BuildJob {
 
     float progress() {
         return switch (phase) {
+            case LOAD -> 0.05f * preloadIdx / Math.max(1, preloadTotal);
             case PLAN -> 0.1f * (totalSteps - steps.size()) / totalSteps;
             case PLACE -> 0.1f + 0.75f * fraction();
             case SHAPE -> 0.85f + 0.15f * fraction();
@@ -116,6 +132,12 @@ public final class BuildJob {
                 return false;
             }
             switch (phase) {
+                case LOAD -> {
+                    if (!preloadMore()) {
+                        return false;
+                    }
+                    phase = Phase.PLAN;
+                }
                 case PLAN -> {
                     Consumer<BlockCanvas> step = steps.poll();
                     if (step == null) {
@@ -152,6 +174,27 @@ public final class BuildJob {
                 default -> {
                 }
             }
+        }
+        return true;
+    }
+
+    /**
+     * Requests chunks a batch at a time and waits (without blocking the tick) until the server has
+     * generated them, so planning never has to generate terrain synchronously.
+     */
+    private boolean preloadMore() {
+        int window = 48;
+        while (preloadIdx < preload.size()) {
+            int end = Math.min(preload.size(), preloadIdx + window);
+            for (int i = preloadIdx; i < end; i++) {
+                ChunkPos cp = new ChunkPos(preload.getLong(i));
+                level.getChunkSource().addRegionTicket(TICKET, cp, 1, cp);
+            }
+            ChunkPos first = new ChunkPos(preload.getLong(preloadIdx));
+            if (!level.getChunkSource().hasChunk(first.x, first.z)) {
+                return false;
+            }
+            preloadIdx++;
         }
         return true;
     }

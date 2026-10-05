@@ -37,8 +37,13 @@ public final class BuildManager {
     public record Ticket(long id, int position) {
     }
 
-    public static Ticket submit(ServerLevel level, @Nullable UUID owner, Component label, List<Consumer<BlockCanvas>> steps) {
-        BuildJob job = BuildJob.build(nextId++, label, owner, level, new ArrayDeque<>(steps));
+    /**
+     * Queues a build. {@code bounds} (minX, minZ, maxX, maxZ) is the area the plan reads and writes;
+     * its chunks are loaded in the background before planning starts.
+     */
+    public static Ticket submit(ServerLevel level, @Nullable UUID owner, Component label, List<Consumer<BlockCanvas>> steps,
+                                @Nullable int[] bounds) {
+        BuildJob job = BuildJob.build(nextId++, label, owner, level, new ArrayDeque<>(steps), bounds);
         QUEUE.addLast(job);
         return new Ticket(job.id, QUEUE.size() - 1);
     }
@@ -173,6 +178,7 @@ public final class BuildManager {
         float p = job.progress();
         bar.setProgress(p);
         String phase = switch (job.phase) {
+            case LOAD -> "citybuilder.phase.load";
             case PLAN -> "citybuilder.phase.plan";
             case PLACE -> "citybuilder.phase.place";
             default -> "citybuilder.phase.finish";

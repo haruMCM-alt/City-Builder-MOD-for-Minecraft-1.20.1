@@ -117,5 +117,6 @@
   "phone.citybuilder.dir.sw": "南西",
   "phone.citybuilder.dir.w": "西",
   "phone.citybuilder.dir.nw": "北西",
-  "citybuilder.error.out_of_world": "高さ Y=%s はワールドの範囲外です"
+  "citybuilder.error.out_of_world": "高さ Y=%s はワールドの範囲外です",
+  "citybuilder.phase.load": "地形読込中"
 }

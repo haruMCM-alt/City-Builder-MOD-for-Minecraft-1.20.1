@@ -136,14 +136,14 @@ public final class ModCommands {
       return src.getEntity() instanceof ServerPlayer p ? p.getUUID() : null;
    }
 
-   private static int queue(CommandContext<CommandSourceStack> ctx, Component label, List<Consumer<BlockCanvas>> steps) throws CommandSyntaxException {
+   private static int queue(CommandContext<CommandSourceStack> ctx, Component label, List<Consumer<BlockCanvas>> steps, int[] bounds) throws CommandSyntaxException {
       CommandSourceStack src = ctx.getSource();
       ServerLevel level = src.getLevel();
       BlockPos pos = BlockPosArgument.getBlockPos(ctx, "pos");
       if (level.isOutsideBuildHeight(pos) || !level.getWorldBorder().isWithinBounds(pos)) {
          throw OUT_OF_WORLD.create(pos.getY());
       }
-      BuildManager.Ticket t = BuildManager.submit(level, owner(src), label, steps);
+      BuildManager.Ticket t = BuildManager.submit(level, owner(src), label, steps, bounds);
       if (t.position() == 0) {
          src.sendSuccess(() -> Component.translatable("citybuilder.job.started", label).withStyle(ChatFormatting.GRAY), true);
       } else {
@@ -161,7 +161,8 @@ public final class ModCommands {
       ctx.getSource().sendSuccess(() -> Component.translatable("citybuilder.city.info", lower(preset), size[0], size[1],
             Component.literal(String.valueOf(seed)).withStyle(s -> s.withColor(ChatFormatting.AQUA)
                   .withClickEvent(new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, String.valueOf(seed))))), false);
-      return queue(ctx, label, CityBuilder.plan(preset, pos.getX(), pos.getY(), pos.getZ(), grid, seed));
+      return queue(ctx, label, CityBuilder.plan(preset, pos.getX(), pos.getY(), pos.getZ(), grid, seed),
+            box(pos, -40, -40, size[0] + 40, size[1] + 40));
    }
 
    private static int skyscraper(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -183,7 +184,8 @@ public final class ModCommands {
       }
       int floors = f;
       Component label = Component.translatable("citybuilder.label.skyscraper", lower(type), floors);
-      return queue(ctx, label, List.of(l -> SkyscraperBuilder.build(l, type, pos.getX(), pos.getY(), pos.getZ(), w, dd, floors, fh)));
+      return queue(ctx, label, List.of(l -> SkyscraperBuilder.build(l, type, pos.getX(), pos.getY(), pos.getZ(), w, dd, floors, fh)),
+            box(pos, -8, -8, w + 8, dd + 8));
    }
 
    private static int base(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -191,7 +193,8 @@ public final class ModCommands {
       BlockPos pos = BlockPosArgument.getBlockPos(ctx, "pos");
       int size = IntegerArgumentType.getInteger(ctx, "size");
       Component label = Component.translatable("citybuilder.label.base", lower(type), size);
-      return queue(ctx, label, List.of(l -> BaseBuilder.build(l, type, pos.getX(), pos.getY(), pos.getZ(), size)));
+      return queue(ctx, label, List.of(l -> BaseBuilder.build(l, type, pos.getX(), pos.getY(), pos.getZ(), size)),
+            box(pos, -14, -16, size + 10, size + 6));
    }
 
    private static int road(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -201,7 +204,8 @@ public final class ModCommands {
       int len = IntegerArgumentType.getInteger(ctx, "length");
       Component label = Component.translatable("citybuilder.label.road", lower(type), len);
       return queue(ctx, label, segments(len, 720, (off, n) -> l -> RoadBuilder.build(l, type,
-            pos.getX() + (axis == RoadBuilder.Axis.X ? off : 0), pos.getY(), pos.getZ() + (axis == RoadBuilder.Axis.Z ? off : 0), n, axis)));
+            pos.getX() + (axis == RoadBuilder.Axis.X ? off : 0), pos.getY(), pos.getZ() + (axis == RoadBuilder.Axis.Z ? off : 0), n, axis)),
+            line(pos, axis == RoadBuilder.Axis.X, len, 14));
    }
 
    private static int rail(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -212,7 +216,8 @@ public final class ModCommands {
       Component label = Component.translatable("citybuilder.label.rail", lower(type), len);
       // Segment lengths are multiples of 24 so pier, lamp and power spacing continue seamlessly.
       return queue(ctx, label, segments(len, 240, (off, n) -> l -> RailBuilder.build(l, type,
-            pos.getX() + (axis == RailBuilder.Axis.X ? off : 0), pos.getY(), pos.getZ() + (axis == RailBuilder.Axis.Z ? off : 0), n, axis)));
+            pos.getX() + (axis == RailBuilder.Axis.X ? off : 0), pos.getY(), pos.getZ() + (axis == RailBuilder.Axis.Z ? off : 0), n, axis)),
+            line(pos, axis == RailBuilder.Axis.X, len, 10));
    }
 
    private static int station(CommandContext<CommandSourceStack> ctx, @Nullable String name) throws CommandSyntaxException {
@@ -222,7 +227,8 @@ public final class ModCommands {
       int len = IntegerArgumentType.getInteger(ctx, "length");
       String stationName = name != null ? name.replaceAll("駅$", "") : StationBuilder.defaultName(pos.getX(), pos.getZ());
       Component label = Component.translatable("citybuilder.label.station", stationName, lower(type));
-      return queue(ctx, label, List.of(l -> StationBuilder.build(l, type, pos.getX(), pos.getY(), pos.getZ(), len, axis, -1, stationName)));
+      return queue(ctx, label, List.of(l -> StationBuilder.build(l, type, pos.getX(), pos.getY(), pos.getZ(), len, axis, -1, stationName)),
+            line(pos, axis == StationBuilder.Axis.X, len, 16));
    }
 
    private static int plane(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -237,7 +243,16 @@ public final class ModCommands {
       };
       BlockPos pos = BlockPosArgument.getBlockPos(ctx, "pos");
       Component label = Component.translatable("citybuilder.label.plane", lower(type));
-      return queue(ctx, label, List.of(l -> PlaneBuilder.build(l, type, pos.getX(), pos.getY(), pos.getZ(), facing)));
+      return queue(ctx, label, List.of(l -> PlaneBuilder.build(l, type, pos.getX(), pos.getY(), pos.getZ(), facing)),
+            box(pos, -26, -26, 26, 26));
+   }
+
+   private static int[] box(BlockPos pos, int dx1, int dz1, int dx2, int dz2) {
+      return new int[]{pos.getX() + dx1, pos.getZ() + dz1, pos.getX() + dx2, pos.getZ() + dz2};
+   }
+
+   private static int[] line(BlockPos pos, boolean alongX, int length, int half) {
+      return alongX ? box(pos, -2, -half, length + 2, half) : box(pos, -half, -2, half, length + 2);
    }
 
    private interface Segment {
