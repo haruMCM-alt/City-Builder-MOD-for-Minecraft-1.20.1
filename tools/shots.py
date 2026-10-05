@@ -30,7 +30,14 @@ def cam(x1, z1, x2, z2, h, yaw=-35.0, pitch=24.0):
     return f"cam {px:.1f} {py:.1f} {pz:.1f} {yaw:.1f} {pitch:.1f}"
 
 
+DETAIL = False
+
+
 def main(filters):
+    global DETAIL
+    if "--detail" in filters:
+        DETAIL = True
+        filters = [f for f in filters if f != "--detail"]
     want = lambda n: not filters or any(f in n for f in filters)
     out = ["cmd time set 6000", "cmd gamerule doDaylightCycle false", "cmd gamerule doWeatherCycle false",
            "cmd weather clear", "cmd gamerule doMobSpawning false", "cmd kill @e[type=!player]"]
@@ -54,6 +61,13 @@ def main(filters):
         out.append(f"shot {name}")
         out.append(cam(x1, z1, x2, z2, h, yaw=145.0))
         out.append(f"shot {name}_back")
+        if DETAIL:
+            # Close-up of the entrance and a look round the ground floor from inside.
+            cx, cz = (x1 + x2) / 2, (z1 + z2) / 2
+            out.append(f"cam {cx - 4:.1f} {Y + 6:.1f} {z1 - 9:.1f} -20.0 18.0")
+            out.append(f"shot {name}_close")
+            out.append(f"cam {cx:.1f} {Y + 2.6:.1f} {z2 - 3:.1f} 180.0 12.0")
+            out.append(f"shot {name}_inside")
     out.append("quit")
     print("\n".join(out))
 

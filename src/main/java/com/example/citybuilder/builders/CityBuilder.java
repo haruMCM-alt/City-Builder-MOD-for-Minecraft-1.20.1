@@ -320,23 +320,11 @@ public final class CityBuilder {
       }
    }
 
-   /**
-    * Places a building on a lot, shifted so that features which stick out in front of the
-    * footprint (torii gates, porches, the changing house of the onsen) stay inside the lot.
-    */
+   /** Places a building centred on a lot; every design keeps to its own plot, so a one-block margin is enough. */
    private static void base(BlockCanvas l, BaseBuilder.Type t, int lotX, int y, int lotZ, int size) {
-      int front = switch (t) {
-         case SHRINE, TEMPLE -> 9;
-         case HOTSPRING -> 6;
-         case MANSION, DEPARTMENT, CAFE, KONBINI, SENTO -> 3;
-         default -> 2;
-      };
-      int maxSize = Math.min(size, LOT - front - 2);
-      if (t == BaseBuilder.Type.SHIBUYA109) {
-         maxSize = Math.min(size, 18);
-      }
-      int off = Math.max(2, (LOT - maxSize) / 2);
-      BaseBuilder.build(l, t, lotX + off, y, lotZ + Math.max(front, off), maxSize);
+      int fit = Math.min(size, LOT - 2);
+      int off = Math.max(1, (LOT - fit) / 2);
+      BaseBuilder.build(l, t, lotX + off, y, lotZ + off, fit);
    }
 
    private static void sky(BlockCanvas l, SkyscraperBuilder.Type t, int lotX, int y, int lotZ, int w, int d, int floors, int fh) {

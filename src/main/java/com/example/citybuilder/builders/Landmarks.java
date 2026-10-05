@@ -419,7 +419,7 @@ final class Landmarks {
                }
             }
             p.set(c + di, 0, c + dj, s(Blocks.STONE_BRICKS));
-            p.set(c + di, 1, c + dj, rim ? slab(Blocks.SMOOTH_STONE_SLAB) : s(Blocks.WATER));
+            p.set(c + di, 1, c + dj, rim ? s(Blocks.POLISHED_ANDESITE) : s(Blocks.WATER));
          }
       }
       p.fill(c, 1, c, c, 2, c, s(Blocks.CHISELED_QUARTZ_BLOCK));

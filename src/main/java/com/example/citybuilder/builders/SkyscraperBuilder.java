@@ -298,8 +298,9 @@ public final class SkyscraperBuilder {
    // ------------------------------------------------------------------ twin towers with a sky bridge
 
    private static void twin(Plot p, int w, int d, int f, int fh) {
-      int tw = Math.max(7, (w - 3) / 2);
-      int gap = Math.max(3, w - 2 * tw);
+      int gap = Math.max(5, w / 4);
+      int tw = Math.max(7, (w - gap) / 2);
+      gap = Math.max(5, w - 2 * tw);
       int bx = tw + gap;
       int lobbyH = Math.max(fh, 5);
       BlockState glass = s(Blocks.GRAY_STAINED_GLASS);
