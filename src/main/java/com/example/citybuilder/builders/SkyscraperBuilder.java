@@ -42,6 +42,15 @@ public final class SkyscraperBuilder {
          case HOTEL -> hotel(p, w, d, f, fh);
          case GOOGLE -> google(p, w, d, f, fh);
       }
+      // Lobby ceiling lights wherever the ceiling is solid with open space below.
+      int lobbyH = Math.max(fh, 5);
+      for (int i = 2; i < w - 2; i += 4) {
+         for (int j = 2; j < d - 2; j += 4) {
+            if (!p.get(i, lobbyH, j).isAir() && p.get(i, lobbyH - 1, j).isAir() && !p.get(i, lobbyH, j).is(Blocks.SEA_LANTERN)) {
+               p.set(i, lobbyH, j, s(Blocks.SEA_LANTERN));
+            }
+         }
+      }
       // Paving round the base and a plinth to the ground.
       for (int i = -2; i <= w + 1; i++) {
          for (int j = -3; j <= d + 1; j++) {
@@ -136,6 +145,13 @@ public final class SkyscraperBuilder {
       }
       p.set(i1 + 1, 1, j1 + 1, s(Blocks.POTTED_AZALEA));
       p.set(i2 - 1, 1, j1 + 1, s(Blocks.POTTED_AZALEA));
+      // Waiting sofas along the side walls.
+      for (int j = j1 + 3; j < j2 - 2; j += 4) {
+         p.set(i1 + 1, 1, j, stairs(Blocks.QUARTZ_STAIRS, Direction.WEST));
+         p.set(i1 + 1, 1, j + 1, stairs(Blocks.QUARTZ_STAIRS, Direction.WEST));
+         p.set(i2 - 1, 1, j, stairs(Blocks.QUARTZ_STAIRS, Direction.EAST));
+         p.set(i2 - 1, 1, j + 1, stairs(Blocks.QUARTZ_STAIRS, Direction.EAST));
+      }
    }
 
    /** Plant-room crown with louvres, a helipad or an antenna, and red obstruction lights. */

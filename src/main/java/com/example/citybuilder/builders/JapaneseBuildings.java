@@ -550,12 +550,13 @@ final class JapaneseBuildings {
       }
       p.hangingLantern(mid, 4, (j1 + j2) / 2);
 
-      // Outdoor rock bath (rotenburo) in front, screened by a bamboo fence.
-      int bi1 = 2;
+      // Outdoor rock bath (rotenburo) in the front garden, beside the stepping-stone path,
+      // screened from the street by a bamboo fence.
+      int bi1 = mid + 2;
       int bi2 = s - 3;
       int bj1 = 2;
       int bj2 = j1 - 3;
-      if (bj2 - bj1 >= 2) {
+      if (bj2 - bj1 >= 1 && bi2 - bi1 >= 2) {
          for (int i = bi1 - 1; i <= bi2 + 1; i++) {
             for (int j = bj1 - 1; j <= bj2 + 1; j++) {
                boolean rim = i < bi1 || i > bi2 || j < bj1 || j > bj2;
@@ -563,18 +564,23 @@ final class JapaneseBuildings {
                p.set(i, 1, j, rim ? (Math.floorMod(i * 3 + j, 4) == 0 ? s(Blocks.MOSSY_COBBLESTONE) : s(Blocks.STONE)) : s(Blocks.WATER));
             }
          }
-         p.set(bi1, 2, bj1, s(Blocks.STONE));
-         p.set(bi2, 2, bj2, s(Blocks.MOSSY_COBBLESTONE));
-         p.stoneLantern(bi2 + 1, 2, bj1 - 1);
+         p.set(bi2 + 1, 2, bj2 + 1, s(Blocks.MOSSY_COBBLESTONE));
+         p.stoneLantern(bi1 - 1, 2, bj1 - 1);
       }
+      // Garden on the other side of the path.
+      p.pine(2, 1, 2);
+      p.stoneLantern(mid - 2, 1, 2);
       for (int i = 0; i < s; i++) {
          if (Math.abs(i - mid) > 1) {
-            p.fill(i, 1, 0, i, 3, 0, s(Blocks.BAMBOO_BLOCK));
+            p.fill(i, 1, 0, i, 2, 0, s(Blocks.BAMBOO_FENCE));
          }
       }
       for (int j = 0; j < j1; j++) {
-         p.fill(0, 1, j, 0, 3, j, s(Blocks.BAMBOO_BLOCK));
-         p.fill(s - 1, 1, j, s - 1, 3, j, s(Blocks.BAMBOO_BLOCK));
+         p.fill(0, 1, j, 0, 2, j, s(Blocks.BAMBOO_FENCE));
+         p.fill(s - 1, 1, j, s - 1, 2, j, s(Blocks.BAMBOO_FENCE));
+      }
+      for (int j = 0; j < j1; j++) {
+         p.set(mid, 0, j, s(Blocks.POLISHED_ANDESITE));
       }
    }
 
@@ -598,15 +604,17 @@ final class JapaneseBuildings {
       for (int h = 4; h < top; h += 4) {
          p.beamRing(a, h, a, b, b, Blocks.STRIPPED_DARK_OAK_LOG);
       }
-      // Diagonal cross bracing with fences on every face.
-      for (int h = 1; h < top - 1; h++) {
-         int phase = (h - 1) % 4;
-         int pos = phase * (s - 1) / 3;
-         if (pos > 0 && pos < s - 1) {
-            p.set(pos, h, a, s(Blocks.DARK_OAK_FENCE));
-            p.set(s - 1 - pos, h, b, s(Blocks.DARK_OAK_FENCE));
-            p.set(a, h, s - 1 - pos, s(Blocks.DARK_OAK_FENCE));
-            p.set(b, h, pos, s(Blocks.DARK_OAK_FENCE));
+      // X-bracing in each bay: stair blocks stepping diagonally across every face.
+      for (int h = 4; h + 4 <= top; h += 4) {
+         for (int k = 1; k < Math.min(4, s - 1); k++) {
+            int u = k * (s - 1) / 4;
+            if (u <= 0 || u >= s - 1) {
+               continue;
+            }
+            p.set(u, h + k, a, s(Blocks.DARK_OAK_PLANKS));
+            p.set(s - 1 - u, h + k, b, s(Blocks.DARK_OAK_PLANKS));
+            p.set(a, h + k, s - 1 - u, s(Blocks.DARK_OAK_PLANKS));
+            p.set(b, h + k, u, s(Blocks.DARK_OAK_PLANKS));
          }
       }
       // Lookout platform with railing, bell and a pyramid roof.
