@@ -23,11 +23,11 @@ def cam(x1, z1, x2, z2, h, yaw=-30.0, scale=1.0):
     """Camera north-west of the footprint looking at its centre from above."""
     cx, cz = (x1 + x2) / 2, (z1 + z2) / 2
     size = max(x2 - x1, z2 - z1)
-    d = (max(size, h * 0.9) * 1.25 + 12) * scale
+    d = (max(size * 1.15, h * 0.95) + 7) * scale
     rad = math.radians(yaw)
     dx, dz = -math.sin(rad), math.cos(rad)
     ty = Y + h * 0.45
-    py = ty + d * 0.45
+    py = ty + d * 0.38
     px, pz = cx - dx * d, cz - dz * d
     pitch = math.degrees(math.atan2(py - ty, d))
     return f"cam {px:.1f} {py:.1f} {pz:.1f} {yaw:.1f} {pitch:.1f}"
