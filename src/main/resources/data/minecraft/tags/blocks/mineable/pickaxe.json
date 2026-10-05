@@ -1,0 +1,7 @@
+{
+  "replace": false,
+  "values": [
+    "citybuilder:elevator",
+    "citybuilder:traffic_light"
+  ]
+}
