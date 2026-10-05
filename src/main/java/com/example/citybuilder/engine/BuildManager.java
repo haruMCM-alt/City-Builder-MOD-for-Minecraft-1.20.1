@@ -64,6 +64,11 @@ public final class BuildManager {
         return record.label();
     }
 
+    /** True when no build is queued or running. */
+    public static boolean isIdle() {
+        return QUEUE.isEmpty();
+    }
+
     public static int undoDepth(@Nullable UUID owner) {
         Deque<UndoRecord> stack = HISTORY.get(key(owner));
         return stack == null ? 0 : stack.size();

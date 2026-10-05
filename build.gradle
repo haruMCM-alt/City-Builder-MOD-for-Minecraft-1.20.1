@@ -16,6 +16,18 @@ base {
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
 println "Java: ${System.getProperty 'java.version'}, JVM: ${System.getProperty 'java.vm.version'} (${System.getProperty 'java.vendor'}), Arch: ${System.getProperty 'os.arch'}"
+// Development-only code (the screenshot robot); never packaged into the mod jar.
+sourceSets {
+    dev {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    devImplementation.extendsFrom implementation
+    devRuntimeOnly.extendsFrom runtimeOnly
+}
+
 minecraft {
     // The mappings can be changed at any time and must be in the following format.
     // Channel:   Version:
@@ -84,6 +96,20 @@ minecraft {
         client {
             // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
             property 'forge.enabledGameTestNamespaces', mod_id
+        }
+
+        // Client with the screenshot robot: ./gradlew runShots -Pshots=path/to/script.txt
+        shots {
+            parent runs.client
+            workingDirectory project.file('run')
+            property 'citybuilder.shots', project.findProperty('shots') ?: ''
+            args '--quickPlaySingleplayer', 'shots', '--width', '1280', '--height', '720'
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                    source sourceSets.dev
+                }
+            }
         }
 
         server {
