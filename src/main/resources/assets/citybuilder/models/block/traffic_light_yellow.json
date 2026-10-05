@@ -1,0 +1,196 @@
+{
+  "parent": "minecraft:block/block",
+  "textures": {
+    "particle": "citybuilder:block/traffic_light_side",
+    "side": "citybuilder:block/traffic_light_side",
+    "front": "citybuilder:block/traffic_light_yellow"
+  },
+  "elements": [
+    {
+      "from": [
+        7,
+        0,
+        7
+      ],
+      "to": [
+        9,
+        4,
+        9
+      ],
+      "faces": {
+        "north": {
+          "texture": "#side",
+          "uv": [
+            7,
+            0,
+            9,
+            4
+          ]
+        },
+        "south": {
+          "texture": "#side",
+          "uv": [
+            7,
+            0,
+            9,
+            4
+          ]
+        },
+        "east": {
+          "texture": "#side",
+          "uv": [
+            7,
+            0,
+            9,
+            4
+          ]
+        },
+        "west": {
+          "texture": "#side",
+          "uv": [
+            7,
+            0,
+            9,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "from": [
+        0,
+        4,
+        4
+      ],
+      "to": [
+        16,
+        12,
+        12
+      ],
+      "faces": {
+        "north": {
+          "texture": "#front",
+          "uv": [
+            0,
+            4,
+            16,
+            12
+          ]
+        },
+        "south": {
+          "texture": "#side",
+          "uv": [
+            0,
+            4,
+            16,
+            12
+          ]
+        },
+        "east": {
+          "texture": "#side",
+          "uv": [
+            4,
+            4,
+            12,
+            12
+          ]
+        },
+        "west": {
+          "texture": "#side",
+          "uv": [
+            4,
+            4,
+            12,
+            12
+          ]
+        },
+        "up": {
+          "texture": "#side",
+          "uv": [
+            0,
+            4,
+            16,
+            12
+          ]
+        },
+        "down": {
+          "texture": "#side",
+          "uv": [
+            0,
+            4,
+            16,
+            12
+          ]
+        }
+      }
+    },
+    {
+      "from": [
+        0,
+        12,
+        3
+      ],
+      "to": [
+        16,
+        13,
+        12
+      ],
+      "faces": {
+        "north": {
+          "texture": "#side",
+          "uv": [
+            0,
+            0,
+            16,
+            1
+          ]
+        },
+        "south": {
+          "texture": "#side",
+          "uv": [
+            0,
+            0,
+            16,
+            1
+          ]
+        },
+        "east": {
+          "texture": "#side",
+          "uv": [
+            3,
+            0,
+            12,
+            1
+          ]
+        },
+        "west": {
+          "texture": "#side",
+          "uv": [
+            3,
+            0,
+            12,
+            1
+          ]
+        },
+        "up": {
+          "texture": "#side",
+          "uv": [
+            3,
+            0,
+            12,
+            1
+          ]
+        },
+        "down": {
+          "texture": "#side",
+          "uv": [
+            3,
+            0,
+            12,
+            1
+          ]
+        }
+      }
+    }
+  ]
+}

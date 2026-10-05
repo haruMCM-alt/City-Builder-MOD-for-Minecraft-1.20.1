@@ -1,0 +1,49 @@
+{
+  "variants": {
+    "facing=north,signal=green": {
+      "model": "citybuilder:block/traffic_light_green"
+    },
+    "facing=north,signal=yellow": {
+      "model": "citybuilder:block/traffic_light_yellow"
+    },
+    "facing=north,signal=red": {
+      "model": "citybuilder:block/traffic_light_red"
+    },
+    "facing=east,signal=green": {
+      "model": "citybuilder:block/traffic_light_green",
+      "y": 90
+    },
+    "facing=east,signal=yellow": {
+      "model": "citybuilder:block/traffic_light_yellow",
+      "y": 90
+    },
+    "facing=east,signal=red": {
+      "model": "citybuilder:block/traffic_light_red",
+      "y": 90
+    },
+    "facing=south,signal=green": {
+      "model": "citybuilder:block/traffic_light_green",
+      "y": 180
+    },
+    "facing=south,signal=yellow": {
+      "model": "citybuilder:block/traffic_light_yellow",
+      "y": 180
+    },
+    "facing=south,signal=red": {
+      "model": "citybuilder:block/traffic_light_red",
+      "y": 180
+    },
+    "facing=west,signal=green": {
+      "model": "citybuilder:block/traffic_light_green",
+      "y": 270
+    },
+    "facing=west,signal=yellow": {
+      "model": "citybuilder:block/traffic_light_yellow",
+      "y": 270
+    },
+    "facing=west,signal=red": {
+      "model": "citybuilder:block/traffic_light_red",
+      "y": 270
+    }
+  }
+}
