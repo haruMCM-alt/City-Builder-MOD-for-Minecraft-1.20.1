@@ -1,71 +1,54 @@
 package com.example.citybuilder.builders;
 
+import static com.example.citybuilder.builders.Plot.air;
+import static com.example.citybuilder.builders.Plot.s;
+import static com.example.citybuilder.builders.Plot.slab;
+import static com.example.citybuilder.builders.Plot.stairs;
+import static com.example.citybuilder.builders.Plot.stairsTop;
+
 import com.example.citybuilder.engine.BlockCanvas;
 import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
+/**
+ * High-rise towers. The footprint is (x, z) .. (x + width - 1, z + depth - 1) with the entrance on
+ * the north side. Every tower has a lobby, an elevator core with a stop on each floor, furnished
+ * floors, an emergency ladder and a crown.
+ */
 public final class SkyscraperBuilder {
    private SkyscraperBuilder() {
    }
 
+   /** Wall pattern of a tower: which block goes at offset {@code u} along a face, {@code h} above the floor. */
+   private interface Skin {
+      BlockState at(int u, int h, int fh, int floor);
+   }
+
    public static void build(BlockCanvas level, SkyscraperBuilder.Type type, int x, int y, int z, int width, int depth, int floors, int floorHeight) {
-      if (width < 5) {
-         width = 5;
-      }
-
-      if (depth < 5) {
-         depth = 5;
-      }
-
-      if (floors < 2) {
-         floors = 2;
-      }
-
-      if (floorHeight < 3) {
-         floorHeight = 3;
-      }
-
+      int w = Math.max(7, width);
+      int d = Math.max(7, depth);
+      int f = Math.max(3, floors);
+      int fh = Math.max(3, floorHeight);
+      Plot p = new Plot(level, x, y, z);
+      p.clear(-2, 1, -3, w + 1, f * fh + 30, d + 1);
       switch (type) {
-         case MODERN:
-            buildModern(level, x, y, z, width, depth, floors, floorHeight);
-            break;
-         case TWIN:
-            buildTwin(level, x, y, z, width, depth, floors, floorHeight);
-            break;
-         case PYRAMID:
-            buildPyramid(level, x, y, z, width, depth, floors, floorHeight);
-            break;
-         case RESIDENTIAL:
-            buildResidential(level, x, y, z, width, depth, floors, floorHeight);
-            break;
-         case HOTEL:
-            buildHotel(level, x, y, z, width, depth, floors, floorHeight);
-            break;
-         case GOOGLE:
-            buildGoogle(level, x, y, z, width, depth, floors, floorHeight);
+         case MODERN -> modern(p, w, d, f, fh);
+         case TWIN -> twin(p, w, d, f, fh);
+         case PYRAMID -> pyramid(p, w, d, f, fh);
+         case RESIDENTIAL -> residential(p, w, d, f, fh);
+         case HOTEL -> hotel(p, w, d, f, fh);
+         case GOOGLE -> google(p, w, d, f, fh);
       }
-      BuildUtil.RoofStyle roofStyle = switch (type) {
-         case MODERN -> BuildUtil.RoofStyle.SPIRE;
-         case TWIN -> BuildUtil.RoofStyle.SPIRE;
-         case PYRAMID -> BuildUtil.RoofStyle.NONE;
-         case RESIDENTIAL -> BuildUtil.RoofStyle.PENTHOUSE;
-         case HOTEL -> BuildUtil.RoofStyle.PENTHOUSE;
-         case GOOGLE -> BuildUtil.RoofStyle.PENTHOUSE;
-      };
-      int totalHeight = floors * floorHeight + 10;
-      int pad = 3;
-      BuildUtil.decorateBuilding(level, x - pad, y, z - pad, x + width + pad, y + totalHeight, z + depth + pad, roofStyle);
-
-      for (int xx = x - pad; xx <= x + width + pad; xx++) {
-         for (int zz = z - pad; zz <= z + depth + pad; zz++) {
-            // Things standing just outside the walls (plates, lanterns, gates) need ground under them.
-            if (level.isSet(xx, y + 1, zz) && !level.get(xx, y + 1, zz).isAir() && level.get(xx, y, zz).canBeReplaced()) {
-               level.set(xx, y, zz, Blocks.STONE_BRICKS.defaultBlockState());
+      // Paving round the base and a plinth to the ground.
+      for (int i = -2; i <= w + 1; i++) {
+         for (int j = -3; j <= d + 1; j++) {
+            if (p.get(i, 0, j).isAir()) {
+               p.set(i, 0, j, s(Blocks.SMOOTH_STONE));
             }
-            if (level.isSet(xx, y, zz) && !level.get(xx, y, zz).isAir()) {
-               BuildUtil.foundation(level, xx, y - 1, zz, Blocks.STONE_BRICKS.defaultBlockState());
-            }
+            BuildUtil.foundation(level, x + i, y - 1, z + j, s(Blocks.STONE_BRICKS));
          }
       }
    }
@@ -74,934 +57,501 @@ public final class SkyscraperBuilder {
       build(level, SkyscraperBuilder.Type.MODERN, x, y, z, width, depth, floors, floorHeight);
    }
 
-   private static void buildModern(BlockCanvas level, int x, int y, int z, int width, int depth, int floors, int floorHeight) {
-      BlockState frame = Blocks.SMOOTH_STONE.defaultBlockState();
-      BlockState slabBlock = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
-      BlockState glass = Blocks.LIGHT_BLUE_STAINED_GLASS.defaultBlockState();
-      BlockState darkGlass = Blocks.TINTED_GLASS.defaultBlockState();
-      BlockState fin = Blocks.POLISHED_DEEPSLATE.defaultBlockState();
-      BlockState pillar = Blocks.POLISHED_ANDESITE.defaultBlockState();
-      BlockState podiumWall = Blocks.STONE_BRICKS.defaultBlockState();
-      BlockState lamp = Blocks.SEA_LANTERN.defaultBlockState();
-      BlockState light = Blocks.GLOWSTONE.defaultBlockState();
-      BlockState roof = Blocks.GRAY_CONCRETE.defaultBlockState();
-      BlockState crown = Blocks.BLACK_CONCRETE.defaultBlockState();
-      BlockState floorMat = Blocks.POLISHED_DIORITE.defaultBlockState();
-      BlockState carpet = Blocks.GRAY_WOOL.defaultBlockState();
-      BlockState partition = Blocks.WHITE_TERRACOTTA.defaultBlockState();
-      int podiumFloors = Math.max(2, floors / 6);
-      int midSetback = Math.max(podiumFloors + 2, floors / 3);
-      int highSetback = Math.max(midSetback + 2, floors * 2 / 3);
-      int totalHeight = 1 + floors * floorHeight + 6;
-      BuildUtil.fill(level, x - 2, y + 1, z - 2, x + width + 1, y + totalHeight, z + depth + 1, BuildUtil.air());
-      int pX1 = x - 2;
-      int pZ1 = z - 2;
-      int pX2 = x + width + 1;
-      int pZ2 = z + depth + 1;
-      int podiumTopY = y + podiumFloors * floorHeight;
-      buildPodium(level, pX1, y, pZ1, pX2, podiumTopY, pZ2, podiumWall, glass, pillar, slabBlock, floorMat, light);
-      int t1x1 = x;
-      int t1z1 = z;
-      int t1x2 = x + width - 1;
-      int t1z2 = z + depth - 1;
-      int t2x1 = x + 1;
-      int t2z1 = z + 1;
-      int t2x2 = x + width - 2;
-      int t2z2 = z + depth - 2;
-      int t3x1 = x + 2;
-      int t3z1 = z + 2;
-      int t3x2 = x + width - 3;
-      int t3z2 = z + depth - 3;
+   // ------------------------------------------------------------------ shared parts
 
-      for (int f = podiumFloors; f < floors; f++) {
-         int fy = y + 1 + f * floorHeight;
-         int top = fy + floorHeight - 1;
-         int ax1;
-         int az1;
-         int ax2;
-         int az2;
-         if (f < midSetback) {
-            ax1 = t1x1;
-            az1 = t1z1;
-            ax2 = t1x2;
-            az2 = t1z2;
-         } else if (f < highSetback) {
-            ax1 = t2x1;
-            az1 = t2z1;
-            ax2 = t2x2;
-            az2 = t2z2;
-         } else {
-            ax1 = t3x1;
-            az1 = t3z1;
-            ax2 = t3x2;
-            az2 = t3z2;
+   /** One storey: floor slab at {@code fy} and the four walls drawn by {@code skin}. */
+   private static void storey(Plot p, int i1, int j1, int i2, int j2, int fy, int fh, BlockState floor, Skin skin, int index) {
+      p.fill(i1, fy, j1, i2, fy, j2, floor);
+      for (int h = 1; h < fh; h++) {
+         for (int i = i1; i <= i2; i++) {
+            p.set(i, fy + h, j1, skin.at(i - i1, h, fh, index));
+            p.set(i, fy + h, j2, skin.at(i - i1, h, fh, index));
          }
-
-         buildFloor(level, ax1, fy, az1, ax2, top, az2, slabBlock, glass, fin, pillar, light, floorMat, carpet, partition, frame, f);
-         if (f == midSetback) {
-            buildTerrace(level, t1x1, fy, t1z1, t1x2, t1z2, ax1, az1, ax2, az2);
-         } else if (f == highSetback) {
-            buildTerrace(level, t2x1, fy, t2z1, t2x2, t2z2, ax1, az1, ax2, az2);
-         }
-      }
-
-      int crownBaseY = y + 1 + floors * floorHeight;
-      buildCrown(level, t3x1, crownBaseY, t3z1, t3x2, t3z2, crown, darkGlass, lamp, frame, roof);
-      int entranceX = (pX1 + pX2) / 2;
-      Facilities.towerCore(level, x, y, z, width, depth, podiumTopY, crownBaseY);
-
-      for (int dx = -2; dx <= 2; dx++) {
-         for (int yy = y + 1; yy <= y + 4; yy++) {
-            BuildUtil.setBlock(level, entranceX + dx, yy, pZ1, BuildUtil.air());
-         }
-      }
-
-      for (int dx = -3; dx <= 3; dx++) {
-         BuildUtil.setBlock(level, entranceX + dx, y + 5, pZ1, frame);
-         BuildUtil.setBlock(level, entranceX + dx, y + 5, pZ1 - 1, frame);
-      }
-
-      BuildUtil.fill(level, entranceX - 2, y + 1, pZ1 + 6, entranceX + 2, y + 1, pZ1 + 6, Blocks.DARK_OAK_PLANKS.defaultBlockState());
-      BuildUtil.fill(level, entranceX - 2, y + 2, pZ1 + 6, entranceX + 2, y + 2, pZ1 + 6, Blocks.DARK_OAK_SLAB.defaultBlockState());
-   }
-
-   private static void buildPodium(
-      BlockCanvas level,
-      int x1,
-      int y,
-      int z1,
-      int x2,
-      int topY,
-      int z2,
-      BlockState wall,
-      BlockState glass,
-      BlockState pillar,
-      BlockState slab,
-      BlockState floorMat,
-      BlockState light
-   ) {
-      BuildUtil.fill(level, x1, y, z1, x2, y, z2, floorMat);
-
-      for (int yy = y + 1; yy <= topY; yy++) {
-         for (int xx = x1; xx <= x2; xx++) {
-            boolean isPillar = (xx - x1) % 4 == 0 || xx == x1 || xx == x2;
-            BlockState s = isPillar ? pillar : glass;
-            if (yy == y + 1 && !isPillar) {
-               s = wall;
-            }
-
-            BuildUtil.setBlock(level, xx, yy, z1, s);
-            BuildUtil.setBlock(level, xx, yy, z2, s);
-         }
-
-         for (int zz = z1; zz <= z2; zz++) {
-            boolean isPillar = (zz - z1) % 4 == 0 || zz == z1 || zz == z2;
-            BlockState s = isPillar ? pillar : glass;
-            if (yy == y + 1 && !isPillar) {
-               s = wall;
-            }
-
-            BuildUtil.setBlock(level, x1, yy, zz, s);
-            BuildUtil.setBlock(level, x2, yy, zz, s);
-         }
-      }
-
-      int height = topY - y;
-      int podiumFloors = Math.max(2, height / 5);
-      int fh = height / podiumFloors;
-
-      for (int i = 1; i < podiumFloors; i++) {
-         int fy = y + i * fh;
-         BuildUtil.fill(level, x1 + 1, fy, z1 + 1, x2 - 1, fy, z2 - 1, slab);
-      }
-
-      BuildUtil.fill(level, x1, topY, z1, x2, topY, z2, slab);
-
-      for (int xx = x1 + 3; xx <= x2 - 3; xx += 4) {
-         for (int zz = z1 + 3; zz <= z2 - 3; zz += 4) {
-            BuildUtil.setBlock(level, xx, y + fh - 1, zz, light);
+         for (int j = j1 + 1; j < j2; j++) {
+            p.set(i1, fy + h, j, skin.at(j - j1, h, fh, index));
+            p.set(i2, fy + h, j, skin.at(j - j1, h, fh, index));
          }
       }
    }
 
-   private static void buildFloor(
-      BlockCanvas level,
-      int x1,
-      int fy,
-      int z1,
-      int x2,
-      int topY,
-      int z2,
-      BlockState slab,
-      BlockState glass,
-      BlockState fin,
-      BlockState pillar,
-      BlockState light,
-      BlockState floorMat,
-      BlockState carpet,
-      BlockState partition,
-      BlockState frame,
-      int floorIndex
-   ) {
-      BuildUtil.fill(level, x1, fy, z1, x2, fy, z2, floorMat);
-      BuildUtil.fill(level, x1 + 1, fy, z1 + 1, x2 - 1, fy, z2 - 1, carpet);
-      BuildUtil.fill(level, x1, fy, z1, x1, topY, z1, pillar);
-      BuildUtil.fill(level, x2, fy, z1, x2, topY, z1, pillar);
-      BuildUtil.fill(level, x1, fy, z2, x1, topY, z2, pillar);
-      BuildUtil.fill(level, x2, fy, z2, x2, topY, z2, pillar);
-
-      for (int yy = fy + 1; yy < topY; yy++) {
-         for (int xx = x1 + 1; xx <= x2 - 1; xx++) {
-            boolean isFin = (xx - x1) % 3 == 0;
-            BlockState s = isFin ? fin : glass;
-            BuildUtil.setBlock(level, xx, yy, z1, s);
-            BuildUtil.setBlock(level, xx, yy, z2, s);
-         }
-
-         for (int zz = z1 + 1; zz <= z2 - 1; zz++) {
-            boolean isFin = (zz - z1) % 3 == 0;
-            BlockState s = isFin ? fin : glass;
-            BuildUtil.setBlock(level, x1, yy, zz, s);
-            BuildUtil.setBlock(level, x2, yy, zz, s);
-         }
-      }
-
-      BuildUtil.hollowBox(level, x1, topY, z1, x2, topY, z2, frame);
-      int cx = (x1 + x2) / 2;
-      int cz = (z1 + z2) / 2;
-      Facilities.elevatorHall(level, cx, fy, cz, topY);
-
-      for (int xx = x1 + 2; xx <= cx - 2; xx++) {
-         BuildUtil.setBlock(level, xx, fy + 1, cz - 2, partition);
-         BuildUtil.setBlock(level, xx, fy + 2, cz - 2, partition);
-      }
-
-      for (int zz = cz + 2; zz <= z2 - 2; zz++) {
-         BuildUtil.setBlock(level, cx + 2, fy + 1, zz, partition);
-         BuildUtil.setBlock(level, cx + 2, fy + 2, zz, partition);
-      }
-
-      for (int xx = x1 + 2; xx <= x2 - 2; xx += 3) {
-         for (int zz = z1 + 2; zz <= z2 - 2; zz += 3) {
-            if (Math.abs(xx - cx) > 1 || Math.abs(zz - cz) > 1) {
-               BuildUtil.setBlock(level, xx, topY - 1, zz, light);
+   /** Ceiling lights let into the slab above, avoiding the core. */
+   private static void lights(Plot p, int i1, int j1, int i2, int j2, int h, int ci, int cj) {
+      for (int i = i1 + 2; i <= i2 - 2; i += 4) {
+         for (int j = j1 + 2; j <= j2 - 2; j += 4) {
+            if (Math.abs(i - ci) > 2 || Math.abs(j - cj) > 2) {
+               p.set(i, h, j, s(Blocks.SEA_LANTERN));
             }
          }
       }
+   }
 
-      int deskX = x1 + 3;
-      int deskZ = z1 + 3;
-      if (deskX + 1 <= x2 - 2 && deskZ <= z2 - 2) {
-         BuildUtil.setBlock(level, deskX, fy + 1, deskZ, Blocks.OAK_PLANKS.defaultBlockState());
-         BuildUtil.setBlock(level, deskX + 1, fy + 1, deskZ, Blocks.OAK_PLANKS.defaultBlockState());
+   /** Office furniture: rows of desks with screens and chairs, a meeting table and plants. */
+   private static void offices(Plot p, int i1, int j1, int i2, int j2, int fy, int ci, int cj, Block desk, Block carpet) {
+      p.fill(i1 + 1, fy, j1 + 1, i2 - 1, fy, j2 - 1, s(carpet));
+      for (int i = i1 + 2; i <= i2 - 2; i += 3) {
+         for (int j = j1 + 2; j <= j2 - 3; j += 3) {
+            if (Math.abs(i - ci) <= 2 && Math.abs(j - cj) <= 2) {
+               continue;
+            }
+            p.set(i, fy + 1, j, stairsTop(desk, Direction.NORTH));
+            p.set(i, fy + 2, j, s(Blocks.BLACK_STAINED_GLASS_PANE));
+            p.set(i, fy + 1, j + 1, stairs(Blocks.SPRUCE_STAIRS, Direction.SOUTH));
+         }
       }
+      p.set(i1 + 1, fy + 1, j1 + 1, s(Blocks.POTTED_FERN));
+      p.set(i2 - 1, fy + 1, j2 - 1, s(Blocks.POTTED_BAMBOO));
+   }
 
-      int deskX2 = x2 - 4;
-      int deskZ2 = z2 - 4;
-      if (deskX2 - 1 >= x1 + 1 && deskZ2 >= z1 + 1) {
-         BuildUtil.setBlock(level, deskX2, fy + 1, deskZ2, Blocks.OAK_PLANKS.defaultBlockState());
-         BuildUtil.setBlock(level, deskX2 - 1, fy + 1, deskZ2, Blocks.OAK_PLANKS.defaultBlockState());
+   /** Elevator stops on every floor plus a lobby stop, and an emergency ladder in a corner. */
+   private static void core(Plot p, int ci, int cj, int floors, int fh, int lobbyTop, int roofY, int li, int lj) {
+      for (int f = 0; f < floors; f++) {
+         int fy = f * fh;
+         Facilities.elevatorHall(p.l, p.x + ci, p.y + fy, p.z + cj, p.y + fy + fh);
+      }
+      Facilities.elevatorHall(p.l, p.x + ci, p.y + roofY, p.z + cj, p.y + roofY + 3);
+      p.ladder(li, lj, 1, roofY - 1, Direction.NORTH);
+   }
+
+   /** Ground-floor lobby: glazing, entrance, reception desk and a canopy over the door. */
+   private static void lobby(Plot p, int i1, int j1, int i2, int j2, int lobbyH, BlockState frame, BlockState canopy) {
+      int mid = (i1 + i2) / 2;
+      p.fill(i1 + 1, 0, j1 + 1, i2 - 1, 0, j2 - 1, s(Blocks.POLISHED_DIORITE));
+      for (int h = 1; h < lobbyH; h++) {
+         for (int i = i1; i <= i2; i++) {
+            boolean pier = (i - i1) % 4 == 0 || i == i2;
+            p.set(i, h, j1, pier ? frame : s(Blocks.GLASS));
+         }
+      }
+      p.clear(mid - 1, 1, j1, mid + 1, 3, j1);
+      p.fill(mid - 3, lobbyH - 1, j1 - 3, mid + 3, lobbyH - 1, j1 - 1, canopy);
+      p.set(mid - 3, lobbyH - 2, j1 - 3, s(Blocks.IRON_BARS));
+      p.set(mid + 3, lobbyH - 2, j1 - 3, s(Blocks.IRON_BARS));
+      for (int h = 1; h < lobbyH - 1; h++) {
+         p.set(mid - 3, h, j1 - 3, s(Blocks.IRON_BARS));
+         p.set(mid + 3, h, j1 - 3, s(Blocks.IRON_BARS));
+      }
+      // Reception desk and planters.
+      for (int i = mid - 2; i <= mid + 2; i++) {
+         p.set(i, 1, j1 + 3, s(Blocks.SMOOTH_QUARTZ));
+      }
+      p.set(i1 + 1, 1, j1 + 1, s(Blocks.POTTED_AZALEA));
+      p.set(i2 - 1, 1, j1 + 1, s(Blocks.POTTED_AZALEA));
+   }
+
+   /** Plant-room crown with louvres, a helipad or an antenna, and red obstruction lights. */
+   private static void crown(Plot p, int i1, int j1, int i2, int j2, int y, BlockState roof, BlockState louvre, boolean helipad, int antenna) {
+      p.fill(i1, y, j1, i2, y, j2, roof);
+      p.ring(i1, y + 1, j1, i2, j2, s(Blocks.IRON_BARS));
+      int ci = (i1 + i2) / 2;
+      int cj = (j1 + j2) / 2;
+      if (helipad && i2 - i1 >= 10 && j2 - j1 >= 10) {
+         for (int i = i1 + 2; i <= i2 - 2; i++) {
+            for (int j = j1 + 2; j <= j2 - 2; j++) {
+               int di = i - ci;
+               int dj = j - cj;
+               int r2 = di * di + dj * dj;
+               int r = Math.min(i2 - i1, j2 - j1) / 2 - 2;
+               if (r2 <= r * r) {
+                  p.set(i, y, j, (r2 >= (r - 1) * (r - 1)) ? s(Blocks.YELLOW_CONCRETE) : s(Blocks.GRAY_CONCRETE));
+               }
+            }
+         }
+         // The "H".
+         for (int dj = -2; dj <= 2; dj++) {
+            p.set(ci - 2, y, cj + dj, s(Blocks.WHITE_CONCRETE));
+            p.set(ci + 2, y, cj + dj, s(Blocks.WHITE_CONCRETE));
+         }
+         p.set(ci - 1, y, cj, s(Blocks.WHITE_CONCRETE));
+         p.set(ci, y, cj, s(Blocks.WHITE_CONCRETE));
+         p.set(ci + 1, y, cj, s(Blocks.WHITE_CONCRETE));
+      } else {
+         int mi1 = i1 + 2;
+         int mi2 = i2 - 2;
+         int mj1 = j1 + 2;
+         int mj2 = j2 - 2;
+         if (mi2 - mi1 >= 2 && mj2 - mj1 >= 2) {
+            for (int h = 1; h <= 3; h++) {
+               p.ring(mi1, y + h, mj1, mi2, mj2, h == 2 ? louvre : roof);
+            }
+            p.fill(mi1, y + 4, mj1, mi2, y + 4, mj2, roof);
+         }
+      }
+      if (antenna > 0) {
+         int base = helipad ? y + 1 : y + 5;
+         int ai = helipad ? i1 + 1 : ci;
+         int aj = helipad ? j1 + 1 : cj;
+         p.fill(ai, base, aj, ai, base + antenna, aj, s(Blocks.IRON_BARS));
+         p.set(ai, base + antenna + 1, aj, s(Blocks.REDSTONE_LAMP));
+      }
+      for (int[] c : new int[][]{{i1, j1}, {i2, j1}, {i1, j2}, {i2, j2}}) {
+         p.set(c[0], y + 2, c[1], s(Blocks.REDSTONE_LAMP));
       }
    }
 
-   private static void buildTerrace(BlockCanvas level, int outX1, int y, int outZ1, int outX2, int outZ2, int inX1, int inZ1, int inX2, int inZ2) {
-      BlockState deck = Blocks.SMOOTH_STONE.defaultBlockState();
-      BlockState rail = Blocks.IRON_BARS.defaultBlockState();
-      BlockState planter = Blocks.GRASS_BLOCK.defaultBlockState();
-
-      for (int xx = outX1; xx <= outX2; xx++) {
-         for (int zz = outZ1; zz <= outZ2; zz++) {
-            boolean insideTower = xx >= inX1 && xx <= inX2 && zz >= inZ1 && zz <= inZ2;
-            if (!insideTower) {
-               BuildUtil.setBlock(level, xx, y, zz, deck);
-               boolean edge = xx == outX1 || xx == outX2 || zz == outZ1 || zz == outZ2;
+   private static void terrace(Plot p, int i1, int j1, int i2, int j2, int y, int ii1, int ij1, int ii2, int ij2) {
+      for (int i = i1; i <= i2; i++) {
+         for (int j = j1; j <= j2; j++) {
+            boolean inside = i >= ii1 && i <= ii2 && j >= ij1 && j <= ij2;
+            if (!inside) {
+               boolean edge = i == i1 || i == i2 || j == j1 || j == j2;
+               p.set(i, y, j, s(Blocks.SMOOTH_STONE));
                if (edge) {
-                  BuildUtil.setBlock(level, xx, y + 1, zz, rail);
+                  p.set(i, y + 1, j, s(Blocks.GLASS_PANE));
+               } else if ((i + j) % 5 == 0) {
+                  p.set(i, y, j, s(Blocks.GRASS_BLOCK));
+                  p.set(i, y + 1, j, s(Blocks.AZALEA));
                }
             }
          }
       }
-
-      BuildUtil.setBlock(level, outX1 + 1, y, outZ1 + 1, planter);
-      BuildUtil.setBlock(level, outX1 + 1, y + 1, outZ1 + 1, Blocks.AZALEA.defaultBlockState());
-      BuildUtil.setBlock(level, outX2 - 1, y, outZ2 - 1, planter);
-      BuildUtil.setBlock(level, outX2 - 1, y + 1, outZ2 - 1, Blocks.AZALEA.defaultBlockState());
    }
 
-   private static void buildCrown(
-      BlockCanvas level, int x1, int y, int z1, int x2, int z2, BlockState crown, BlockState darkGlass, BlockState lamp, BlockState frame, BlockState roof
-   ) {
-      BuildUtil.fill(level, x1, y, z1, x2, y, z2, roof);
-      int machineH = 4;
-      int mx1 = x1 + 1;
-      int mz1 = z1 + 1;
-      int mx2 = x2 - 1;
-      int mz2 = z2 - 1;
-      BuildUtil.fill(level, mx1, y + 1, mz1, mx2, y + machineH, mz2, darkGlass);
-      BuildUtil.hollowBox(level, mx1, y + 1, mz1, mx2, y + machineH, mz2, crown);
-      BuildUtil.fill(level, mx1 + 1, y + 2, mz1 + 1, mx2 - 1, y + machineH - 1, mz2 - 1, BuildUtil.air());
-      BuildUtil.fill(level, mx1, y + machineH + 1, mz1, mx2, y + machineH + 1, mz2, crown);
-      int cx = (x1 + x2) / 2;
-      int cz = (z1 + z2) / 2;
-      BuildUtil.fill(level, cx, y + machineH + 2, cz, cx, y + machineH + 6, cz, Blocks.IRON_BARS.defaultBlockState());
-      BuildUtil.setBlock(level, cx, y + machineH + 7, cz, Blocks.REDSTONE_LAMP.defaultBlockState());
-      BuildUtil.setBlock(level, x1, y + machineH + 2, z1, lamp);
-      BuildUtil.setBlock(level, x2, y + machineH + 2, z1, lamp);
-      BuildUtil.setBlock(level, x1, y + machineH + 2, z2, lamp);
-      BuildUtil.setBlock(level, x2, y + machineH + 2, z2, lamp);
-      BuildUtil.hollowBox(level, x1, y + 1, z1, x2, y + 1, z2, frame);
+   // ------------------------------------------------------------------ modern: set-back glass tower
+
+   private static void modern(Plot p, int w, int d, int f, int fh) {
+      officeTower(p, w, d, f, fh, s(Blocks.LIGHT_BLUE_STAINED_GLASS), s(Blocks.LIGHT_GRAY_CONCRETE), s(Blocks.POLISHED_DEEPSLATE),
+            Blocks.BIRCH_STAIRS, Blocks.GRAY_WOOL, true);
    }
 
-   private static void buildTwin(BlockCanvas level, int x, int y, int z, int width, int depth, int floors, int floorHeight) {
-      int towerW = Math.max(6, (width - 4) / 2);
-      int gap = width - towerW * 2;
-      if (gap < 3) {
-         gap = 3;
+   private static void google(Plot p, int w, int d, int f, int fh) {
+      officeTower(p, w, d, f, fh, s(Blocks.GLASS), s(Blocks.WHITE_CONCRETE), s(Blocks.WHITE_CONCRETE), Blocks.BIRCH_STAIRS, Blocks.WHITE_WOOL, false);
+      // Colourful accents: coloured fins on the front, colourful floors and a logo over the entrance.
+      Block[] colours = {Blocks.BLUE_CONCRETE, Blocks.RED_CONCRETE, Blocks.YELLOW_CONCRETE, Blocks.BLUE_CONCRETE, Blocks.GREEN_CONCRETE, Blocks.RED_CONCRETE};
+      int lobbyH = Math.max(fh, 5);
+      int mid = (w - 1) / 2;
+      for (int k = 0; k < colours.length; k++) {
+         p.set(mid - 3 + k, lobbyH, -1, s(colours[k]));
+         p.set(mid - 3 + k, lobbyH + 1, -1, s(colours[k]));
       }
-
-      int aX2 = x + towerW - 1;
-      int bX1 = aX2 + gap + 1;
-      int bX2 = bX1 + towerW - 1;
-      BlockState glass = Blocks.CYAN_STAINED_GLASS.defaultBlockState();
-      BlockState dark = Blocks.BLACK_CONCRETE.defaultBlockState();
-      BlockState frame = Blocks.POLISHED_DEEPSLATE.defaultBlockState();
-      BlockState slab = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
-      BlockState light = Blocks.GLOWSTONE.defaultBlockState();
-      int totalH = floors * floorHeight + 8;
-      BuildUtil.fill(level, x - 1, y + 1, z - 1, bX2 + 1, y + totalH, z + depth, BuildUtil.air());
-      buildSlenderTower(level, x, y, z, towerW, depth, floors, floorHeight, glass, dark, frame, slab, light);
-      buildSlenderTower(level, bX1, y, z, towerW, depth, floors, floorHeight, glass, dark, frame, slab, light);
-      int bridgeY = y + 1 + (floors - 2) * floorHeight;
-      int bridgeH = floorHeight;
-      BuildUtil.fill(level, aX2 + 1, bridgeY, z + 1, bX1 - 1, bridgeY, z + depth - 2, slab);
-      BuildUtil.fill(level, aX2 + 1, bridgeY + floorHeight, z + 1, bX1 - 1, bridgeY + floorHeight, z + depth - 2, slab);
-
-      for (int yy = bridgeY + 1; yy < bridgeY + bridgeH; yy++) {
-         for (int xx = aX2 + 1; xx <= bX1 - 1; xx++) {
-            BuildUtil.setBlock(level, xx, yy, z + 1, glass);
-            BuildUtil.setBlock(level, xx, yy, z + depth - 2, glass);
-         }
-      }
-
-      BuildUtil.setBlock(level, aX2 + 1, bridgeY, z + 1, frame);
-      BuildUtil.setBlock(level, bX1 - 1, bridgeY, z + 1, frame);
-      BuildUtil.setBlock(level, aX2 + 1, bridgeY + bridgeH, z + 1, frame);
-      BuildUtil.setBlock(level, bX1 - 1, bridgeY + bridgeH, z + 1, frame);
-      // Doorways from both towers onto the skybridge.
-      int midZ = z + depth / 2;
-      BuildUtil.fill(level, aX2, bridgeY + 1, midZ - 1, aX2, bridgeY + 2, midZ + 1, BuildUtil.air());
-      BuildUtil.fill(level, bX1, bridgeY + 1, midZ - 1, bX1, bridgeY + 2, midZ + 1, BuildUtil.air());
-   }
-
-   private static void buildSlenderTower(
-      BlockCanvas level,
-      int x,
-      int y,
-      int z,
-      int width,
-      int depth,
-      int floors,
-      int fh,
-      BlockState glass,
-      BlockState dark,
-      BlockState frame,
-      BlockState slab,
-      BlockState light
-   ) {
-      int x2 = x + width - 1;
-      int z2 = z + depth - 1;
-      BuildUtil.fill(level, x, y, z, x2, y, z2, frame);
-
-      for (int f = 0; f < floors; f++) {
-         int fy = y + 1 + f * fh;
-         int top = fy + fh - 1;
-         BuildUtil.fill(level, x, fy, z, x2, fy, z2, slab);
-         BuildUtil.fill(level, x, fy, z, x, top, z, dark);
-         BuildUtil.fill(level, x2, fy, z, x2, top, z, dark);
-         BuildUtil.fill(level, x, fy, z2, x, top, z2, dark);
-         BuildUtil.fill(level, x2, fy, z2, x2, top, z2, dark);
-
-         for (int yy = fy + 1; yy < top; yy++) {
-            for (int xx = x + 1; xx <= x2 - 1; xx++) {
-               BlockState s = (xx - x) % 3 == 0 ? dark : glass;
-               BuildUtil.setBlock(level, xx, yy, z, s);
-               BuildUtil.setBlock(level, xx, yy, z2, s);
-            }
-
-            for (int zz = z + 1; zz <= z2 - 1; zz++) {
-               BlockState s = (zz - z) % 3 == 0 ? dark : glass;
-               BuildUtil.setBlock(level, x, yy, zz, s);
-               BuildUtil.setBlock(level, x2, yy, zz, s);
-            }
-         }
-
-         for (int xx = x + 2; xx <= x2 - 2; xx += 3) {
-            for (int zz = z + 2; zz <= z2 - 2; zz += 3) {
-               BuildUtil.setBlock(level, xx, top - 1, zz, light);
-            }
-         }
-      }
-
-      int roofY = y + 1 + floors * fh;
-      BuildUtil.fill(level, x, roofY, z, x2, roofY, z2, Blocks.GRAY_CONCRETE.defaultBlockState());
-      BuildUtil.hollowBox(level, x, roofY + 1, z, x2, roofY + 1, z2, frame);
-      int cx = (x + x2) / 2;
-      int cz = (z + z2) / 2;
-      for (int f = 0; f < floors; f++) {
-         int fy = y + 1 + f * fh;
-         Facilities.elevatorShaftStop(level, cx, fy, cz, fy + fh - 1);
-      }
-      BuildUtil.fill(level, cx - 1, y + 2, z, cx + 1, y + 3, z, BuildUtil.air());
-      BuildUtil.fill(level, cx, roofY + 1, cz, cx, roofY + 6, cz, Blocks.IRON_BARS.defaultBlockState());
-      BuildUtil.setBlock(level, cx, roofY + 7, cz, Blocks.REDSTONE_LAMP.defaultBlockState());
-   }
-
-   private static void buildPyramid(BlockCanvas level, int x, int y, int z, int width, int depth, int floors, int fh) {
-      BlockState glass = Blocks.LIGHT_BLUE_STAINED_GLASS.defaultBlockState();
-      BlockState dark = Blocks.POLISHED_BLACKSTONE.defaultBlockState();
-      BlockState slab = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
-      BlockState frame = Blocks.SMOOTH_STONE.defaultBlockState();
-      BlockState light = Blocks.GLOWSTONE.defaultBlockState();
-      int totalH = floors * fh + 8;
-      BuildUtil.fill(level, x - 1, y + 1, z - 1, x + width, y + totalH, z + depth, BuildUtil.air());
-      BuildUtil.fill(level, x, y, z, x + width - 1, y, z + depth - 1, frame);
-      int stages = 4;
-      int perStage = Math.max(2, floors / stages);
-
-      for (int f = 0; f < floors; f++) {
-         int stage = Math.min(stages - 1, f / perStage);
-         int x1 = x + stage;
-         int x2 = x + width - 1 - stage;
-         int z1 = z + stage;
-         int z2 = z + depth - 1 - stage;
-         if (x2 - x1 < 5 || z2 - z1 < 5) {
-            x2 = x1 + 5;
-            z2 = z1 + 5;
-         }
-
-         int fy = y + 1 + f * fh;
-         int top = fy + fh - 1;
-         BuildUtil.fill(level, x1, fy, z1, x2, fy, z2, slab);
-         BuildUtil.fill(level, x1, fy, z1, x1, top, z1, dark);
-         BuildUtil.fill(level, x2, fy, z1, x2, top, z1, dark);
-         BuildUtil.fill(level, x1, fy, z2, x1, top, z2, dark);
-         BuildUtil.fill(level, x2, fy, z2, x2, top, z2, dark);
-
-         for (int yy = fy + 1; yy < top; yy++) {
-            for (int xx = x1 + 1; xx <= x2 - 1; xx++) {
-               BuildUtil.setBlock(level, xx, yy, z1, glass);
-               BuildUtil.setBlock(level, xx, yy, z2, glass);
-            }
-
-            for (int zz = z1 + 1; zz <= z2 - 1; zz++) {
-               BuildUtil.setBlock(level, x1, yy, zz, glass);
-               BuildUtil.setBlock(level, x2, yy, zz, glass);
-            }
-         }
-
-         if (f > 0 && f % perStage == 0) {
-            BuildUtil.hollowBox(level, x1 - 1, fy - 1, z1 - 1, x2 + 1, fy - 1, z2 + 1, frame);
-         }
-
-         int cx = x + (width - 1) / 2;
-         int cz = z + (depth - 1) / 2;
-         if (cx >= x1 + 1 && cx <= x2 - 1 && cz >= z1 + 1 && cz <= z2 - 1) {
-            Facilities.elevatorShaftStop(level, cx, fy, cz, top);
-         }
-
-         for (int xx = x1 + 2; xx <= x2 - 2; xx += 3) {
-            for (int zz = z1 + 2; zz <= z2 - 2; zz += 3) {
-               BuildUtil.setBlock(level, xx, top - 1, zz, light);
-            }
-         }
-      }
-
-      int topY = y + 1 + floors * fh;
-      int tcx = x + width / 2;
-      int tcz = z + depth / 2;
-      BuildUtil.fill(level, tcx, topY, tcz, tcx, topY + 6, tcz, Blocks.IRON_BARS.defaultBlockState());
-      BuildUtil.setBlock(level, tcx, topY + 7, tcz, Blocks.REDSTONE_LAMP.defaultBlockState());
-      BuildUtil.fill(level, tcx - 1, y + 1, z, tcx + 1, y + 3, z, BuildUtil.air());
-   }
-
-   private static void buildResidential(BlockCanvas level, int x, int y, int z, int width, int depth, int floors, int fh) {
-      BlockState wall = Blocks.WHITE_CONCRETE.defaultBlockState();
-      BlockState glass = Blocks.GLASS.defaultBlockState();
-      BlockState balcony = Blocks.IRON_BARS.defaultBlockState();
-      BlockState slab = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
-      BlockState floorMat = Blocks.OAK_PLANKS.defaultBlockState();
-      BlockState partition = Blocks.WHITE_TERRACOTTA.defaultBlockState();
-      BlockState light = Blocks.GLOWSTONE.defaultBlockState();
-      int x2 = x + width - 1;
-      int z2 = z + depth - 1;
-      int totalH = floors * fh + 5;
-      BuildUtil.fill(level, x - 2, y + 1, z - 2, x2 + 2, y + totalH, z2 + 2, BuildUtil.air());
-      BuildUtil.fill(level, x, y, z, x2, y, z2, slab);
-
-      for (int f = 0; f < floors; f++) {
-         int fy = y + 1 + f * fh;
-         int top = fy + fh - 1;
-         BuildUtil.fill(level, x, fy, z, x2, fy, z2, slab);
-         BuildUtil.fill(level, x + 1, fy, z + 1, x2 - 1, fy, z2 - 1, floorMat);
-
-         for (int xx = x; xx <= x2; xx++) {
-            for (int yy = fy + 1; yy <= top; yy++) {
-               boolean pillar = xx == x || xx == x2 || (xx - x) % 4 == 0;
-               BlockState s = pillar ? wall : (yy - fy >= 2 ? glass : wall);
-               BuildUtil.setBlock(level, xx, yy, z, s);
-               BuildUtil.setBlock(level, xx, yy, z2, s);
-            }
-         }
-
-         for (int zz = z; zz <= z2; zz++) {
-            for (int yy = fy + 1; yy <= top; yy++) {
-               boolean pillar = zz == z || zz == z2 || (zz - z) % 4 == 0;
-               BlockState s = pillar ? wall : (yy - fy >= 2 ? glass : wall);
-               BuildUtil.setBlock(level, x, yy, zz, s);
-               BuildUtil.setBlock(level, x2, yy, zz, s);
-            }
-         }
-
-         for (int xx = x + 1; xx <= x2 - 1; xx++) {
-            BuildUtil.setBlock(level, xx, fy, z - 1, slab);
-            BuildUtil.setBlock(level, xx, fy + 1, z - 1, balcony);
-         }
-
-         BuildUtil.setBlock(level, x, fy, z - 1, slab);
-         BuildUtil.setBlock(level, x, fy + 1, z - 1, balcony);
-         BuildUtil.setBlock(level, x2, fy, z - 1, slab);
-         BuildUtil.setBlock(level, x2, fy + 1, z - 1, balcony);
-         int sep = Math.max(4, width / 4);
-         // Apartments along the front, a corridor along the back wall.
-         int corridorZ = z2 - 3;
-
-         for (int sx = x + sep; sx < x2; sx += sep) {
-            BuildUtil.fill(level, sx, fy + 1, z + 1, sx, top - 1, corridorZ, partition);
-         }
-
-         BuildUtil.fill(level, x + 1, fy + 1, corridorZ, x2 - 1, top - 1, corridorZ, partition);
-
-         for (int sx = x + 1; sx + sep - 2 <= x2 - 1; sx += sep) {
-            int rx = sx + 1;
-            int rz = z + 2;
-            if (rz + 1 < corridorZ) {
-               BuildUtil.bed(level, rx, fy + 1, rz + 1, Blocks.RED_BED, Direction.NORTH);
-            }
-            int doorX = Math.min(sx + sep / 2, x2 - 1);
-            if (doorX != sx + sep && level.get(doorX, fy + 1, corridorZ).is(partition.getBlock())) {
-               BuildUtil.door(level, doorX, fy + 1, corridorZ, Blocks.OAK_DOOR, Direction.SOUTH);
-            }
-         }
-
-         Facilities.elevatorShaftStop(level, (x + x2) / 2, fy, z2 - 2, top);
-
-         int cz = (z + z2) / 2;
-
-         for (int xx = x + 1; xx <= x2 - 1; xx += 3) {
-            BuildUtil.setBlock(level, xx, top - 1, cz, light);
-         }
-      }
-
-      int cx = (x + x2) / 2;
-      BuildUtil.fill(level, cx - 1, y + 1, z, cx + 1, y + 3, z, BuildUtil.air());
-      // Lobby passage from the entrance through the apartments to the corridor and elevator.
-      BuildUtil.fill(level, cx - 1, y + 2, z + 1, cx + 1, y + 3, z2 - 2, BuildUtil.air());
-      BuildUtil.fill(level, cx - 1, y + 1, z + 1, cx + 1, y + 1, z2 - 2, floorMat);
-      BuildUtil.setBlock(level, cx, y + 1, z2 - 2, com.example.citybuilder.blocks.ModBlocks.ELEVATOR.get().defaultBlockState());
-      BuildUtil.ladder(level, x2 - 1, z2 - 1, y + 2, y + floors * fh, Direction.WEST);
-      int roofY = y + 1 + floors * fh;
-      BuildUtil.fill(level, x, roofY, z, x2, roofY, z2, slab);
-      BuildUtil.hollowBox(level, x + 2, roofY + 1, z + 2, x + 5, roofY + 4, z + 5, Blocks.CYAN_TERRACOTTA.defaultBlockState());
-      BuildUtil.setBlock(level, x2, roofY + 2, z2, Blocks.SEA_LANTERN.defaultBlockState());
-      BuildUtil.setBlock(level, x, roofY + 2, z2, Blocks.SEA_LANTERN.defaultBlockState());
-      BuildUtil.setBlock(level, x2, roofY + 2, z, Blocks.SEA_LANTERN.defaultBlockState());
-   }
-
-   private static void buildHotel(BlockCanvas level, int x, int y, int z, int width, int depth, int floors, int fh) {
-      BlockState podium = Blocks.SMOOTH_SANDSTONE.defaultBlockState();
-      BlockState wall = Blocks.QUARTZ_BLOCK.defaultBlockState();
-      BlockState glass = Blocks.GLASS.defaultBlockState();
-      BlockState dark = Blocks.DEEPSLATE_TILES.defaultBlockState();
-      BlockState slab = Blocks.SMOOTH_QUARTZ.defaultBlockState();
-      BlockState carpet = Blocks.RED_WOOL.defaultBlockState();
-      BlockState floorMat = Blocks.POLISHED_DIORITE.defaultBlockState();
-      BlockState light = Blocks.GLOWSTONE.defaultBlockState();
-      int x2 = x + width - 1;
-      int z2 = z + depth - 1;
-      int totalH = floors * fh + 10;
-      BuildUtil.fill(level, x - 2, y + 1, z - 2, x2 + 2, y + totalH, z2 + 2, BuildUtil.air());
-      int podiumH = 3 * fh;
-      BuildUtil.fill(level, x - 2, y, z - 2, x2 + 2, y, z2 + 2, podium);
-      BuildUtil.hollowBox(level, x - 2, y + 1, z - 2, x2 + 2, y + podiumH, z2 + 2, podium);
-
-      for (int xx = x - 1; xx <= x2 + 1; xx++) {
-         for (int yy = y + 2; yy <= y + podiumH - 1; yy++) {
-            BuildUtil.setBlock(level, xx, yy, z - 2, glass);
-         }
-      }
-
-      BuildUtil.fill(level, x - 2, y + podiumH + 1, z - 2, x2 + 2, y + podiumH + 1, z2 + 2, slab);
-      int cx = (x + x2) / 2;
-
-      for (int dx = -3; dx <= 3; dx++) {
-         BuildUtil.setBlock(level, cx + dx, y + podiumH + 2, z - 3, dark);
-         BuildUtil.setBlock(level, cx + dx, y + podiumH + 2, z - 4, dark);
-      }
-
-      BuildUtil.fill(level, cx - 2, y + 1, z - 2, cx + 2, y + 4, z - 2, BuildUtil.air());
-      BuildUtil.fill(level, x, y + 1, z, x2, y + 1, z2, floorMat);
-      BuildUtil.fill(level, x + 2, y + 1, z + 2, x2 - 2, y + 1, z2 - 2, carpet);
-      BuildUtil.fill(level, cx - 3, y + 1, z2 - 2, cx + 3, y + 1, z2 - 2, dark);
-      BuildUtil.fill(level, cx - 3, y + 2, z2 - 2, cx + 3, y + 2, z2 - 2, Blocks.SMOOTH_QUARTZ_SLAB.defaultBlockState());
-      BuildUtil.setBlock(level, cx, y + fh - 1, (z + z2) / 2, Blocks.CHAIN.defaultBlockState());
-      BuildUtil.setBlock(level, cx, y + fh - 2, (z + z2) / 2, Blocks.SEA_LANTERN.defaultBlockState());
-      int tx1 = x + 2;
-      int tx2 = x2 - 2;
-      int tz1 = z + 2;
-      int tz2 = z2 - 2;
-      int towerFloors = floors - 3;
-
-      for (int f = 0; f < towerFloors; f++) {
-         int fy = y + podiumH + 2 + f * fh;
-         int top = fy + fh - 1;
-         BuildUtil.fill(level, tx1, fy, tz1, tx2, fy, tz2, slab);
-         BuildUtil.fill(level, tx1 + 1, fy, tz1 + 1, tx2 - 1, fy, tz2 - 1, carpet);
-
-         for (int yy = fy + 1; yy <= top; yy++) {
-            for (int xx = tx1; xx <= tx2; xx++) {
-               boolean rib = (xx - tx1) % 2 == 0;
-               BlockState s = rib ? wall : glass;
-               BuildUtil.setBlock(level, xx, yy, tz1, s);
-               BuildUtil.setBlock(level, xx, yy, tz2, s);
-            }
-
-            for (int zz = tz1; zz <= tz2; zz++) {
-               boolean rib = (zz - tz1) % 2 == 0;
-               BlockState s = rib ? wall : glass;
-               BuildUtil.setBlock(level, tx1, yy, zz, s);
-               BuildUtil.setBlock(level, tx2, yy, zz, s);
-            }
-         }
-
-         int cxT = (tx1 + tx2) / 2;
-
-         for (int zz = tz1 + 3; zz <= tz2 - 1; zz += 3) {
-            BuildUtil.fill(level, tx1 + 1, fy + 1, zz, tx2 - 1, top - 1, zz, Blocks.QUARTZ_BLOCK.defaultBlockState());
-         }
-
-         // Central corridor with a door into every room on both sides.
-         BuildUtil.fill(level, cxT - 1, fy + 1, tz1 + 1, cxT + 1, top - 1, tz2 - 1, Blocks.QUARTZ_BLOCK.defaultBlockState());
-         BuildUtil.fill(level, cxT, fy + 1, tz1 + 1, cxT, top - 1, tz2 - 1, BuildUtil.air());
-
-         for (int zz = tz1 + 1; zz + 1 <= tz2 - 1; zz += 3) {
-            if (cxT - 1 > tx1 + 1) {
-               BuildUtil.door(level, cxT - 1, fy + 1, zz + 1, Blocks.DARK_OAK_DOOR, Direction.EAST);
-               if (tx1 + 2 < cxT - 2) {
-                  BuildUtil.bed(level, tx1 + 2, fy + 1, zz + 1, Blocks.WHITE_BED, Direction.WEST);
-               }
-            }
-            if (cxT + 1 < tx2 - 1) {
-               BuildUtil.door(level, cxT + 1, fy + 1, zz + 1, Blocks.DARK_OAK_DOOR, Direction.WEST);
-               if (tx2 - 2 > cxT + 2) {
-                  BuildUtil.bed(level, tx2 - 2, fy + 1, zz + 1, Blocks.WHITE_BED, Direction.EAST);
+      Block[] carpets = {Blocks.BLUE_WOOL, Blocks.RED_WOOL, Blocks.YELLOW_WOOL, Blocks.GREEN_WOOL};
+      for (int fl = 1; fl < f; fl++) {
+         int fy = lobbyH + (fl - 1) * fh;
+         int inset = setback(fl, f);
+         for (int i = inset + 1; i < w - 1 - inset; i++) {
+            for (int j = inset + 1; j < d - 1 - inset; j++) {
+               if (p.get(i, fy, j).is(Blocks.WHITE_WOOL)) {
+                  p.set(i, fy, j, s(carpets[Math.floorMod(i / 3 + j / 3 + fl, carpets.length)]));
                }
             }
          }
-
-         Facilities.elevatorShaftStop(level, cxT, fy, tz1 + 1, top);
-
-         for (int zzx = tz1 + 1; zzx <= tz2 - 1; zzx += 3) {
-            BuildUtil.setBlock(level, cxT, top - 1, zzx, light);
+         // Glass meeting box in one corner.
+         int mi = inset + 2;
+         int mj = inset + 2;
+         if (w - 2 * inset > 10) {
+            p.walls(mi, fy + 1, mj, mi + 3, fy + 3, mj + 3, s(Blocks.WHITE_STAINED_GLASS));
+            p.clear(mi + 1, fy + 1, mj + 3, mi + 1, fy + 2, mj + 3);
+            p.set(mi + 1, fy + 1, mj + 1, s(Blocks.OAK_PLANKS));
+            p.set(mi + 2, fy + 1, mj + 1, s(Blocks.OAK_PLANKS));
          }
       }
-
-      int roofY = y + podiumH + 2 + towerFloors * fh;
-      // Lobby elevator that takes guests up into the tower.
-      BuildUtil.setBlock(level, cx, y + 1, tz1 + 1, com.example.citybuilder.blocks.ModBlocks.ELEVATOR.get().defaultBlockState());
-      BuildUtil.fill(level, cx, y + podiumH, tz1 + 1, cx, y + podiumH + 1, tz1 + 1, BuildUtil.air());
-      BuildUtil.fill(level, tx1, roofY, tz1, tx2, roofY, tz2, slab);
-      BuildUtil.hollowBox(level, tx1, roofY + 1, tz1, tx2, roofY + 1, tz2, Blocks.IRON_BARS.defaultBlockState());
-      BuildUtil.fill(level, tx1 + 2, roofY + 1, tz1 + 2, tx2 - 2, roofY + 1, tz1 + 2, Blocks.DARK_OAK_PLANKS.defaultBlockState());
-      BuildUtil.setBlock(level, (tx1 + tx2) / 2, roofY + 2, tz1 + 2, Blocks.BREWING_STAND.defaultBlockState());
-      BuildUtil.setBlock(level, tx1, roofY + 3, tz1, Blocks.REDSTONE_LAMP.defaultBlockState());
-      BuildUtil.setBlock(level, tx2, roofY + 3, tz1, Blocks.REDSTONE_LAMP.defaultBlockState());
-      BuildUtil.setBlock(level, tx1, roofY + 3, tz2, Blocks.REDSTONE_LAMP.defaultBlockState());
-      BuildUtil.setBlock(level, tx2, roofY + 3, tz2, Blocks.REDSTONE_LAMP.defaultBlockState());
+      for (int fl = 1; fl < f; fl += 3) {
+         int fy = lobbyH + (fl - 1) * fh;
+         int inset = setback(fl, f);
+         for (int h = 1; h < fh; h++) {
+            p.set(inset + 1, fy + h, inset - 0, s(colours[fl % colours.length]));
+         }
+      }
    }
 
-   private static void buildGoogle(BlockCanvas level, int x, int y, int z, int width, int depth, int floors, int floorHeight) {
-      BlockState frame = Blocks.SMOOTH_STONE.defaultBlockState();
-      BlockState slabBlock = Blocks.WHITE_CONCRETE.defaultBlockState();
-      BlockState glass = Blocks.GLASS.defaultBlockState();
-      BlockState darkGlass = Blocks.TINTED_GLASS.defaultBlockState();
-      BlockState fin = Blocks.WHITE_CONCRETE.defaultBlockState();
-      BlockState pillar = Blocks.QUARTZ_PILLAR.defaultBlockState();
-      BlockState podiumWall = Blocks.WHITE_CONCRETE.defaultBlockState();
-      BlockState lamp = Blocks.SEA_LANTERN.defaultBlockState();
-      BlockState light = Blocks.SEA_LANTERN.defaultBlockState();
-      BlockState roof = Blocks.WHITE_CONCRETE.defaultBlockState();
-      BlockState crown = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
-      BlockState floorMat = Blocks.POLISHED_DIORITE.defaultBlockState();
-      BlockState gBlue = Blocks.BLUE_WOOL.defaultBlockState();
-      BlockState gRed = Blocks.RED_WOOL.defaultBlockState();
-      BlockState gYellow = Blocks.YELLOW_WOOL.defaultBlockState();
-      BlockState gGreen = Blocks.GREEN_WOOL.defaultBlockState();
-      BlockState[] gColors = new BlockState[]{gBlue, gRed, gYellow, gBlue, gGreen, gRed};
-      BlockState partition = Blocks.WHITE_STAINED_GLASS.defaultBlockState();
-      int podiumFloors = Math.max(2, floors / 6);
-      int midSetback = Math.max(podiumFloors + 2, floors / 3);
-      int highSetback = Math.max(midSetback + 2, floors * 2 / 3);
-      int totalHeight = 1 + floors * floorHeight + 6;
-      BuildUtil.fill(level, x - 2, y + 1, z - 2, x + width + 1, y + totalHeight, z + depth + 1, BuildUtil.air());
-      int pX1 = x - 2;
-      int pZ1 = z - 2;
-      int pX2 = x + width + 1;
-      int pZ2 = z + depth + 1;
-      int podiumTopY = y + podiumFloors * floorHeight;
-      buildPodium(level, pX1, y, pZ1, pX2, podiumTopY, pZ2, podiumWall, glass, pillar, slabBlock, floorMat, light);
-      buildGoogleLobby(level, pX1, y, pZ1, pX2, pZ2, gColors);
-      int t1x1 = x;
-      int t1z1 = z;
-      int t1x2 = x + width - 1;
-      int t1z2 = z + depth - 1;
-      int t2x1 = x + 1;
-      int t2z1 = z + 1;
-      int t2x2 = x + width - 2;
-      int t2z2 = z + depth - 2;
-      int t3x1 = x + 2;
-      int t3z1 = z + 2;
-      int t3x2 = x + width - 3;
-      int t3z2 = z + depth - 3;
-
-      for (int f = podiumFloors; f < floors; f++) {
-         int fy = y + 1 + f * floorHeight;
-         int top = fy + floorHeight - 1;
-         int ax1;
-         int az1;
-         int ax2;
-         int az2;
-         if (f < midSetback) {
-            ax1 = t1x1;
-            az1 = t1z1;
-            ax2 = t1x2;
-            az2 = t1z2;
-         } else if (f < highSetback) {
-            ax1 = t2x1;
-            az1 = t2z1;
-            ax2 = t2x2;
-            az2 = t2z2;
-         } else {
-            ax1 = t3x1;
-            az1 = t3z1;
-            ax2 = t3x2;
-            az2 = t3z2;
-         }
-
-         buildGoogleFloor(level, ax1, fy, az1, ax2, top, az2, slabBlock, glass, fin, pillar, light, floorMat, partition, frame, f, gColors);
-         if (f == midSetback) {
-            buildTerrace(level, t1x1, fy, t1z1, t1x2, t1z2, ax1, az1, ax2, az2);
-         } else if (f == highSetback) {
-            buildTerrace(level, t2x1, fy, t2z1, t2x2, t2z2, ax1, az1, ax2, az2);
-         }
-      }
-
-      int crownBaseY = y + 1 + floors * floorHeight;
-      buildCrown(level, t3x1, crownBaseY, t3z1, t3x2, t3z2, crown, darkGlass, lamp, frame, roof);
-      int entranceX = (pX1 + pX2) / 2;
-      Facilities.towerCore(level, x, y, z, width, depth, podiumTopY, crownBaseY);
-
-      for (int dx = -2; dx <= 2; dx++) {
-         for (int yy = y + 1; yy <= y + 4; yy++) {
-            BuildUtil.setBlock(level, entranceX + dx, yy, pZ1, BuildUtil.air());
-         }
-      }
-
-      for (int dx = -4; dx <= 4; dx++) {
-         BuildUtil.setBlock(level, entranceX + dx, y + 5, pZ1, frame);
-         BuildUtil.setBlock(level, entranceX + dx, y + 5, pZ1 - 1, frame);
-      }
-
-      int signY = y + 6;
-      BuildUtil.setBlock(level, entranceX - 4, signY, pZ1 - 1, gBlue);
-      BuildUtil.setBlock(level, entranceX - 3, signY, pZ1 - 1, gRed);
-      BuildUtil.setBlock(level, entranceX - 2, signY, pZ1 - 1, gYellow);
-      BuildUtil.setBlock(level, entranceX - 1, signY, pZ1 - 1, gBlue);
-      BuildUtil.setBlock(level, entranceX, signY, pZ1 - 1, gGreen);
-      BuildUtil.setBlock(level, entranceX + 1, signY, pZ1 - 1, gRed);
-
-      for (int dx = -4; dx <= 1; dx++) {
-         BuildUtil.setBlock(level, entranceX + dx, signY - 1, pZ1 - 1, Blocks.GLOWSTONE.defaultBlockState());
-      }
-
-      BuildUtil.fill(level, entranceX - 2, y + 1, pZ1 + 6, entranceX + 2, y + 1, pZ1 + 6, Blocks.WHITE_CONCRETE.defaultBlockState());
-      BuildUtil.fill(level, entranceX - 2, y + 2, pZ1 + 6, entranceX + 2, y + 2, pZ1 + 6, Blocks.SMOOTH_QUARTZ_SLAB.defaultBlockState());
-      BuildUtil.setBlock(level, entranceX, y + 3, pZ1 + 6, darkGlass);
+   /** 0 for the lower third, 1 for the middle third, 2 for the top third. */
+   private static int setback(int floor, int floors) {
+      return floor * 3 / Math.max(1, floors);
    }
 
-   private static void buildGoogleLobby(BlockCanvas level, int pX1, int y, int pZ1, int pX2, int pZ2, BlockState[] gColors) {
-      for (int xx = pX1 + 1; xx <= pX2 - 1; xx++) {
-         for (int zz = pZ1 + 1; zz <= pZ2 - 1; zz++) {
-            int idx = Math.floorMod(xx + zz * 3, gColors.length);
-            BuildUtil.setBlock(level, xx, y, zz, gColors[idx]);
+   private static void officeTower(Plot p, int w, int d, int f, int fh, BlockState glass, BlockState spandrel, BlockState fin,
+                                   Block desk, Block carpet, boolean spire) {
+      int lobbyH = Math.max(fh, 5);
+      int ci = (w - 1) / 2;
+      int cj = (d - 1) / 2;
+      Skin skin = (u, h, hgt, floor) -> {
+         if (u % 3 == 0) {
+            return fin;
          }
+         return h == 1 ? spandrel : glass;
+      };
+      // Podium lobby.
+      storey(p, 0, 0, w - 1, d - 1, 0, lobbyH, s(Blocks.POLISHED_DIORITE), (u, h, hgt, fl) -> u % 4 == 0 ? fin : s(Blocks.GLASS), 0);
+      lobby(p, 0, 0, w - 1, d - 1, lobbyH, fin, slab(Blocks.SMOOTH_STONE_SLAB));
+      int lastInset = 0;
+      for (int fl = 1; fl < f; fl++) {
+         int fy = lobbyH + (fl - 1) * fh;
+         int inset = setback(fl, f);
+         if (inset != lastInset) {
+            terrace(p, lastInset, lastInset, w - 1 - lastInset, d - 1 - lastInset, fy, inset, inset, w - 1 - inset, d - 1 - inset);
+            lastInset = inset;
+         }
+         storey(p, inset, inset, w - 1 - inset, d - 1 - inset, fy, fh, s(Blocks.LIGHT_GRAY_CONCRETE), skin, fl);
+         offices(p, inset, inset, w - 1 - inset, d - 1 - inset, fy, ci, cj, desk, carpet);
+         lights(p, inset, inset, w - 1 - inset, d - 1 - inset, fy + fh, ci, cj);
       }
-
-      BlockState sofa = Blocks.RED_WOOL.defaultBlockState();
-      BuildUtil.setBlock(level, pX1 + 2, y + 1, pZ1 + 3, sofa);
-      BuildUtil.setBlock(level, pX1 + 3, y + 1, pZ1 + 3, sofa);
-      BuildUtil.setBlock(level, pX2 - 2, y + 1, pZ1 + 3, Blocks.BLUE_WOOL.defaultBlockState());
-      BuildUtil.setBlock(level, pX2 - 3, y + 1, pZ1 + 3, Blocks.BLUE_WOOL.defaultBlockState());
-      BuildUtil.setBlock(level, pX1 + 2, y + 1, pZ2 - 3, Blocks.YELLOW_WOOL.defaultBlockState());
-      BuildUtil.setBlock(level, pX1 + 3, y + 1, pZ2 - 3, Blocks.YELLOW_WOOL.defaultBlockState());
-      BuildUtil.setBlock(level, pX2 - 2, y + 1, pZ2 - 3, Blocks.GREEN_WOOL.defaultBlockState());
-      BuildUtil.setBlock(level, pX2 - 3, y + 1, pZ2 - 3, Blocks.GREEN_WOOL.defaultBlockState());
-      int cxL = (pX1 + pX2) / 2;
-      int czL = (pZ1 + pZ2) / 2;
-      BuildUtil.setBlock(level, cxL, y + 1, czL, Blocks.FLOWER_POT.defaultBlockState());
-      BuildUtil.fill(level, pX1 + 2, y + 1, pZ2 - 4, pX1 + 3, y + 1, pZ2 - 4, Blocks.OAK_PLANKS.defaultBlockState());
-      BuildUtil.setBlock(level, pX1 + 2, y + 2, pZ2 - 4, Blocks.CAKE.defaultBlockState());
-      BuildUtil.setBlock(level, pX1 + 3, y + 2, pZ2 - 4, Blocks.BREWING_STAND.defaultBlockState());
+      int roofY = lobbyH + (f - 1) * fh;
+      int inset = lastInset;
+      crown(p, inset, inset, w - 1 - inset, d - 1 - inset, roofY, s(Blocks.GRAY_CONCRETE), s(Blocks.IRON_BARS), !spire, spire ? 12 : 4);
+      core(p, ci, cj, 0, fh, lobbyH, roofY, w - 3 - inset, d - 2 - inset);
+      Facilities.elevatorHall(p.l, p.x + ci, p.y, p.z + cj, p.y + 3);
+      for (int fl = 1; fl < f; fl++) {
+         int fy = lobbyH + (fl - 1) * fh;
+         Facilities.elevatorHall(p.l, p.x + ci, p.y + fy, p.z + cj, p.y + fy + fh);
+      }
    }
 
-   private static void buildGoogleFloor(
-      BlockCanvas level,
-      int x1,
-      int fy,
-      int z1,
-      int x2,
-      int topY,
-      int z2,
-      BlockState slab,
-      BlockState glass,
-      BlockState fin,
-      BlockState pillar,
-      BlockState light,
-      BlockState floorMat,
-      BlockState partition,
-      BlockState frame,
-      int floorIndex,
-      BlockState[] gColors
-   ) {
-      BuildUtil.fill(level, x1, fy, z1, x2, fy, z2, floorMat);
+   // ------------------------------------------------------------------ twin towers with a sky bridge
 
-      for (int xx = x1 + 1; xx <= x2 - 1; xx++) {
-         for (int zz = z1 + 1; zz <= z2 - 1; zz++) {
-            int px = Math.floorDiv(xx - x1, 3);
-            int pz = Math.floorDiv(zz - z1, 3);
-            int idx = Math.floorMod(px + pz + floorIndex, gColors.length);
-            BuildUtil.setBlock(level, xx, fy, zz, gColors[idx]);
+   private static void twin(Plot p, int w, int d, int f, int fh) {
+      int tw = Math.max(7, (w - 3) / 2);
+      int gap = Math.max(3, w - 2 * tw);
+      int bx = tw + gap;
+      int lobbyH = Math.max(fh, 5);
+      BlockState glass = s(Blocks.GRAY_STAINED_GLASS);
+      BlockState frame = s(Blocks.BLACK_CONCRETE);
+      BlockState steel = s(Blocks.POLISHED_DEEPSLATE);
+      // Shared podium.
+      storey(p, 0, 0, bx + tw - 1, d - 1, 0, lobbyH, s(Blocks.POLISHED_DIORITE), (u, h, hgt, fl) -> u % 4 == 0 ? steel : s(Blocks.GLASS), 0);
+      lobby(p, 0, 0, bx + tw - 1, d - 1, lobbyH, steel, slab(Blocks.POLISHED_DEEPSLATE_SLAB));
+      p.fill(0, lobbyH, 0, bx + tw - 1, lobbyH, d - 1, s(Blocks.SMOOTH_STONE));
+      Skin skin = (u, h, hgt, floor) -> u % 2 == 0 ? frame : (h == 1 ? steel : glass);
+      int bridge = Math.max(2, f * 2 / 3);
+      for (int t = 0; t < 2; t++) {
+         int ox = t == 0 ? 0 : bx;
+         int ci = ox + (tw - 1) / 2;
+         int cj = (d - 1) / 2;
+         for (int fl = 1; fl < f; fl++) {
+            int fy = lobbyH + (fl - 1) * fh;
+            storey(p, ox, 0, ox + tw - 1, d - 1, fy, fh, s(Blocks.LIGHT_GRAY_CONCRETE), skin, fl);
+            offices(p, ox, 0, ox + tw - 1, d - 1, fy, ci, cj, Blocks.DARK_OAK_STAIRS, Blocks.GRAY_WOOL);
+            lights(p, ox, 0, ox + tw - 1, d - 1, fy + fh, ci, cj);
+            Facilities.elevatorHall(p.l, p.x + ci, p.y + fy, p.z + cj, p.y + fy + fh);
          }
+         int roofY = lobbyH + (f - 1) * fh;
+         // Tapered crown and a needle on each tower.
+         p.fill(ox, roofY, 0, ox + tw - 1, roofY, d - 1, frame);
+         p.hip(ox + 1, 1, ox + tw - 2, d - 2, roofY + 1, Blocks.POLISHED_DEEPSLATE_STAIRS, s(Blocks.POLISHED_DEEPSLATE), 0);
+         p.fill(ci, roofY + 1, cj, ci, roofY + 14, cj, s(Blocks.IRON_BARS));
+         p.set(ci, roofY + 15, cj, s(Blocks.REDSTONE_LAMP));
+         Facilities.elevatorHall(p.l, p.x + ci, p.y, p.z + cj, p.y + 3);
+         p.ladder(ox + tw - 2, d - 2, lobbyH + 1, roofY - 1, Direction.NORTH);
       }
-
-      BuildUtil.fill(level, x1, fy, z1, x1, topY, z1, pillar);
-      BuildUtil.fill(level, x2, fy, z1, x2, topY, z1, pillar);
-      BuildUtil.fill(level, x1, fy, z2, x1, topY, z2, pillar);
-      BuildUtil.fill(level, x2, fy, z2, x2, topY, z2, pillar);
-
-      for (int yy = fy + 1; yy < topY; yy++) {
-         for (int xx = x1 + 1; xx <= x2 - 1; xx++) {
-            boolean isFin = (xx - x1) % 4 == 0;
-            BlockState s = isFin ? fin : glass;
-            BuildUtil.setBlock(level, xx, yy, z1, s);
-            BuildUtil.setBlock(level, xx, yy, z2, s);
+      // Two-storey sky bridge.
+      int by = lobbyH + (bridge - 1) * fh;
+      int bj1 = Math.max(1, d / 2 - 2);
+      int bj2 = Math.min(d - 2, d / 2 + 2);
+      p.fill(tw, by, bj1, bx - 1, by, bj2, s(Blocks.LIGHT_GRAY_CONCRETE));
+      p.fill(tw, by + fh, bj1, bx - 1, by + fh, bj2, steel);
+      for (int i = tw; i < bx; i++) {
+         for (int h = 1; h < fh; h++) {
+            p.set(i, by + h, bj1, glass);
+            p.set(i, by + h, bj2, glass);
          }
-
-         for (int zz = z1 + 1; zz <= z2 - 1; zz++) {
-            boolean isFin = (zz - z1) % 4 == 0;
-            BlockState s = isFin ? fin : glass;
-            BuildUtil.setBlock(level, x1, yy, zz, s);
-            BuildUtil.setBlock(level, x2, yy, zz, s);
-         }
+         p.fill(i, by + 1, bj1 + 1, i, by + fh - 1, bj2 - 1, air());
       }
+      p.clear(tw - 1, by + 1, bj1 + 1, tw - 1, by + 2, bj2 - 1);
+      p.clear(bx, by + 1, bj1 + 1, bx, by + 2, bj2 - 1);
+      // Diagonal struts under the bridge.
+      for (int k = 1; k <= Math.min(gap / 2, 3); k++) {
+         p.set(tw - 1 + k, by - k, bj1, frame);
+         p.set(bx - k, by - k, bj1, frame);
+         p.set(tw - 1 + k, by - k, bj2, frame);
+         p.set(bx - k, by - k, bj2, frame);
+      }
+   }
 
-      BuildUtil.hollowBox(level, x1, topY, z1, x2, topY, z2, frame);
-      int cx = (x1 + x2) / 2;
-      int cz = (z1 + z2) / 2;
-      Facilities.elevatorHall(level, cx, fy, cz, topY);
+   // ------------------------------------------------------------------ pyramid: tapering spire tower
 
-      int mx1 = x1 + 2;
-      int mz1 = z1 + 2;
-      int mx2 = Math.min(x2 - 2, mx1 + 3);
-      int mz2 = Math.min(z2 - 2, mz1 + 3);
-      if (mx2 > mx1 + 1 && mz2 > mz1 + 1) {
-         for (int yy = fy + 1; yy <= fy + 3 && yy < topY; yy++) {
-            for (int xx = mx1; xx <= mx2; xx++) {
-               BuildUtil.setBlock(level, xx, yy, mz1, partition);
-               BuildUtil.setBlock(level, xx, yy, mz2, partition);
+   private static void pyramid(Plot p, int w, int d, int f, int fh) {
+      int lobbyH = Math.max(fh, 5);
+      BlockState white = s(Blocks.WHITE_CONCRETE);
+      BlockState glass = s(Blocks.LIGHT_BLUE_STAINED_GLASS);
+      int ci = (w - 1) / 2;
+      int cj = (d - 1) / 2;
+      int minHalf = 2;
+      storey(p, 0, 0, w - 1, d - 1, 0, lobbyH, s(Blocks.POLISHED_DIORITE), (u, h, hgt, fl) -> u % 3 == 0 ? white : s(Blocks.GLASS), 0);
+      lobby(p, 0, 0, w - 1, d - 1, lobbyH, white, slab(Blocks.QUARTZ_SLAB));
+      Skin skin = (u, h, hgt, floor) -> (u % 2 == 1 && h == 2) || (u % 2 == 1 && h > 1 && h < hgt - 1) ? glass : white;
+      int roofY = lobbyH;
+      int lastI = 0;
+      int lastJ = 0;
+      for (int fl = 1; fl < f; fl++) {
+         int fy = lobbyH + (fl - 1) * fh;
+         // Each face leans in steadily so the tower ends as a narrow point.
+         double t = (double) fl / f;
+         int insetI = (int) Math.round(t * (ci - minHalf));
+         int insetJ = (int) Math.round(t * (cj - minHalf));
+         int i1 = insetI;
+         int i2 = w - 1 - insetI;
+         int j1 = insetJ;
+         int j2 = d - 1 - insetJ;
+         if (insetI != lastI || insetJ != lastJ) {
+            // Fill the ledge left by the step with a sloped band.
+            for (int i = lastI; i <= w - 1 - lastI; i++) {
+               for (int j = lastJ; j <= d - 1 - lastJ; j++) {
+                  if (i < i1 || i > i2 || j < j1 || j > j2) {
+                     p.set(i, fy, j, white);
+                  }
+               }
             }
+            lastI = insetI;
+            lastJ = insetJ;
+         }
+         storey(p, i1, j1, i2, j2, fy, fh, s(Blocks.LIGHT_GRAY_CONCRETE), skin, fl);
+         if (i2 - i1 >= 6 && j2 - j1 >= 6) {
+            offices(p, i1, j1, i2, j2, fy, ci, cj, Blocks.BIRCH_STAIRS, Blocks.LIGHT_GRAY_WOOL);
+         }
+         lights(p, i1, j1, i2, j2, fy + fh, ci, cj);
+         Facilities.elevatorShaftStop(p.l, p.x + ci, p.y + fy, p.z + cj, p.y + fy + fh);
+         roofY = fy + fh;
+      }
+      Facilities.elevatorShaftStop(p.l, p.x + ci, p.y, p.z + cj, p.y + 3);
+      // Spire.
+      p.fill(lastI, roofY, lastJ, w - 1 - lastI, roofY, d - 1 - lastJ, white);
+      int top = p.hip(lastI, lastJ, w - 1 - lastI, d - 1 - lastJ, roofY + 1, Blocks.QUARTZ_STAIRS, s(Blocks.QUARTZ_BLOCK), 0);
+      p.fill(ci, top + 1, cj, ci, top + 10, cj, s(Blocks.IRON_BARS));
+      p.set(ci, top + 11, cj, s(Blocks.REDSTONE_LAMP));
+   }
 
-            for (int zz = mz1; zz <= mz2; zz++) {
-               BuildUtil.setBlock(level, mx1, yy, zz, partition);
-               BuildUtil.setBlock(level, mx2, yy, zz, partition);
+   // ------------------------------------------------------------------ residential tower (tower mansion)
+
+   private static void residential(Plot p, int w, int d, int f, int fh) {
+      int lobbyH = Math.max(fh, 5);
+      int ci = (w - 1) / 2;
+      int cj = (d - 1) / 2;
+      BlockState concrete = s(Blocks.WHITE_CONCRETE);
+      BlockState warm = s(Blocks.LIGHT_GRAY_CONCRETE);
+      storey(p, 0, 0, w - 1, d - 1, 0, lobbyH, s(Blocks.POLISHED_DIORITE), (u, h, hgt, fl) -> u % 4 == 0 ? warm : s(Blocks.GLASS), 0);
+      lobby(p, 0, 0, w - 1, d - 1, lobbyH, warm, slab(Blocks.SMOOTH_STONE_SLAB));
+      // The tower sits one block in from the podium so balconies can wrap round it.
+      int i1 = 1;
+      int j1 = 1;
+      int i2 = w - 2;
+      int j2 = d - 2;
+      Skin skin = (u, h, hgt, floor) -> {
+         if (u % 4 == 0) {
+            return concrete;
+         }
+         if (h == 1) {
+            return warm;
+         }
+         return (u + floor) % 7 == 0 ? s(Blocks.LIGHT_GRAY_STAINED_GLASS) : s(Blocks.GLASS);
+      };
+      int roofY = lobbyH;
+      for (int fl = 1; fl < f; fl++) {
+         int fy = lobbyH + (fl - 1) * fh;
+         storey(p, i1, j1, i2, j2, fy, fh, concrete, skin, fl);
+         // Continuous balconies with glass rails.
+         p.ring(0, fy, 0, w - 1, d - 1, concrete);
+         p.ring(0, fy + 1, 0, w - 1, d - 1, s(Blocks.WHITE_STAINED_GLASS_PANE));
+         // Flats: oak floors, partitions, beds, sofas, kitchens.
+         p.fill(i1 + 1, fy, j1 + 1, i2 - 1, fy, j2 - 1, s(Blocks.OAK_PLANKS));
+         for (int i = i1 + 5; i < i2; i += 5) {
+            p.fill(i, fy + 1, j1 + 1, i, fy + fh - 1, cj - 2, s(Blocks.WHITE_CONCRETE));
+            p.fill(i, fy + 1, cj + 2, i, fy + fh - 1, j2 - 1, s(Blocks.WHITE_CONCRETE));
+         }
+         for (int i = i1 + 2; i < i2 - 1; i += 5) {
+            p.bed(i, fy + 1, j1 + 2, Blocks.LIGHT_GRAY_BED, Direction.NORTH);
+            p.set(i + 1, fy + 1, j2 - 1, stairs(Blocks.BIRCH_STAIRS, Direction.SOUTH));
+            p.set(i + 2, fy + 1, j2 - 1, s(Blocks.SMOKER).setValue(net.minecraft.world.level.block.AbstractFurnaceBlock.FACING, Direction.NORTH));
+         }
+         lights(p, i1, j1, i2, j2, fy + fh, ci, cj);
+         Facilities.elevatorHall(p.l, p.x + ci, p.y + fy, p.z + cj, p.y + fy + fh);
+         roofY = fy + fh;
+      }
+      Facilities.elevatorHall(p.l, p.x + ci, p.y, p.z + cj, p.y + 3);
+      crown(p, i1, j1, i2, j2, roofY, concrete, s(Blocks.IRON_BARS), true, 6);
+      Facilities.elevatorHall(p.l, p.x + ci, p.y + roofY, p.z + cj, p.y + roofY + 3);
+      p.ladder(i2 - 1, j2 - 1, lobbyH + 1, roofY - 1, Direction.NORTH);
+   }
+
+   // ------------------------------------------------------------------ hotel
+
+   private static void hotel(Plot p, int w, int d, int f, int fh) {
+      int podiumFloors = 2;
+      int lobbyH = Math.max(fh, 5);
+      int ci = (w - 1) / 2;
+      int cj = (d - 1) / 2;
+      BlockState stone = s(Blocks.SMOOTH_SANDSTONE);
+      BlockState dark = s(Blocks.DEEPSLATE_TILES);
+      // Stone podium: lobby with chandeliers, then a banquet floor.
+      storey(p, 0, 0, w - 1, d - 1, 0, lobbyH, s(Blocks.POLISHED_DIORITE), (u, h, hgt, fl) -> u % 3 == 0 ? stone : s(Blocks.GLASS), 0);
+      lobby(p, 0, 0, w - 1, d - 1, lobbyH, stone, slab(Blocks.SMOOTH_SANDSTONE_SLAB));
+      p.fill(1, 0, 1, w - 2, 0, d - 2, s(Blocks.RED_WOOL));
+      for (int i = 3; i < w - 3; i += 5) {
+         p.set(i, lobbyH - 1, cj, s(Blocks.LANTERN).setValue(net.minecraft.world.level.block.LanternBlock.HANGING, true));
+      }
+      int by = lobbyH;
+      storey(p, 0, 0, w - 1, d - 1, by, fh, stone, (u, h, hgt, fl) -> u % 3 == 0 || h == 1 ? stone : s(Blocks.YELLOW_STAINED_GLASS), 1);
+      p.fill(1, by, 1, w - 2, by, d - 2, s(Blocks.RED_WOOL));
+      for (int i = 3; i < w - 3; i += 4) {
+         for (int j = 3; j < d - 3; j += 4) {
+            p.set(i, by + 1, j, s(Blocks.DARK_OAK_FENCE));
+            p.set(i, by + 2, j, s(Blocks.WHITE_CARPET));
+         }
+      }
+      // Guest-room tower above, set in from the podium.
+      int i1 = 2;
+      int j1 = 2;
+      int i2 = w - 3;
+      int j2 = d - 3;
+      Skin skin = (u, h, hgt, floor) -> {
+         if (u % 2 == 0) {
+            return s(Blocks.QUARTZ_BLOCK);
+         }
+         return h == 1 ? dark : s(Blocks.GLASS_PANE);
+      };
+      int towerY = by + fh;
+      terrace(p, 0, 0, w - 1, d - 1, towerY, i1, j1, i2, j2);
+      int roofY = towerY;
+      for (int fl = podiumFloors; fl < f; fl++) {
+         int fy = towerY + (fl - podiumFloors) * fh;
+         storey(p, i1, j1, i2, j2, fy, fh, s(Blocks.SMOOTH_QUARTZ), skin, fl);
+         // Central corridor, rooms either side with a bed each.
+         p.fill(i1 + 1, fy, cj, i2 - 1, fy, cj, s(Blocks.RED_WOOL));
+         for (int i = i1 + 3; i < i2; i += 3) {
+            p.fill(i, fy + 1, j1 + 1, i, fy + fh - 1, cj - 1, s(Blocks.SMOOTH_QUARTZ));
+            p.fill(i, fy + 1, cj + 1, i, fy + fh - 1, j2 - 1, s(Blocks.SMOOTH_QUARTZ));
+         }
+         for (int i = i1 + 1; i < i2 - 1; i += 3) {
+            if (cj - 1 > j1 + 2) {
+               p.bed(i + 1, fy + 1, j1 + 2, Blocks.WHITE_BED, Direction.NORTH);
+               p.door(i + 1, fy + 1, cj - 1, Blocks.DARK_OAK_DOOR, Direction.SOUTH);
+            }
+            if (cj + 1 < j2 - 2) {
+               p.bed(i + 1, fy + 1, j2 - 2, Blocks.WHITE_BED, Direction.SOUTH);
+               p.door(i + 1, fy + 1, cj + 1, Blocks.DARK_OAK_DOOR, Direction.NORTH);
             }
          }
-
-         BuildUtil.setBlock(level, mx1 + 1, fy + 1, mz2, BuildUtil.air());
-         BuildUtil.setBlock(level, mx1 + 1, fy + 2, mz2, BuildUtil.air());
-         BuildUtil.fill(level, mx1 + 1, fy + 1, mz1 + 1, mx2 - 1, fy + 1, mz2 - 1, Blocks.OAK_PLANKS.defaultBlockState());
-         BuildUtil.setBlock(level, mx1 + 1, fy + 2, mz1 + 1, Blocks.REDSTONE_LAMP.defaultBlockState());
-      }
-
-      int nx2 = x2 - 2;
-      int nz2 = z2 - 2;
-      int nx1 = Math.max(x1 + 2, nx2 - 2);
-      int nz1 = Math.max(z1 + 2, nz2 - 2);
-      if (nx2 > nx1 + 1 && nz2 > nz1 + 1 && (nx1 > mx2 + 1 || nz1 > mz2 + 1)) {
-         for (int yy = fy + 1; yy <= fy + 3 && yy < topY; yy++) {
-            for (int xx = nx1; xx <= nx2; xx++) {
-               BuildUtil.setBlock(level, xx, yy, nz1, partition);
-               BuildUtil.setBlock(level, xx, yy, nz2, partition);
-            }
-
-            for (int zz = nz1; zz <= nz2; zz++) {
-               BuildUtil.setBlock(level, nx1, yy, zz, partition);
-               BuildUtil.setBlock(level, nx2, yy, zz, partition);
-            }
+         p.fill(i1 + 1, fy + 1, cj - 1, i1 + 1, fy + 2, cj + 1, air());
+         for (int i = i1 + 2; i < i2; i += 4) {
+            p.set(i, fy + fh, cj, s(Blocks.SEA_LANTERN));
          }
-
-         BuildUtil.setBlock(level, nx1, fy + 1, nz1 + 1, BuildUtil.air());
-         BuildUtil.setBlock(level, nx1, fy + 2, nz1 + 1, BuildUtil.air());
-         BuildUtil.setBlock(level, nx1 + 1, fy + 2, nz1 + 1, Blocks.WHITE_CONCRETE.defaultBlockState());
-         BuildUtil.setBlock(level, nx2 - 1, fy + 1, nz2 - 1, Blocks.OAK_PLANKS.defaultBlockState());
+         Facilities.elevatorShaftStop(p.l, p.x + i2 - 1, p.y + fy, p.z + cj, p.y + fy + fh);
+         roofY = fy + fh;
       }
-
-      int bx = x1 + 2;
-      if (bx <= x2 - 2 && cz <= z2 - 2) {
-         BuildUtil.setBlock(level, bx, fy + 1, cz, Blocks.RED_WOOL.defaultBlockState());
-         BuildUtil.setBlock(level, bx + 1, fy + 1, cz, Blocks.YELLOW_WOOL.defaultBlockState());
-         BuildUtil.setBlock(level, bx, fy + 1, cz + 1, Blocks.BLUE_WOOL.defaultBlockState());
-         BuildUtil.setBlock(level, bx + 1, fy + 1, cz + 1, Blocks.GREEN_WOOL.defaultBlockState());
-      }
-
-      for (int row = 0; row < 2; row++) {
-         int deskZ = z1 + 3 + row * 3;
-         int deskXStart = cx + 2;
-         int deskXEnd = x2 - 2;
-         if (deskZ < z2 - 2 && deskXStart < deskXEnd) {
-            for (int xx = deskXStart; xx <= deskXEnd - 1; xx += 2) {
-               BuildUtil.setBlock(level, xx, fy + 1, deskZ, Blocks.BIRCH_PLANKS.defaultBlockState());
-               BuildUtil.setBlock(level, xx + 1, fy + 1, deskZ, Blocks.BIRCH_PLANKS.defaultBlockState());
-               BuildUtil.setBlock(level, xx, fy + 2, deskZ, Blocks.BLACK_STAINED_GLASS.defaultBlockState());
-            }
+      Facilities.elevatorShaftStop(p.l, p.x + i2 - 1, p.y, p.z + cj, p.y + 3);
+      Facilities.elevatorShaftStop(p.l, p.x + i2 - 1, p.y + by, p.z + cj, p.y + by + 3);
+      Facilities.elevatorShaftStop(p.l, p.x + i2 - 1, p.y + roofY, p.z + cj, p.y + roofY + 3);
+      // Rooftop bar: glass pavilion with lights, and the hotel name.
+      p.fill(i1, roofY, j1, i2, roofY, j2, dark);
+      p.ring(i1, roofY + 1, j1, i2, j2, s(Blocks.GLASS_PANE));
+      int bi1 = i1 + 2;
+      int bi2 = Math.min(i2 - 3, bi1 + 6);
+      int bj1 = j1 + 2;
+      int bj2 = Math.min(j2 - 2, bj1 + 4);
+      if (bi2 > bi1 + 2 && bj2 > bj1 + 2) {
+         p.walls(bi1, roofY + 1, bj1, bi2, roofY + 3, bj2, s(Blocks.GLASS));
+         p.fill(bi1, roofY + 4, bj1, bi2, roofY + 4, bj2, dark);
+         p.clear(bi1 + 1, roofY + 1, bj2, bi1 + 1, roofY + 2, bj2);
+         for (int i = bi1 + 1; i < bi2; i++) {
+            p.set(i, roofY + 1, bj1 + 1, s(Blocks.DARK_OAK_PLANKS));
          }
+         p.set(bi1 + 1, roofY + 2, bj1 + 1, s(Blocks.BREWING_STAND));
+         p.set((bi1 + bi2) / 2, roofY + 3, (bj1 + bj2) / 2, s(Blocks.LANTERN).setValue(net.minecraft.world.level.block.LanternBlock.HANGING, true));
       }
-
-      int kx = x1 + 2;
-      int kz = z2 - 3;
-      if (kx + 2 <= x2 - 2 && kz >= z1 + 1) {
-         BuildUtil.fill(level, kx, fy + 1, kz, kx + 2, fy + 1, kz, Blocks.OAK_PLANKS.defaultBlockState());
-         BuildUtil.setBlock(level, kx, fy + 2, kz, Blocks.CAKE.defaultBlockState());
-         BuildUtil.setBlock(level, kx + 1, fy + 2, kz, Blocks.BREWING_STAND.defaultBlockState());
-         BuildUtil.setBlock(level, kx + 2, fy + 2, kz, Blocks.CHEST.defaultBlockState());
+      for (int i = i1; i <= i2; i++) {
+         p.set(i, roofY + 2, j1, (i % 2 == 0) ? s(Blocks.OCHRE_FROGLIGHT) : s(Blocks.GLASS_PANE));
       }
-
-      for (int xx = x1 + 2; xx <= x2 - 2; xx += 3) {
-         for (int zz = z1 + 2; zz <= z2 - 2; zz += 3) {
-            if (Math.abs(xx - cx) > 1 || Math.abs(zz - cz) > 1) {
-               BuildUtil.setBlock(level, xx, topY - 1, zz, light);
-            }
-         }
-      }
+      p.sign((w - 1) / 2, lobbyH, -1, Blocks.DARK_OAK_WALL_SIGN, Direction.NORTH,
+            Component.empty(), Component.literal("GRAND HOTEL"), Component.literal("★★★★★"));
+      p.set((w - 1) / 2, lobbyH, 0, stone);
+      p.ladder(i1 + 1, j2 - 1, towerY + 1, roofY - 1, Direction.NORTH);
    }
 
    public static enum Type {

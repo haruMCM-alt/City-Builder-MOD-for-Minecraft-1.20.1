@@ -118,5 +118,8 @@
   "phone.citybuilder.dir.w": "W",
   "phone.citybuilder.dir.nw": "NW",
   "citybuilder.error.out_of_world": "Y=%s is outside the world",
-  "citybuilder.phase.load": "loading terrain"
+  "citybuilder.phase.load": "loading terrain",
+  "citybuilder.sign.dojo": "Dojo",
+  "citybuilder.sign.warehouse": "Warehouse",
+  "citybuilder.sign.department": "City Department Store"
 }

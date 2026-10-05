@@ -19,17 +19,14 @@ SKY = [("modern", 20, 20, 25, 5), ("twin", 30, 16, 20, 4), ("pyramid", 20, 20, 2
        ("residential", 20, 16, 15, 4), ("hotel", 20, 20, 15, 4), ("google", 24, 24, 15, 5)]
 
 
-def cam(x1, z1, x2, z2, h, yaw=-30.0, scale=1.0):
-    """Camera north-west of the footprint looking at its centre from above."""
-    cx, cz = (x1 + x2) / 2, (z1 + z2) / 2
-    size = max(x2 - x1, z2 - z1)
-    d = (max(size * 1.15, h * 0.95) + 7) * scale
-    rad = math.radians(yaw)
-    dx, dz = -math.sin(rad), math.cos(rad)
-    ty = Y + h * 0.45
-    py = ty + d * 0.38
-    px, pz = cx - dx * d, cz - dz * d
-    pitch = math.degrees(math.atan2(py - ty, d))
+def cam(x1, z1, x2, z2, h, yaw=-35.0, pitch=24.0):
+    """Camera that fits the whole bounding box in a 50 degree view, looking down at its centre."""
+    cx, cz, cy = (x1 + x2) / 2, (z1 + z2) / 2, Y + h / 2
+    r = 0.5 * math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2 + h ** 2)
+    d = r / math.tan(math.radians(22)) + 2
+    yr, pr = math.radians(yaw), math.radians(pitch)
+    lx, lz = -math.sin(yr) * math.cos(pr), math.cos(yr) * math.cos(pr)
+    px, pz, py = cx - lx * d, cz - lz * d, cy + math.sin(pr) * d
     return f"cam {px:.1f} {py:.1f} {pz:.1f} {yaw:.1f} {pitch:.1f}"
 
 
@@ -51,10 +48,11 @@ def main(filters):
             shots.append((f"sky_{name}", x, 300, x + w, 300 + d, f * fh + 12))
         x += 110
     out.append("waitbuild")
+    out.append("cmd execute as @e[type=item,limit=20] run say dropped item here")
     for name, x1, z1, x2, z2, h in shots:
         out.append(cam(x1, z1, x2, z2, h))
         out.append(f"shot {name}")
-        out.append(cam(x1, z1, x2, z2, h, yaw=-150.0))
+        out.append(cam(x1, z1, x2, z2, h, yaw=145.0))
         out.append(f"shot {name}_back")
     out.append("quit")
     print("\n".join(out))

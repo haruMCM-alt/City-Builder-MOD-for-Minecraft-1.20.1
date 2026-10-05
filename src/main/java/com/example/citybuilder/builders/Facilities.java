@@ -36,17 +36,4 @@ final class Facilities {
       }
       elevatorShaftStop(l, cx, fy, cz, ceilingY);
    }
-
-   /**
-    * The vertical core of a set-back tower: a ground floor elevator below the per-floor stops
-    * and an emergency ladder that runs through every floor up into the roof plant room.
-    */
-   static void towerCore(BlockCanvas l, int x, int y, int z, int width, int depth, int lobbyCeilingY, int roofY) {
-      int cx = (x + x + width - 1) / 2;
-      int cz = (z + z + depth - 1) / 2;
-      elevatorHall(l, cx, y, cz, y + 3);
-      if (width >= 8 && depth >= 8) {
-         BuildUtil.ladder(l, x + width - 4, z + depth - 4, y + 1, roofY - 1, Direction.NORTH);
-      }
-   }
 }

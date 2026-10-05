@@ -118,5 +118,8 @@
   "phone.citybuilder.dir.w": "西",
   "phone.citybuilder.dir.nw": "北西",
   "citybuilder.error.out_of_world": "高さ Y=%s はワールドの範囲外です",
-  "citybuilder.phase.load": "地形読込中"
+  "citybuilder.phase.load": "地形読込中",
+  "citybuilder.sign.dojo": "道場",
+  "citybuilder.sign.warehouse": "シティ物流 倉庫",
+  "citybuilder.sign.department": "シティ百貨店"
 }
