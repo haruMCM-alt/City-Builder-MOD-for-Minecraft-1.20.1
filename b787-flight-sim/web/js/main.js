@@ -1632,7 +1632,7 @@ class App {
         this.command('failure:' + k);
       }
     }
-    this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit });
+    this.instruments.update(dt, fm, sys, { panel: this.panelOn && !cockpit && !this.paused, cockpit, tex: cockpit || !!this.visual.cockpitVisible });
     if (this.mcp3d && this.visual.cockpitVisible && (this._mcpT3 = (this._mcpT3 || 0) + dt) > 0.12) { this._mcpT3 = 0; this.mcp3d.update(sys, this.world.night); }
     const hud = $('hud');
     const hctx = hud.getContext('2d');

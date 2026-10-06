@@ -36,7 +36,7 @@ const STEPS = [
   { part: 'rwy27', title: 'オートパイロット', text: (s) => `${k('1')} でオートパイロット（${s.sys.ap.on ? '✓' : '未'}）、` +
       `${k('2')} でオートスロットル（${s.sys.at.on ? '✓' : '未'}）を入れると、機体が高度と速度を保ってくれます`,
     done: (s) => s.sys.ap.on && s.sys.at.on },
-  { part: 'rwy27', title: '離陸は完了！', next: true, text: () => 'よくできました。次は<b>着陸</b>の練習です。<br>滑走路から 7 マイル（約 13 km）手前、高度 2,000 ft に移動します' },
+  { part: 'rwy27', title: '離陸は完了！', next: true, text: () => 'よくできました。次は<b>着陸</b>の練習です。<br>滑走路から 8 マイル（約 15 km）手前、高度 2,000 ft に移動します' },
   { part: 'ils27', title: '着陸の準備：ILS を捕まえる', text: () => `空港からの電波（ILS）に沿って自動で降りられます。${k('6')}（APP）を押して ILS の捕捉を予約しましょう`,
     done: (s) => s.sys.ap.armed.loc || s.sys.ap.roll === 'LOC' },
   { part: 'ils27', title: '脚（ギア）を下ろす', text: () => `${k('G')} で車輪を下ろします`, done: (s) => s.sys.gearLever },
@@ -111,11 +111,12 @@ export class Tutorial {
     if (part === 'ils27') {
       // the player arms the approach; speed is managed by the autothrottle
       sys.ap.armed.loc = false; sys.ap.armed.gs = false;
-      // 7 nm out at 2,000 ft (below the glideslope, as the approach expects) instead of the
-      // scenario's 12 nm: a shorter descent to watch
+      // on the extended centreline 8 nm out at 2,000 ft (below the glideslope, which comes
+      // down to it 6.3 nm out) instead of the scenario's 12 nm intercept: a shorter descent
       const r = app.worldData.runways.find((x) => x.ident === '27'), d = runwayDir(r);
-      app.fm.pos.x += d.x * 5 * 1852; app.fm.pos.z += d.z * 5 * 1852; app.fm.pos.y = 2000 * FT;
-      sys.mcp.alt = 2000;
+      const p = app.fm.pos.clone().set(r.threshold[0] - d.x * 8 * 1852, 2000 * FT, r.threshold[2] - d.z * 8 * 1852);
+      app.fm.reset(p, r.heading, app.fm.vel.len(), 1.5, false);
+      sys.mcp.alt = 2000; sys.mcp.hdg = r.heading;
       sys.autobrake = 3; sys.speedbrakeArmed = true;
     }
     if (app.radio) app.radio.enabled = false;

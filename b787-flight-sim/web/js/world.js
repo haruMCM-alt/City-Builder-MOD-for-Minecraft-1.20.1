@@ -1314,7 +1314,9 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
       this.scene.environmentIntensity = lerp(0.12, 1.0, day) * (1 - 0.3 * W.overcast);
     }
     // terrain / water follow the camera
-    const step = 16;
+    // grid snap (and terrain re-bake) step: 16 m near the ground, coarser when high up where
+    // the shift is below a pixel - at cruise the bake ran every frame
+    const step = camera.position.y > 3000 ? 64 : camera.position.y > 800 ? 32 : 16;
     const cx = Math.round(camera.position.x / step) * step, cz = Math.round(camera.position.z / step) * step;
     this.terrain.position.set(cx, 0, cz);
     this.terrainUniforms.uCenter.value.set(cx, cz);

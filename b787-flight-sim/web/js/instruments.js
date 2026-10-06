@@ -48,7 +48,9 @@ export class Instruments {
         this.drawPFD(this.pfd.getContext('2d'), fm, sys);
         this.drawND(this.nd.getContext('2d'), fm, sys);
         this.drawEICAS(this.eicas.getContext('2d'), fm, sys);
-        for (const t of Object.values(this.textures)) t.needsUpdate = true;
+        // the 3D cockpit's screens: upload only while the flight deck can be seen (a 600 px
+        // canvas x3 at 20 Hz is wasted bandwidth from the chase / cabin views)
+        if (opts.tex !== false) for (const t of Object.values(this.textures)) t.needsUpdate = true;
       }
     }
   }

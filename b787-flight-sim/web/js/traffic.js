@@ -1434,8 +1434,9 @@ export class Traffic {
         const d = Math.hypot(ac.x - cam.x, ac.z - cam.z);
         if (d < 3000 && !ac.art) ac.activate();
         else if (d > 3800 && ac.art) ac.deactivate();
-        ac.static.visible = !ac.art && d < 60000;
-        if (d < 60000) ac.place(dt);
+        // beyond ~30 km an airliner is under 3 px (its lights are drawn separately to 40 km)
+        ac.static.visible = !ac.art && d < 30000;
+        if (d < 30000) ac.place(dt);
       }
     }
     // the extra traffic on the other runways (ops.js)
@@ -1449,7 +1450,7 @@ export class Traffic {
     for (const o of this.ops || []) o.lights(L, cam);
     for (const v of this.vehicles) {
       const d = Math.hypot(v.x - cam.x, v.z - cam.z, cam.y);
-      v.obj.visible = d < 2600;
+      v.obj.visible = d < 1800;          // a 2-3 m vehicle is ~2 px at 1.8 km
       for (const w of v.wheels) if (w.obj) w.obj.visible = d < 350;
       v.lights(L, this.time, env.night);
     }
