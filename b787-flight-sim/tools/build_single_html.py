@@ -36,7 +36,11 @@ STRIP_TEX = re.compile(r"airport\d+\.glb$")   # same images as world.glb: the ga
 MAX_TEX = 4096                        # aircraft textures above this are halved
 # secondary maps (and the cabin wall) are halved from 4096 too: keeps the file under the
 # 30 MiB limit with nine aircraft types (the colour map keeps its resolution)
-HALVE_4K = ("fuselage_normal", "fuselage_orm", "fuselage_emissive", "cabin_sidewall")
+HALVE_4K = ("fuselage_normal", "fuselage_orm", "fuselage_emissive", "cabin_sidewall", "fuselage_base")
+# the fin and the flight-deck shell maps are halved from 2048
+HALVE_2K = ("tail_base", "cockpit_shell")
+# (ten aircraft types: the 8192 px fuselage colour map is halved twice, to 2048 px; the
+# livery itself is painted by the shader, the map carries the panel / window detail)
 DRACO = "vendor/three/examples/jsm/libs/draco/gltf"
 
 
@@ -85,8 +89,11 @@ def shrink_image(blob, png, name=""):
     from PIL import Image
     src = Image.open(io.BytesIO(blob))
     w, h = src.size
-    if max(w, h) > MAX_TEX or (max(w, h) >= 4096 and name in HALVE_4K):
-        src = src.resize((max(1, w // 2), max(1, h // 2)), Image.LANCZOS)
+    big = lambda w, h: max(w, h) > MAX_TEX or (max(w, h) >= 4096 and name in HALVE_4K) or (max(w, h) >= 2048 and name in HALVE_2K)  # noqa: E731
+    if big(w, h):
+        while big(w, h):
+            w, h = max(1, w // 2), max(1, h // 2)
+        src = src.resize((w, h), Image.LANCZOS)
     elif png or len(blob) < 60000:
         return None
     out = io.BytesIO()
