@@ -223,7 +223,7 @@ def side_feature(fm, s_c, z_c, hs, ha, side, r, pad=0.05):
 # sliding side window, No. 3 small fixed aft window with its sill rising steeply aft.
 # Layout coordinates are the 787 flight deck's, mapped to the type (CK) so the panes sit where
 # the pilots' eyes are.
-SIX = G.TYPE in ("b738", "b763", "b744")
+SIX = G.TYPE in ("b738", "b763", "b744", "maw")
 if SIX:
     # No. 1: narrow flat panes on the top front of the nose (a slanted wedge seen from the side)
     FRONT_PANE = [(G.CK[2] * y, CZ(z)) for (y, z) in
@@ -271,7 +271,9 @@ def skin_y_at(s, z_target):
 # from it and the post rake, so post 1 is a straight line on the side of the nose.
 WIN6 = {"b738": dict(ytop=0.42, rake1=0.70, w2=1.10, d2=0.30, rake2=0.25, w3=1.35, e3=-0.02),
         "b763": dict(ytop=0.70, rake1=0.27, w2=1.15, d2=0.22, rake2=0.05, w3=0.90, e3=-0.22),
-        "b744": dict(ytop=0.78, rake1=0.35, w2=1.10, d2=0.20, rake2=0.08, w3=0.95, e3=-0.15)}
+        "b744": dict(ytop=0.78, rake1=0.35, w2=1.10, d2=0.20, rake2=0.08, w3=0.95, e3=-0.15),
+        # Airbus (A340-600 drawing): wide front panes, No. 2 with a level sill, short No. 3
+        "maw": dict(ytop=0.62, rake1=0.45, w2=1.00, d2=0.05, rake2=0.30, w3=0.60, e3=0.05)}
 _SIX_CACHE = {}
 
 

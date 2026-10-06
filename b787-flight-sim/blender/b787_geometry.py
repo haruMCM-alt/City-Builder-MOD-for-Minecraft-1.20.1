@@ -27,10 +27,10 @@ from scipy.interpolate import PchipInterpolator
 # ---------------------------------------------------------------------------
 TYPE = os.environ.get("AC_TYPE", "b789")
 ASSET = {"b789": "b787-9", "b738": "b737-800", "b763": "b767-300er",
-         "ma3": "ma-300", "ma7": "ma-700", "ma9": "ma-900", "b744": "b747-400", "at76": "atr72-600"}[TYPE]
+         "ma3": "ma-300", "ma7": "ma-700", "ma9": "ma-900", "b744": "b747-400", "at76": "atr72-600", "maw": "ma-w8"}[TYPE]
 NAME = {"b789": "Boeing 787-9", "b738": "Boeing 737-800", "b763": "Boeing 767-300ER",
         "ma3": "Micomsoft MA-300 Tsubame", "ma7": "Micomsoft MA-700 Hayabusa", "ma9": "Micomsoft MA-900 Otori",
-        "b744": "Boeing 747-400", "at76": "ATR 72-600"}[TYPE]
+        "b744": "Boeing 747-400", "at76": "ATR 72-600", "maw": "Micomsoft MA-W8 Ootaka"}[TYPE]
 
 # ---------------------------------------------------------------------------
 # Global figures
@@ -79,7 +79,7 @@ _zw = PchipInterpolator([0.0, 2.0, 5.0, 8.5, 44.0, 50.0, 56.0, LENGTH],
 # optional features of some types (set by apply_type): an upper-deck hump (747), a second
 # engine pair, propellers instead of fans, body gear, a second row of windows
 HUMP = None        # dict(h, a, b, c, d, narrow): crown raised by h over stations a-b-c-d
-ENG2 = None        # dict(Y, Z, FWD[, KA, KR]): outboard engine pair
+ENG2 = None        # dict(Y, Z, FWD[, KA, KR]) or a list of them: the further engines of a side
 PROP = None        # dict(R, blades, ...): turboprop nacelles and propellers
 BODY_GEAR = None   # dict(y, ds): second main gear pair (inboard, ds aft of the wing gear)
 WIN2 = None        # (z, s0, s1) or (z, [(s0, s1), ...]): upper-deck window row(s)
@@ -683,6 +683,36 @@ TYPES = {
                   fuelCapacity=173000, thrustSL=552000, VMO=365, MMO=0.92),
         ENGINE="GE CF6-80C2B5F", CHEVRONS=0,
     ),
+    # ---- Micomsoft MA-W8 "Ootaka": the A340-600 fuselage and wing (75.3 m, 5.64 m body, four door
+    # pairs incl. the over-wing door) with EIGHT small geared turbofans in four B-52-style twin
+    # pods.  thrustSL is per side (four engines).
+    "maw": dict(
+        LENGTH=75.30, SPAN=63.45, HEIGHT=17.22, FUS_W=5.64, FUS_H=5.64, NL=7.5, T0=55.0,
+        GROUND_Z=-5.40, FLOOR_Z=-0.45, S_NOSE=7.0, WHEELBASE=32.84, TRACK=10.69,
+        WING_C0=13.3, Y_KINK=9.0, Y_TIP=31.24, LE=31.8, TE_IN=0.0, TE_OUT=21.4, WING_Z0=-1.75,
+        TC=[0.150, 0.135, 0.110, 0.100, 0.095], TWIST=[4.0, 3.5, 1.5, -1.0, -1.8],
+        WINGLET=dict(r=0.25, theta=78.0, h=2.70, c_tip=0.70, sweep=45.0),
+        ENG_Y=8.45, ENG_Z=-2.55, ENG_FWD=3.0, ENG_KA=0.62, ENG_KR=0.57, FAN_BLADES=18, ENG_FLAT=0.0,
+        ENG2=[dict(Y=10.75, Z=-2.48, FWD=3.0), dict(Y=19.45, Z=-1.95, FWD=2.7), dict(Y=21.75, Z=-1.88, FWD=2.7)],
+        HT_S_LE0=66.6, HT_C0=7.6, HT_SEMI=10.75, HT_LE=31.0, HT_TIP_C=2.4, HT_Z0=1.4,
+        VT_Z0=2.0, VT_S_LE0=63.2, VT_C0=10.0, VT_TIP_C=3.4, VT_LE=42.0, VT_FIL=(1.5, 3.0),
+        NOSE_TIRE=(1.07, 0.39, 0.33), MAIN_TIRE=(1.32, 0.50, 0.60), MAIN_AXLE_DS=0.98,
+        DOORS=[5.9, 24.7, 47.5, 62.5], DOOR=(1.07, -0.40, 1.60), DOOR_GAP=0.90,
+        EXITS=[],
+        WIN=(0.85, 0.24, 0.38, 0.533), WIN_S=(7.2, 61.3),
+        WIN_RUNS=[(7.2, 22.0), (26.0, 29.1), (29.9, 44.9), (48.6, 61.2)],
+        TAIL=dict(top=([56.0, 62.0, 68.0, 71.0, 73.0, 74.0, 75.0, 75.30], [2.82, 2.82, 2.82, 2.80, 2.70, 2.56, 2.40, 2.18]),
+                  bot=([56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 70.0, 72.0, 73.0, 74.0, 75.30],
+                       [-2.82, -2.77, -2.52, -2.11, -1.59, -0.90, -0.22, 0.52, 1.14, 1.40, 1.71, 2.15]),
+                  hw=([55.0, 56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 70.0, 72.0, 74.0, 75.30],
+                      [2.82, 2.77, 2.61, 2.46, 2.13, 1.81, 1.55, 1.22, 0.91, 0.60, 0.37, 0.12]),
+                  zw=([56.0, 60.0, 64.0, 68.0, 72.0, 75.30], [0.0, 0.05, 0.35, 0.95, 1.55, 2.17])),
+        CARGO=[(9.5, 2.70, -2.45, -0.40), (56.1, 2.70, -2.55, -0.40), (59.45, 1.00, -2.00, -0.60)],
+        LABEL="MA-W8", REG="JA800M", CK=(1.15, -0.6, 0.92, 1.0, 0.0),
+        SPEC=dict(S=439.4, b=63.45, c=7.26, OEW=177000, MTOW=380000, MLW=265000, MZFW=251000,
+                  fuelCapacity=155000, thrustSL=520000, VMO=330, MMO=0.86),
+        ENGINE="Micomsoft MX-2 geared turbofan", CHEVRONS=0,
+    ),
     # ---- ATR 72-600: high wing, T-tail, two PW127M turboprops with six-blade propellers, main
     # gear in fuselage sponsons, 2-2 cabin.  (thrustSL: equivalent static thrust per engine)
     "at76": dict(
@@ -745,7 +775,18 @@ NOSE_B744 = dict(
         [0, .49, .73, 1.06, 1.25, 1.46, 1.83, 2.15, 2.44, 2.68, 2.88, 3.04, 3.22, 3.25]),
     zw=([0, 2, 4, 6, 11], [.05, .03, .01, 0, 0]),
 )
-NOSE = {"b738": NOSE_B738, "b763": NOSE_B763, "b744": NOSE_B744}
+# MA-W8: the A340-600 fuselage, measured from the Airbus A340 family drawing (Wikimedia Commons,
+# "Airbus A340 family 2 v1.0.png", scaled to 75.30 m; the drawn nose-down attitude removed)
+NOSE_MAW = dict(
+    top=([0, .1, .3, .6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8.5, 11],
+         [-.35, -.13, .14, .36, .53, .85, 1.34, 1.62, 1.89, 2.11, 2.27, 2.43, 2.54, 2.65, 2.72, 2.79, 2.82, 2.82]),
+    bot=([0, .1, .3, .6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 8, 11],
+         [-.35, -.56, -.89, -1.10, -1.38, -1.65, -1.88, -2.04, -2.21, -2.33, -2.45, -2.56, -2.68, -2.73, -2.77, -2.81, -2.82]),
+    hw=([0, .2, .5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 10, 11],
+        [0, .37, .58, .85, 1.12, 1.33, 1.71, 2.02, 2.24, 2.46, 2.61, 2.72, 2.82, 2.82]),
+    zw=([0, 3, 6, 11], [-.35, -.15, -.03, 0]),
+)
+NOSE = {"b738": NOSE_B738, "b763": NOSE_B763, "b744": NOSE_B744, "maw": NOSE_MAW}
 
 # nacelle outlines per type in the 787 (GEnx) units the engine is modelled in, scaled by
 # (ENG_KA, ENG_KR): outer cowl, fan nozzle exit, core cowl, core nozzle, plug
@@ -784,6 +825,7 @@ NACELLES = {
         core_lip=6.5, plug=[(6.0, 0.50), (6.5, 0.48), (6.9, 0.41), (7.3, 0.25), (7.6, 0.02)]),
 }
 NACELLES["b744"] = NACELLES["b763"]
+NACELLES["maw"] = NACELLES["ma3"]      # eight small geared fans
 WS_ZONES = {"b738": ((1.3, 1.6, 2.45, 3.0), 1.62), "b763": ((1.54, 1.79, 2.39, 3.04), 1.72)}
 # side windows (No. 2 / No. 3) length scale: the 767's window band is ~2.4 m long in photos
 
@@ -897,8 +939,7 @@ def apply_type(t):
 def engine_set():
     """engine stations of one side: the inboard (or only) engine, then ENG2"""
     out = [dict(Y=ENG_Y, Z=ENG_Z, S=ENG_S_HL, KA=ENG_KA, KR=ENG_KR)]
-    if ENG2:
-        E = ENG2
+    for E in (ENG2 if isinstance(ENG2, list) else [ENG2] if ENG2 else []):
         out.append(dict(Y=E["Y"], Z=E["Z"], S=float(wing_le(E["Y"])) - E["FWD"], KA=E.get("KA", ENG_KA), KR=E.get("KR", ENG_KR)))
     return out
 

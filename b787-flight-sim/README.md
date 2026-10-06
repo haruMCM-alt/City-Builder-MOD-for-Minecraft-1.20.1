@@ -94,6 +94,13 @@ WebGL2 対応ブラウザ（Chrome / Edge / Firefox / Safari 最新版）で動�
 
   ![MA-300 / MA-700 / MA-900](docs/images/ma-900_hero.jpg)
 
+#### MA-W8「Ootaka（大鷹）」— 8 発エンジンの長距離機（`AC_TYPE=maw`）
+* 胴体と主翼は **Airbus A340-600 の三面図から計測**（全長 75.30 m・胴体径 5.64 m・全幅 63.45 m、エアバス型の丸い機首と 6 枚窓、主翼上の非常扉を含む 4 組のドア、窓列、上に反り上がった尾部）
+* エンジンは小型のギヤードファン MX-2 を **8 基**：B-52 のような 2 基 1 組のポッドを片翼 2 か所ずつ。飛行計算では片側 4 基を 1 つのエンジンとして扱い（推力は 4 基分）、ファンは 8 基とも回転、巡航では 8 本の飛行機雲
+* 客室はビジネス 2-2-2・エコノミー 2-4-2 の 388 席
+
+  ![MA-W8](docs/images/ma-w8_front.jpg)
+
 * メニューの機種選択に追加。AI 機としても飛びます（ボーイング 3 機種の約半分の頻度）
 * 飛行試験（`AC=ma-300` など）・自動操縦フライト・緊急着陸テストで確認済み
 
@@ -205,7 +212,7 @@ python3 build_b787.py                   # 787-9（テクスチャ生成 → .ble
 python3 build_b787.py --quick --lod     # 駐機機用 LOD
 AC_TYPE=b738 python3 build_b787.py      # 737-800（--lod も同様）
 AC_TYPE=b763 python3 build_b787.py      # 767-300ER
-AC_TYPE=b744 python3 build_b787.py      # 747-400（at76: ATR 72-600、ma3 / ma7 / ma9: MA シリーズ）
+AC_TYPE=b744 python3 build_b787.py      # 747-400（at76: ATR 72-600、ma3 / ma7 / ma9 / maw: MA シリーズ）
 python3 geo.py                          # 地理データ → web/js/geo_data.js（地図は output/）
 python3 city_gen.py 1 2 3 4             # 東京・大阪・札幌・那覇の建物 → web/assets/cityN.bin
 python3 build_world.py                  # 羽田＋東京のランドマーク

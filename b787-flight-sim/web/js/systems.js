@@ -277,6 +277,9 @@ export class Systems {
       this._prevLat = xt;
       // integral term: no steady offset with a crosswind or an engine out
       if (Math.abs(xt) < 150) this._locI = clamp((this._locI || 0) + xt * 0.0035 * dt, -4, 4);
+      // anti-windup: the term wound up during the intercept pushes the aircraft through the
+      // centre line (a heavy, slow-yawing type overshot by ~30 m): bleed it off once across
+      if (xt * (this._locI || 0) < 0 && Math.abs(xt) > 8) this._locI *= Math.exp(-dt / 6);
       const trackT = d.course + clamp(-xt * 0.055 - vLat * 1.6 - (this._locI || 0), -30, 30);
       const e = wrap180(trackT - o.track);
       phiT = clamp(e * 1.8, -(this.bankMax || 22), this.bankMax || 22);

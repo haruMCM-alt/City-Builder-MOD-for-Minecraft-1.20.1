@@ -215,15 +215,15 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     u.set(cut(D.wing[0]), cut(D.wing[1]), D.tail > 0.55 ? base + (finTop - base) * 0.35 : 1e5, m.tailStrike[0] + 8 * ((m.length || 62.8) / 62.8));
     for (let i = 0; i < 2; i++) {
       const L = i === 0 ? '_L' : '_R';
-      // (four-engine types: the side's engines are one engine in the flight model)
-      for (const n of ['Nacelle', 'Fan', 'Pylon']) for (const k of ['', '2']) { const o = this.root.getObjectByName(n + L + k); if (o) o.visible = D.eng[i] < 2; }
+      // (four / eight-engine types: the side's engines are one engine in the flight model)
+      for (const n of ['Nacelle', 'Fan', 'Pylon']) for (const k of ['', '2', '3', '4']) { const o = this.root.getObjectByName(n + L + k); if (o) o.visible = D.eng[i] < 2; }
       for (const l of this.lights) if (l.name.endsWith(L) && /Nav|Strobe/.test(l.name) && D.wing[i] > 0) { l.obj.visible = false; l.dead = true; }
     }
   }
 
   clearDamage() {
     this.flexUniforms.uCut.value.set(1e5, 1e5, 1e5, -1e5);
-    for (const n of ['Nacelle', 'Fan', 'Pylon']) for (const L of ['_L', '_R', '_L2', '_R2']) { const o = this.root.getObjectByName(n + L); if (o) o.visible = true; }
+    for (const n of ['Nacelle', 'Fan', 'Pylon']) for (const L of ['_L', '_R', '_L2', '_R2', '_L3', '_R3', '_L4', '_R4']) { const o = this.root.getObjectByName(n + L); if (o) o.visible = true; }
     for (const l of this.lights) { l.obj.visible = true; l.dead = false; }
   }
 

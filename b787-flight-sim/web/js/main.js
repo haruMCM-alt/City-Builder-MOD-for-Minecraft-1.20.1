@@ -67,6 +67,7 @@ const TYPES = [
   { id: 'ma9', asset: 'ma-900', weight: 0.5, maker: 'Micomsoft', short: 'MA-900 Otori', cls: '超大型4発 Super-widebody quad' },
   { id: 'b744', asset: 'b747-400', weight: 0.5, maker: 'Boeing', short: '747-400', cls: 'ジャンボ 4発 Jumbo quad' },
   { id: 'at76', asset: 'atr72-600', weight: 0.8, maker: 'ATR', short: '72-600', cls: 'ターボプロップ Turboprop' },
+  { id: 'maw', asset: 'ma-w8', weight: 0.4, maker: 'Micomsoft', short: 'MA-W8 Ootaka', cls: '8発 Eight-engine long-haul' },
 ];
 // play modes on the menu's first screen: each opens a compact slide show with only the
 // slides it needs (keys of the <section data-key> slides) and presets its scenario
