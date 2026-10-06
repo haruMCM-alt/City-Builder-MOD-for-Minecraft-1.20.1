@@ -26,6 +26,7 @@ import { Cityscape } from './cityscape.js';
 import { GEO } from './geo_data.js';
 import { AutoPush } from './pushback.js';
 import { AutoFlight } from './autoflight.js';
+import { Tutorial } from './tutorial.js';
 import { FIDS } from './fids.js';
 import { MCP3D } from './mcp3d.js';
 import { FX } from './fx.js';
@@ -72,6 +73,8 @@ const TYPES = [
 // play modes on the menu's first screen: each opens a compact slide show with only the
 // slides it needs (keys of the <section data-key> slides) and presets its scenario
 const MODES = [
+  { id: 'tutorial', icon: '🎓', name: 'チュートリアル', en: 'Tutorial', img: 'type_ma7.jpg', tutorial: true,
+    desc: '離陸から着陸までを、実際に操縦しながら覚えます（約 5 分）。はじめての人はここから。', slides: [], scen: null, preset: {} },
   { id: 'beginner', icon: '🔰', name: '初心者モード', en: 'Beginner', badge: 'おすすめ', img: 'type_b789.jpg',
     desc: '管制の指示を日本語に訳し、次にやる操作を画面でガイド。羽田のゲートから出発します。',
     slides: ['type', 'env', 'opts'], scen: ['gate', 'rwy27', 'final'], preset: { scenario: 'gate', beginner: true, weather: 'clear', wind: 5, turb: 0, tod: 10 } },
@@ -309,6 +312,9 @@ class App {
     this.acc = 0;
     this.events = [];
     this.buildMenu();
+    this.tutorial = new Tutorial(this);
+    // Enter closes the tutorial's information cards
+    window.addEventListener('keydown', (e) => this.tutorial.onKey(e), true);
     window.addEventListener('resize', () => this.resize());
     // hide the on-screen chrome (view buttons, radio prompt, cursor) when the mouse rests
     const wake = () => {
@@ -328,8 +334,10 @@ class App {
     const go = () => {
       if (title.classList.contains('hidden')) return;
       title.classList.add('hidden');
-      $('menu').classList.remove('hidden');
       window.removeEventListener('keydown', key, true);
+      // first launch: the flying tutorial comes before the menu
+      if (!Tutorial.done()) this.tutorial.start();
+      else $('menu').classList.remove('hidden');
     };
     const key = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); go(); } };
     title.classList.remove('hidden');
@@ -606,7 +614,8 @@ class App {
 
   // a mode opens its own compact slide show
   selectMode(id) {
-    const m = id === 'settings' ? SETTINGS_MODE : MODES.find((x) => x.id === id) || MODES[1];
+    const m = id === 'settings' ? SETTINGS_MODE : MODES.find((x) => x.id === id) || MODES.find((x) => x.id === 'free');
+    if (m.tutorial) { this.tutorial.start(); return; }
     this.mode = m;
     const P = m.preset || {};
     // presets
@@ -922,7 +931,8 @@ class App {
   basePixelRatio() {
     const q = this.quality, dpr = window.devicePixelRatio || 1;
     if (q === 'ultra') return THREE.MathUtils.clamp(Math.min(dpr, 2) * (this.renderScale || 1), 0.6, 2.5);
-    return q === 'high' ? Math.min(dpr, 2) : q === 'medium' ? 1 : 0.75;
+    if (q === 'high') return Math.max(0.75, Math.min(dpr, 2) * Math.min(1, this.renderScale || 1));
+    return q === 'medium' ? 1 : 0.75;
   }
 
   // maximum anisotropic filtering on every texture in the scene (Ultra); 8x otherwise
@@ -943,9 +953,10 @@ class App {
   }
 
   // Ultra: dynamic resolution - supersamples when the GPU has headroom, backs off below
-  // ~45 fps so the flying stays smooth
+  // ~45 fps so the flying stays smooth. High: only backs off (never above the native
+  // resolution), so slow GPUs keep a fluid frame rate
   dynamicResolution(dt) {
-    if (this.quality !== 'ultra' || this.paused || !(dt > 0)) return;
+    if ((this.quality !== 'ultra' && this.quality !== 'high') || this.paused || !(dt > 0)) return;
     this._drT += dt; this._drN++;
     this._drCool -= dt;
     if (this._drT < 2) return;
@@ -954,7 +965,7 @@ class App {
     if (this._drCool > 0) return;
     let s = this.renderScale || 1;
     if (fps < 45) s = Math.max(0.6, s * (fps < 30 ? 0.8 : 0.9));
-    else if (fps > 58 && s < 1.5) s = Math.min(1.5, s * 1.12);
+    else if (fps > 58 && s < (this.quality === 'ultra' ? 1.5 : 1)) s = Math.min(this.quality === 'ultra' ? 1.5 : 1, s * 1.12);
     else return;
     if (Math.abs(s - this.renderScale) < 0.01) return;
     this.renderScale = s;
@@ -1494,6 +1505,8 @@ class App {
 
   // ------------------------------------------------------------------- per frame
   frame(now) {
+    // menu / pause screen: nothing moves, so ~30 fps is enough (less heat and battery)
+    if (this.paused && this.last && now - this.last < 31) return;
     const dt = Math.max(0, Math.min((now - this.last) / 1000, 0.1));
     this.last = now;
     this.fps += ((1 / Math.max(dt, 1e-3)) - this.fps) * 0.05;
@@ -1798,7 +1811,9 @@ class App {
   updateUI() {
     const now = performance.now();
     if (this._uiT && now - this._uiT < 120) return;
+    const uiDt = this._uiT ? Math.min(0.5, (now - this._uiT) / 1000) : 0;
     this._uiT = now;
+    if (this.tutorial?.active) this.tutorial.update(this.paused ? 0 : uiDt);
     const o = this.fm.out, s = this.sys;
     const f = FLAPS[s.flapLever].name;
     const gear = this.fm.ctl.gearPos < 0.01 ? 'DN' : this.fm.ctl.gearPos > 0.99 ? 'UP' : '▲▼';

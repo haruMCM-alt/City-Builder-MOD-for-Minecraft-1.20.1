@@ -696,7 +696,7 @@ TYPES = {
         ENG2=[dict(Y=10.75, Z=-2.48, FWD=3.0), dict(Y=19.45, Z=-1.95, FWD=2.7), dict(Y=21.75, Z=-1.88, FWD=2.7)],
         HT_S_LE0=66.6, HT_C0=7.6, HT_SEMI=10.75, HT_LE=31.0, HT_TIP_C=2.4, HT_Z0=1.4,
         VT_Z0=2.0, VT_S_LE0=63.2, VT_C0=10.0, VT_TIP_C=3.4, VT_LE=42.0, VT_FIL=(1.5, 3.0),
-        NOSE_TIRE=(1.07, 0.39, 0.33), MAIN_TIRE=(1.32, 0.50, 0.60), MAIN_AXLE_DS=0.98,
+        NOSE_TIRE=(1.07, 0.39, 0.33), MAIN_TIRE=(1.22, 0.46, 0.56), MAIN_AXLE_DS=2.06, AXLES=4,
         DOORS=[5.9, 24.7, 47.5, 62.5], DOOR=(1.07, -0.40, 1.60), DOOR_GAP=0.90,
         EXITS=[],
         WIN=(0.85, 0.24, 0.38, 0.533), WIN_S=(7.2, 61.3),
@@ -916,7 +916,9 @@ def apply_type(t):
     g["MAIN_TIRE_D"], g["MAIN_TIRE_W"], g["MAIN_WHEEL_DY"] = T["MAIN_TIRE"]
     ds = T["MAIN_AXLE_DS"]
     # three-axle bogies (6 wheels per leg) on the heaviest types, like the 777
-    g["MAIN_AXLES"] = (-ds, 0.0, ds) if T.get("AXLES") == 3 else (-ds, ds) if ds > 0 else (0.0,)
+    nax = T.get("AXLES", 2 if ds > 0 else 1)
+    # four-axle bogies (8 wheels per leg) on the MA-W8; ds is then half the outer-axle spacing
+    g["MAIN_AXLES"] = tuple(float(v) for v in np.linspace(-ds, ds, nax)) if nax > 1 else (0.0,)
     # --- openings --------------------------------------------------------------------
     g["DOOR_W"], g["DOOR_Z0"], g["DOOR_Z1"] = T["DOOR"]
     g["WIN_Z"], g["WIN_W"], g["WIN_H"], g["WIN_PITCH"] = T["WIN"]
