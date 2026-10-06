@@ -395,7 +395,7 @@ export class FlightModel {
     const CY = -0.92 * beta * (1 - 0.6 * Dm.tail) - 0.19 * ctl.rudder * kTail;
     // asymmetric lift: the damaged side drops (+Cl = right wing down)
     const Cl = (-0.10 - 0.06 * CLw) * beta - 0.42 * pn * (0.6 + 0.2 * (kWL + kWR)) + (0.05 + 0.22 * CLw) * rn
-      + 0.074 * ctl.aileron * kAil + 0.008 * ctl.rudder + 0.045 * CLw * (kWL - kWR);
+      + 0.074 * ctl.aileron * kAil * (SPEC.rollK || 1) + 0.008 * ctl.rudder + 0.045 * CLw * (kWL - kWR);
     const Cn = 0.125 * beta * (1 - 0.7 * Dm.tail) - (0.20 + 0.03 * CLw * CLw) * rn - 0.055 * CLw * pn
       + 0.074 * ctl.rudder * kTail - 0.006 * ctl.aileron - 0.03 * (Dm.wing[0] - Dm.wing[1]);
     const SM = 0.105 * (1 - 0.5 * Dm.tail);

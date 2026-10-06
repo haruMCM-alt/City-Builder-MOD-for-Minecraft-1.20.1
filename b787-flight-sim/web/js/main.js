@@ -370,7 +370,7 @@ class App {
     T.vapor.setActive(true);
     this.cur = T; this.typeId = id;
     this.meta = T.meta; this.visual = T.visual; this.cabin = T.cabin; this.vapor = T.vapor; this.mcp3d = T.mcp3d || null;
-    Object.assign(SPEC, T.meta.spec || {});
+    Object.assign(SPEC, { rollK: 1 }, T.meta.spec || {});      // (rollK: only some types set it)
     this.fm = new FlightModel(T.meta);
     this.sys = new Systems(this.fm, this.worldData);
     this.rig.meta = T.meta;

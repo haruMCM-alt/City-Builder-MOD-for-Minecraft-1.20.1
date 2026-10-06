@@ -446,7 +446,10 @@ export class AutoFlight {
   // the flap setting whose limit speed is above it
   get vmin() {
     const D = this.fm.dmg, f = D ? Math.max(D.wing[0], D.wing[1]) : 0;
-    return f < 0.2 ? 0 : Math.round(140 + (f - 0.2) * 300);
+    // (the asymmetric lift grows with the lift coefficient: a heavily loaded wing (MA-W8 /
+    // A340-600 ~865 kg/m2 against the 787's ~674) needs more speed for the same margin)
+    const kLoad = Math.max(1, Math.sqrt((SPEC.MTOW / SPEC.S) / 674));
+    return f < 0.2 ? 0 : Math.round((140 + (f - 0.2) * 300) * kLoad);
   }
   _spd(v) { return Math.max(v, this.vmin); }
   _flap(n) {
@@ -577,7 +580,8 @@ export class AutoFlight {
           if (along > -1500 && sys.ap.pitch !== 'GS' && sys.ap.pitch !== 'FLARE' && o.raFt > 150) { this._goAround(); break; }
           // ... or still well off the centre line (a clipped wing slows the localizer capture)
           const lat = (fm.pos.x - this.dest.threshold[0]) * -d.z + (fm.pos.z - this.dest.threshold[2]) * d.x;
-          if (along > -2500 && Math.abs(lat) > 90 && o.raFt > 150) { this._goAround(); break; }
+          // (a clipped wing banks 12 deg at most: it needs more room to line up)
+          if (along > (this.vmin ? -1800 : -2500) && Math.abs(lat) > (this.vmin ? 160 : 90) && o.raFt > 150) { this._goAround(); break; }
         }
         if (sys.ap.roll === 'HDG') {
           // intercept the localizer: up to 40 degrees towards the centre line

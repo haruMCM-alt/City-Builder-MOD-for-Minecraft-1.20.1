@@ -18,7 +18,8 @@
   "fuelCapacity": 155000,
   "thrustSL": 520000,
   "VMO": 330,
-  "MMO": 0.86
+  "MMO": 0.86,
+  "rollK": 1.3
  },
  "ao": false,
  "sCG": 38.24,

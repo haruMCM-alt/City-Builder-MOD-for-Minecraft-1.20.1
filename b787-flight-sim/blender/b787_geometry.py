@@ -710,7 +710,7 @@ TYPES = {
         CARGO=[(9.5, 2.70, -2.45, -0.40), (56.1, 2.70, -2.55, -0.40), (59.45, 1.00, -2.00, -0.60)],
         LABEL="MA-W8", REG="JA800M", CK=(1.15, -0.6, 0.92, 1.0, 0.0),
         SPEC=dict(S=439.4, b=63.45, c=7.26, OEW=177000, MTOW=380000, MLW=265000, MZFW=251000,
-                  fuelCapacity=155000, thrustSL=520000, VMO=330, MMO=0.86),
+                  fuelCapacity=155000, thrustSL=520000, VMO=330, MMO=0.86, rollK=1.3),   # (ailerons + six spoilers a side)
         ENGINE="Micomsoft MX-2 geared turbofan", CHEVRONS=0,
     ),
     # ---- ATR 72-600: high wing, T-tail, two PW127M turboprops with six-blade propellers, main
