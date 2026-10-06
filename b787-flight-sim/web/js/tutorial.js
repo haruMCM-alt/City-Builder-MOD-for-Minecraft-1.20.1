@@ -3,6 +3,7 @@
 // part 2 starts 12 nm out on the ILS and lands with the autopilot (APP, gear, flaps,
 // reversers and brakes). Each step waits for the real action; a crash restarts the part.
 import { FLAPS } from './flightmodel.js';
+import { FT, runwayDir } from './util.js';
 
 const KEY = 'b787.tutorialDone';
 const k = (x) => `<kbd>${x}</kbd>`;
@@ -35,7 +36,7 @@ const STEPS = [
   { part: 'rwy27', title: 'オートパイロット', text: (s) => `${k('1')} でオートパイロット（${s.sys.ap.on ? '✓' : '未'}）、` +
       `${k('2')} でオートスロットル（${s.sys.at.on ? '✓' : '未'}）を入れると、機体が高度と速度を保ってくれます`,
     done: (s) => s.sys.ap.on && s.sys.at.on },
-  { part: 'rwy27', title: '離陸は完了！', next: true, text: () => 'よくできました。次は<b>着陸</b>の練習です。<br>滑走路から 12 マイル（約 22 km）手前、高度 3,000 ft に移動します' },
+  { part: 'rwy27', title: '離陸は完了！', next: true, text: () => 'よくできました。次は<b>着陸</b>の練習です。<br>滑走路から 7 マイル（約 13 km）手前、高度 2,000 ft に移動します' },
   { part: 'ils27', title: '着陸の準備：ILS を捕まえる', text: () => `空港からの電波（ILS）に沿って自動で降りられます。${k('6')}（APP）を押して ILS の捕捉を予約しましょう`,
     done: (s) => s.sys.ap.armed.loc || s.sys.ap.roll === 'LOC' },
   { part: 'ils27', title: '脚（ギア）を下ろす', text: () => `${k('G')} で車輪を下ろします`, done: (s) => s.sys.gearLever },
@@ -44,7 +45,7 @@ const STEPS = [
     done: (s) => s.sys.flapLever === FLAPS.length - 1 },
   { part: 'ils27', title: '滑走路へ降下中', text: (s) => {
     const ap = s.sys.ap;
-    if (ap.roll !== 'LOC' && ap.roll !== 'ROLLOUT') return 'オートパイロットが滑走路の延長線（ローカライザー）に向かって旋回するのを待っています。1〜2 分かかるので景色を楽しみましょう';
+    if (ap.roll !== 'LOC' && ap.roll !== 'ROLLOUT') return 'オートパイロットが滑走路の延長線（ローカライザー）に向かって旋回するのを待っています。少し待ちましょう';
     return `ILS に乗りました！ オートパイロットが 3 度の坂道で滑走路に降りていきます（高度 <b>${Math.round(s.agl)}</b> ft）。` +
       `${k('C')} で視点を切り替えてみましょう`;
   }, done: (s) => s.o.wow && s.o.gs > 30 },
@@ -110,6 +111,11 @@ export class Tutorial {
     if (part === 'ils27') {
       // the player arms the approach; speed is managed by the autothrottle
       sys.ap.armed.loc = false; sys.ap.armed.gs = false;
+      // 7 nm out at 2,000 ft (below the glideslope, as the approach expects) instead of the
+      // scenario's 12 nm: a shorter descent to watch
+      const r = app.worldData.runways.find((x) => x.ident === '27'), d = runwayDir(r);
+      app.fm.pos.x += d.x * 5 * 1852; app.fm.pos.z += d.z * 5 * 1852; app.fm.pos.y = 2000 * FT;
+      sys.mcp.alt = 2000;
       sys.autobrake = 3; sys.speedbrakeArmed = true;
     }
     if (app.radio) app.radio.enabled = false;
