@@ -35,7 +35,7 @@ const PHRASES = {
 // engine type (set when the aircraft type changes): N1 100 % shaft rate and fan blade count
 // GEnx-1B ~2560 rpm / 18 blades, CFM56-7B 5380 rpm / 24, CF6-80C2 3280 rpm / 38
 // MA-300 MX-1G geared fan ~3300 rpm / 18, MA-700 MX-9 ~2500 / 16, MA-900 MX-6 (x4) ~3400 / 18
-// 747-400 CF6-80C2B5F (x4) 3280 / 38; MA-W8 MX-2 geared fan (x8) ~3600 / 18; ATR 72-600 PW127M: propeller 1200 rpm (Np 100 %), 6 blades
+// 747-400 CF6-80C2B5F (x4) 3280 / 38; MA-W8 MX-2 turbofan (x8) ~3600 / 18; ATR 72-600 PW127M: propeller 1200 rpm (Np 100 %), 6 blades
 // size: take-off thrust relative to the GEnx (a bigger engine is louder, and its roar deeper);
 // four-engine types: thrustSL is per side (two engines), the size is that of one engine
 // prop: the 120 Hz blade-passing drone and its harmonics replace most of the jet roar

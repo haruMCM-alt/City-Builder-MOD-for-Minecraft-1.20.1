@@ -711,7 +711,7 @@ TYPES = {
         LABEL="MA-W8", REG="JA800M", CK=(1.15, -0.6, 0.92, 1.0, 0.0),
         SPEC=dict(S=439.4, b=63.45, c=7.26, OEW=177000, MTOW=380000, MLW=265000, MZFW=251000,
                   fuelCapacity=155000, thrustSL=520000, VMO=330, MMO=0.86, rollK=1.3),   # (ailerons + six spoilers a side)
-        ENGINE="Micomsoft MX-2 geared turbofan", CHEVRONS=0,
+        ENGINE="Micomsoft MX-2 high-bypass turbofan", CHEVRONS=0,
     ),
     # ---- ATR 72-600: high wing, T-tail, two PW127M turboprops with six-blade propellers, main
     # gear in fuselage sponsons, 2-2 cabin.  (thrustSL: equivalent static thrust per engine)

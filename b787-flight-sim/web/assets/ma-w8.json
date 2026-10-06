@@ -4,7 +4,7 @@
  "asset": "ma-w8",
  "label": "MA-W8",
  "reg": "JA800M",
- "engineName": "Micomsoft MX-2 geared turbofan",
+ "engineName": "Micomsoft MX-2 high-bypass turbofan",
  "fanBlades": 18,
  "fanRadius": 0.804,
  "spec": {
