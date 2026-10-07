@@ -226,6 +226,13 @@ python3 render_previews.py world
 
 Blender アプリから使う場合：`blender --background --python build_b787.py`。
 
+## 4K 壁紙 / Wallpapers
+
+```bash
+cd blender && AC_TYPE=b789 python3 render_wallpaper.py takeoff   # または landing
+```
+`blender/render_wallpaper.py` が機体の .blend に滑走路（標示をテクスチャに描画）・芝生・遠くの丘と空港ビル・雲・大気のもやを足して、Cycles のパストレーシングで 3840×2160 を書き出します（`dist/wallpapers/`）。takeoff は夕方の低い太陽の中で機首を上げた瞬間、landing は日没後のブルーアワーに着陸灯・航法灯・ストロボ・滑走路灯を点けた最終進入。`--res`・`--samples`・`--exposure` で調整。
+
 ## 単一 HTML 版 / Single-file build
 
 ```bash
