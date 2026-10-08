@@ -446,6 +446,186 @@ def pose_aircraft(flap_deg, slat_frac, pitch_deg, lift, along):
     return root, R, Vector((along, 0, lift))
 
 
+LIVERY = opt("--livery", None)
+LIV_DIR = os.path.join(TEX_DIR, "livery")
+
+
+def _lin(a8):
+    a = np.asarray(a8, dtype=np.float64) / 255.0
+    return np.where(a <= 0.04045, a / 12.92, ((a + 0.055) / 1.055) ** 2.4)
+
+
+def _hex(h):
+    return _lin([int(h[i:i + 2], 16) for i in (1, 3, 5)])
+
+
+def _float_image(name, arr):
+    """arr: (rows bottom-first, cols, 4) linear RGBA -> packed float image."""
+    h, w = arr.shape[:2]
+    img = bpy.data.images.new(name, w, h, alpha=True, float_buffer=True)
+    img.pixels.foreach_set(np.ascontiguousarray(arr, dtype=np.float32).ravel())
+    return img
+
+
+def _rgba(path, w, h, flip_x=False):
+    """PNG -> (h, w, 4) bottom-first rows, linear premultiplied rgb + alpha."""
+    from PIL import Image
+    im = Image.open(path).convert("RGBA").resize((max(1, int(round(w))), max(1, int(round(h)))), Image.LANCZOS)
+    a = np.asarray(im, dtype=np.float64)
+    if flip_x:
+        a = a[:, ::-1]
+    a = a[::-1]
+    out = np.empty(a.shape)
+    out[..., 3] = a[..., 3] / 255.0
+    out[..., :3] = _lin(a[..., :3]) * out[..., 3:4]
+    return out
+
+
+def _over(dst, src, s0, z0, ppm, s_left, z_bottom, mult_white=None):
+    """Alpha-over a bottom-first premultiplied patch whose lower-left corner is (s_left, z_bottom)."""
+    j0, i0 = int(round((s_left - s0) * ppm)), int(round((z_bottom - z0) * ppm))
+    h, w = src.shape[:2]
+    a0, b0 = max(0, i0), max(0, j0)
+    a1, b1 = min(dst.shape[0], i0 + h), min(dst.shape[1], j0 + w)
+    if a1 <= a0 or b1 <= b0:
+        return
+    patch = src[a0 - i0:a1 - i0, b0 - j0:b1 - j0]
+    al = patch[..., 3:4]
+    rgb = patch[..., :3] / (mult_white if mult_white is not None else 1.0)
+    dst[a0:a1, b0:b1, :3] = dst[a0:a1, b0:b1, :3] * (1 - al) + rgb
+
+
+def _planar(nt, root, s_cg, s_a, s_rng, z_a, z_rng):
+    """(u, v) = ((s - s_a) / s_rng, (z - z_a) / z_rng) from the aircraft-root object space, and
+    the side factor (1 = left, Blender +Y)."""
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    tc.object = root
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    nt.links.new(tc.outputs["Object"], sep.inputs[0])
+
+    def m(op, a, b):
+        n = nt.nodes.new("ShaderNodeMath")
+        n.operation = op
+        for k, v in enumerate((a, b)):
+            if isinstance(v, (int, float)):
+                n.inputs[k].default_value = v
+            else:
+                nt.links.new(v, n.inputs[k])
+        return n.outputs[0]
+    u = m("DIVIDE", m("SUBTRACT", m("SUBTRACT", s_cg, sep.outputs["X"]), s_a), s_rng)
+    v = m("DIVIDE", m("SUBTRACT", sep.outputs["Z"], z_a), z_rng)
+    cxyz = nt.nodes.new("ShaderNodeCombineXYZ")
+    nt.links.new(u, cxyz.inputs[0])
+    nt.links.new(v, cxyz.inputs[1])
+    side = m("GREATER_THAN", sep.outputs["Y"], 0.0)
+    return cxyz.outputs[0], side
+
+
+def _two_sided(nt, vec, side, img_l, img_r):
+    texs = []
+    for img in (img_r, img_l):
+        t = nt.nodes.new("ShaderNodeTexImage")
+        t.image = img
+        t.extension = "EXTEND"
+        t.interpolation = "Cubic"
+        nt.links.new(vec, t.inputs["Vector"])
+        texs.append(t)
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    nt.links.new(side, mix.inputs["Factor"])
+    nt.links.new(texs[0].outputs["Color"], mix.inputs["A"])
+    nt.links.new(texs[1].outputs["Color"], mix.inputs["B"])
+    return mix.outputs["Result"]
+
+
+def apply_livery(root, airline):
+    """The game's JAL / ANA livery (web/js/livery.js) on the Blender model: the same belly paint,
+    cheat lines and title as the fuselage shader (a planar side projection in s / z, exactly what
+    the shader evaluates), the fin canvas + mark, and the nacelle colour.  The title / fin / mark
+    images come from the game itself (tools/export_livery.mjs)."""
+    base = os.path.join(LIV_DIR, "%s_%s" % (G.ASSET, airline))
+    L = json.load(open(base + ".json"))
+    lay = L["layout"]
+    white = _hex(lay["white"])
+    s_cg = lay["sCG"]
+    B, TR, FR = lay["belly"], L["titleRect"], L["finRect"]
+    prim, prim2, acc1, acc2 = (np.array(L[k]) for k in ("prim", "prim2", "acc1", "acc2"))
+    # ---- fuselage multiplier map (s across, z up)
+    ppm = 90.0
+    s0, s1 = -2.0, G.LENGTH + 2.0
+    z0 = min(B["z"]) - 1.5
+    z1 = max(max(B["z"]), TR[2]) + 0.5
+    W, H = int((s1 - s0) * ppm), int((z1 - z0) * ppm)
+    S = s0 + (np.arange(W) + 0.5) / ppm
+    Z = (z0 + (np.arange(H) + 0.5) / ppm)[:, None]
+    zl = np.interp(S, B["s"], B["z"])[None, :]
+    aw = 1.2 / ppm
+    paint = np.clip(0.5 - (Z - zl) / aw, 0, 1)[..., None]
+    fade = np.clip((zl - Z) / B["fade"], 0, 1)[..., None]
+    col = (prim2 * (1 - fade) + prim * fade) / white
+    f = 1 + (col - 1) * paint
+    on = (S > B["stripeS0"])[None, :, None]
+    for (off, wd), acc in zip(B["stripes"], (acc1, acc2)):
+        d = np.abs(Z - (zl + off)) - 0.5 * wd
+        k = np.clip(0.5 - d / aw, 0, 1)[..., None] * on
+        f = f * (1 - k) + (acc / white) * k
+    fl = np.concatenate([f, np.ones(f.shape[:2] + (1,))], -1)
+    fr = fl.copy()
+    tx, tlen, ttop, th = TR
+    _over(fl, _rgba(base + "_title.png", tlen * ppm, th * ppm), s0, z0, ppm, tx, ttop - th, white)
+    _over(fr, _rgba(base + "_title.png", tlen * ppm, th * ppm, flip_x=True), s0, z0, ppm, tx, ttop - th, white)
+    fus_l, fus_r = _float_image("LivFusL", fl), _float_image("LivFusR", fr)
+    # ---- fin: the game's fin canvas (gradient / sweep) + the mark, mirrored on the right
+    T = lay["tail"]
+    ppt = 120.0
+    tw, thh = (T["s1"] - T["s0"]) * ppt, (T["z1"] - T["z0"]) * ppt
+    canvas = _rgba(base + "_tail.png", tw, thh)
+    tl, trr = canvas.copy(), canvas.copy()
+    Rx, Ry, R = FR[0], FR[1], FR[2]
+    _over(tl, _rgba(base + "_fin.png", 2 * R * ppt, 2 * R * ppt), T["s0"], T["z0"], ppt, Rx - R, Ry - R)
+    _over(trr, _rgba(base + "_fin.png", 2 * R * ppt, 2 * R * ppt, flip_x=True), T["s0"], T["z0"], ppt, Rx - R, Ry - R)
+    tail_l, tail_r = _float_image("LivTailL", tl), _float_image("LivTailR", trr)
+    # ---- materials
+    fus = bpy.data.materials.get("B787_Fuselage")
+    if fus:
+        plain = fus.copy()          # the gear legs keep the unpainted skin
+        for o in bpy.data.objects:
+            if o.name.startswith(("MainGear", "NoseGear")):
+                for sl in o.material_slots:
+                    if sl.material == fus:
+                        sl.material = plain
+        nt = fus.node_tree
+        bsdf = [n for n in nt.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled"][0]
+        lk = bsdf.inputs["Base Color"].links
+        vec, side = _planar(nt, root, s_cg, s0, s1 - s0, z0, z1 - z0)
+        liv = _two_sided(nt, vec, side, fus_l, fus_r)
+        mul = nt.nodes.new("ShaderNodeMix")
+        mul.data_type = "RGBA"
+        mul.blend_type = "MULTIPLY"
+        mul.inputs["Factor"].default_value = 1.0
+        if lk:
+            nt.links.new(lk[0].from_socket, mul.inputs["A"])
+        else:
+            mul.inputs["A"].default_value = bsdf.inputs["Base Color"].default_value
+        nt.links.new(liv, mul.inputs["B"])
+        nt.links.new(mul.outputs["Result"], bsdf.inputs["Base Color"])
+    tail = bpy.data.materials.get("B787_Tail")
+    if tail:
+        nt = tail.node_tree
+        bsdf = [n for n in nt.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled"][0]
+        vec, side = _planar(nt, root, s_cg, T["s0"], T["s1"] - T["s0"], T["z0"], T["z1"] - T["z0"])
+        nt.links.new(_two_sided(nt, vec, side, tail_l, tail_r), bsdf.inputs["Base Color"])
+    nc = list(L["nacelle"]) + [1.0]
+    for n in ("B787_Nacelle", "B787_Navy"):
+        m = bpy.data.materials.get(n)
+        if not m:
+            continue
+        bsdf = [x for x in m.node_tree.nodes if x.bl_idname == "ShaderNodeBsdfPrincipled"][0]
+        for l in list(bsdf.inputs["Base Color"].links):
+            m.node_tree.links.remove(l)
+        bsdf.inputs["Base Color"].default_value = nc
+
+
 def aircraft_lights(R, off, landing):
     L = META.get("lights", {})
     w = lambda n: Matrix.Translation(off) @ R @ t2b(L[n]) if n in L else None   # noqa: E731
@@ -527,6 +707,8 @@ def build(scene_name):
     # aircraft
     if landing:
         root, R, off = pose_aircraft(30, 1.0, 4.0, 12 * K + 2, x_thr + 140)
+        if LIVERY:
+            apply_livery(root, LIVERY)
         aircraft_lights(R, off, True)
         sun_and_sky(-3.0, 170, strength=0.25, sun_energy=0)
         clouds(5500, 0.35, 5000, 5.0)
@@ -536,6 +718,8 @@ def build(scene_name):
         camera(ac + Vector((150 * K, -55 * K, -10 * K - 3)), ac + Vector((-4 * K, 0, 0)), 70, 4.0)
     else:
         root, R, off = pose_aircraft(15, 0.75, 9.0, 1.4, 0)
+        if LIVERY:
+            apply_livery(root, LIVERY)
         aircraft_lights(R, off, False)
         sun_and_sky(4.0, 165, strength=0.25, sun_energy=3.4, warm=1.0)
         clouds(2200, 0.52, 2200, 3.0)
@@ -584,5 +768,5 @@ def render(path):
 
 if __name__ == "__main__":
     landing = build(SCENE)
-    name = "%s_%s_%dx%d.jpg" % (G.ASSET, SCENE, RES[0], RES[1])
+    name = "%s_%s%s_%dx%d.jpg" % (G.ASSET, (LIVERY + "_") if LIVERY else "", SCENE, RES[0], RES[1])
     render(os.path.join(OUT, name))
