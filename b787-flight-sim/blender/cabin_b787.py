@@ -82,12 +82,12 @@ def skin_y(s, z):
     return np.interp(z, zz[m][o], y[m][o])
 
 
-def lining_pt(s, z_skin, side):
-    """Lining point radially inset from the skin point at (s, z_skin)."""
+def lining_pt(s, z_skin, side, extra=0.0):
+    """Lining point radially inset from the skin point at (s, z_skin) (extra: further inwards)."""
     y = float(skin_y(s, z_skin))
     zc = float(G.fus_profile(s)[3])
     r = math.hypot(y, z_skin - zc)
-    k = max(r - LINE, 0.05) / max(r, 1e-6)
+    k = max(r - LINE - extra, 0.05) / max(r, 1e-6)
     return np.array([s, side * y * k, zc + (z_skin - zc) * k])
 
 
@@ -195,10 +195,7 @@ def sidewall_texture(W=8192, H=512):
             continue
         sl = np.s_[:, m]
         d = rr(S[sl] - wc, Z[sl] - WIN_Z, HOLE_W / 2, HOLE_H / 2, HOLE_R)
-        bez = np.clip(0.5 - (d - 0.045) / px, 0, 1)
-        col[sl] = col[sl] * (1 - 0.12 * bez[..., None])
-        ring = np.clip(0.5 - (np.abs(d - 0.045) - 0.004) / px, 0, 1)
-        col[sl] = col[sl] * (1 - 0.18 * ring[..., None])
+        # (the bezel around the opening is geometry: build_lining)
         alpha[sl] = np.minimum(alpha[sl], np.clip(0.5 + d / px, 0, 1))
     # panel joints every second window
     for k, wc in enumerate(windows()):
@@ -400,6 +397,7 @@ def materials(tex):
         "wall": P("Cabin_Sidewall", color=h("#e6e3dc"), roughness=0.75, base_tex=tex("cabin_sidewall.png"),
                   alpha_from_tex=True),
         "lining": P("Cabin_Lining", color=h("#ece9e2"), roughness=0.8, base_tex=tex("cabin_grain.jpg")),
+        "reveal": P("Cabin_Reveal", color=h("#e6e3dc"), roughness=0.55, double_sided=True),
         "dado": P("Cabin_Dado", color=h("#8d8a86"), roughness=0.85),
         "ceiling": P("Cabin_Ceiling", color=h("#f3f1ec"), roughness=0.7, base_tex=tex("cabin_grain.jpg")),
         "bin": P("Cabin_Bin", color=h("#efede8"), roughness=0.45, base_tex=tex("cabin_grain.jpg")),
@@ -442,7 +440,9 @@ def materials(tex):
         "pants": P("Pax_Pants", color=h("#ffffff"), roughness=0.9),
         "hair": P("Pax_Hair", color=h("#ffffff"), roughness=0.7),
         "shoes": P("Pax_Shoes", color=h("#1d1d20"), roughness=0.5),
-        "hairlong": P("Pax_HairLong", color=h("#ffffff"), roughness=0.7),
+        "hairlong": P("Pax_HairLong", color=h("#ffffff"), roughness=0.7, double_sided=True),
+        "brow": P("Pax_Brow", color=h("#ffffff"), roughness=0.8),
+        "eyewhite": P("Pax_EyeWhite", color=h("#e9e4dc"), roughness=0.25),
         "hairbun": P("Pax_HairBun", color=h("#ffffff"), roughness=0.7),
         "glasses": P("Pax_Glasses", color=h("#1a1b1e"), roughness=0.3),
         "eye": P("Pax_Eye", color=h("#17120f"), roughness=0.2),
@@ -484,35 +484,32 @@ def build_lining(M, parent, col):
     ob = mb.build("Cabin_Lining", [M["wall"], M["lining"], M["dado"]], col=col)
     C.set_parent(ob, parent)
 
-    # window reveals: rounded-rect tunnels from the lining opening to the skin, plus a tinted pane
+    # window reveals: rounded-rect tunnels from the lining opening to the skin, plus a tinted pane,
+    # framed by a slightly raised bezel that overlaps the edge of the cut-out in the sidewall
     rv = C.MeshBuilder(TB)
-    th = np.linspace(0, 2 * math.pi, 21)
-
-    def rr_pts(w, h, r):
-        # rounded rectangle outline (s offset, z offset)
-        out = []
-        for t in th:
-            cx, cz = math.cos(t), math.sin(t)
-            qs = np.sign(cx) * (w / 2 - r) + r * cx
-            qz = np.sign(cz) * (h / 2 - r) + r * cz
-            out.append((qs, qz))
-        return np.array(out)
-    inner = rr_pts(HOLE_W, HOLE_H, HOLE_R)
-    outer = rr_pts(WIN_W + 0.02, WIN_H + 0.02, 0.11)
+    inner = rr_outline(HOLE_W, HOLE_H, HOLE_R)
+    bezel = rr_outline(HOLE_W + 0.075, HOLE_H + 0.075, HOLE_R + 0.037)
+    outer = rr_outline(WIN_W + 0.02, WIN_H + 0.02, 0.11)
     for side in (1, -1):
         for wc in windows():
-            a = np.array([lining_pt(wc + ds, WIN_Z + dz, side) for ds, dz in inner])
+            a0 = np.array([lining_pt(wc + ds, WIN_Z + dz, side, 0.014) for ds, dz in inner])
+            a1 = np.array([lining_pt(wc + ds, WIN_Z + dz, side, 0.011) for ds, dz in bezel])
+            a2 = np.array([lining_pt(wc + ds, WIN_Z + dz, side, -0.003) for ds, dz in bezel])
             b = []
             for ds, dz in outer:
                 y = float(skin_y(wc + ds, WIN_Z + dz)) - 0.02
                 b.append((wc + ds, side * y, WIN_Z + dz))
             b = np.array(b)
-            P = np.stack([a, b], 0)
-            # normals point at the window axis (seen from inside the opening)
-            d = np.stack([np.c_[-inner[:, 0], np.zeros(len(th)), -inner[:, 1]],
-                          np.c_[-outer[:, 0], np.zeros(len(th)), -outer[:, 1]]], 0)
-            d /= np.maximum(np.linalg.norm(d, axis=-1, keepdims=True), 1e-9)
-            rv.add_grid(P, N=d, mat=0, smooth=True)
+            cax = np.array([wc, side * float(skin_y(wc, WIN_Z)) * 0.9, WIN_Z])     # on the window axis
+            # tunnel: normals towards the window axis (seen from inside the opening)
+            P = np.stack([a0, b], 0)
+            N, _ = C.MeshBuilder.grid_normals(P, wrap_v=True)
+            if np.sum(N * (P - cax)) > 0:
+                N = -N
+            rv.add_grid(P, N=N, mat=4, wrap_v=True, smooth=True)
+            # bezel: flat frame facing the cabin + its outer lip down to the lining
+            for Q in (np.stack([a1, a0], 0), np.stack([a2, a1], 0)):
+                rv.add_grid(Q, mat=4, wrap_v=True, outward=("dir", (0, -side, 0)))
             # inner pane just inside the skin (electro-chromic window, slightly tinted)
             pane = b.copy()
             pane[:, 1] -= side * 0.03
@@ -526,8 +523,33 @@ def build_lining(M, parent, col):
                 rv.add_poly([(wc - hw, yy, zb), (wc + hw, yy, zb), (wc + hw, yy, zt), (wc - hw, yy, zt)], mat=2,
                             outward=("dir", (0, -side, 0)))
                 rv.add_box((wc, yy - side * 0.006, zb + 0.008), (0.06, 0.01, 0.014), mat=3)     # pull tab
-    ob = rv.build("Cabin_Reveals", [M["lining"], M["glass"], M["shade"], M["dark"]], col=col)
+    ob = rv.build("Cabin_Reveals", [M["lining"], M["glass"], M["shade"], M["dark"], M["reveal"]], col=col)
     C.set_parent(ob, parent)
+
+
+def rr_outline(w, h, r, edge=(6, 4), arc=7):
+    """closed rounded rectangle (s, z offsets): fixed point counts per edge / corner arc, so that
+    outlines of different sizes correspond point by point (no twisted quads between them).
+    Last point = first point."""
+    r = min(r, w / 2 - 1e-4, h / 2 - 1e-4)
+    a, b = w / 2 - r, h / 2 - r
+    pts = []
+
+    def line(p0, p1, n):
+        for k in range(n):
+            t = k / n
+            pts.append((p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t))
+
+    def corner(cx, cz, a0):
+        for k in range(arc):
+            t = a0 + (k / arc) * math.pi / 2
+            pts.append((cx + r * math.cos(t), cz + r * math.sin(t)))
+    line((w / 2, -b), (w / 2, b), edge[0]); corner(a, b, 0.0)
+    line((a, h / 2), (-a, h / 2), edge[1]); corner(-a, b, math.pi / 2)
+    line((-w / 2, b), (-w / 2, -b), edge[0]); corner(-a, -b, math.pi)
+    line((-a, -h / 2), (a, -h / 2), edge[1]); corner(a, -b, 1.5 * math.pi)
+    pts.append(pts[0])
+    return np.array(pts)
 
 
 def psu_strip(mb, sc, yc, z, L, width, mat, side=1):
@@ -1159,7 +1181,7 @@ def proto_seat_j(M, col, parent):
 PAX_PIVOTS = dict(neck=(0.20, 0.0, 1.12), shoulderL=(0.19, 0.21, 1.00), shoulderR=(0.19, -0.21, 1.00),
                   elbowL=(0.13, 0.205, 0.70), elbowR=(0.13, -0.205, 0.70))
 # hair / glasses variants (Pax_HairLong, Pax_HairBun, Pax_Glasses) are switched per instance
-PAX_MATS = ["skin", "shirt", "pants", "hair", "shoes", "hairlong", "hairbun", "glasses", "eye"]
+PAX_MATS = ["skin", "shirt", "pants", "hair", "shoes", "hairlong", "hairbun", "glasses", "eye", "brow", "eyewhite"]
 
 
 def head_points(c, r, lat, lon, jaw=0.3):
@@ -1470,7 +1492,8 @@ def bake_vertex_ao(targets, occluders, distance, samples=48, lo=0.36):
 
 def bake_cabin(root, protos, seats):
     import bpy
-    statics = [o for o in root.children if o.type == "MESH"]
+    # (the window reveals stay unbaked: their bezel lip touches the lining and would turn black)
+    statics = [o for o in root.children if o.type == "MESH" and not o.name.startswith("Cabin_Reveals")]
     P = {o.name: o for o in protos.children_recursive if o.type == "MESH"}
     # the shell sees the seats (temporary instances of the seat prototypes) but not the passengers
     tmp = []
@@ -1496,7 +1519,13 @@ def bake_cabin(root, protos, seats):
     if seatJ:
         bake_vertex_ao([seatJ], [], 0.3, lo=0.38)
     if pax:
-        bake_vertex_ao(pax, [seatY] if seatY else [], 0.22, lo=0.45)
+        # the two body variants share the seat: each is baked with the head / arms, never the other
+        seat = [seatY] if seatY else []
+        male = [o for o in pax if o.name != "Proto_PaxF"]
+        female = [o for o in pax if o.name == "Proto_PaxF"]
+        bake_vertex_ao(male, seat, 0.22, lo=0.45)
+        if female:
+            bake_vertex_ao(female, seat + [o for o in male if o.name != "Proto_Pax"], 0.22, lo=0.45)
     if crew:
         bake_vertex_ao(crew, [], 0.2, lo=0.45)
     for n in ("Proto_Cart", "Proto_Tray"):
@@ -1516,8 +1545,9 @@ def build_cabin(col, tex, bake=True):
     protos = C.empty("Cabin_Prototypes", col=col, parent=root)
     proto_seat_y(M, col, protos)
     proto_seat_j(M, col, protos)
-    proto_pax(M, col, protos)
-    proto_crew(M, col, protos)
+    import pax_meta
+    pax_meta.build_pax(M, col, protos, PAX_PIVOTS)
+    pax_meta.build_crew(M, col, protos)
     proto_cart(M, col, protos)
     proto_tray(M, col, protos)
     seats = seat_map()

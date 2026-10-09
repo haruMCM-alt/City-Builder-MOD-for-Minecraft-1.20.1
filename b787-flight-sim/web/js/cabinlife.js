@@ -148,6 +148,7 @@ export class PaxLife {
     const setAll = (arr, M) => { for (const im of arr) im.setMatrixAt(px.k, this._tmp.multiplyMatrices(M, im.userData.rel)); };
     this._tmp = this._tmp || new THREE.Matrix4();
     setAll(meshes.body, base);
+    if (meshes.bodyF) setAll(meshes.bodyF, base);
     // head: yaw (about y), pitch (about z, + = up), roll (about x)
     const qh = this._q.setFromEuler(new THREE.Euler(c.hr * D, c.hy * D, c.hp * D, 'YZX'));
     const Mh = new THREE.Matrix4().multiplyMatrices(base, piv(pv.neck, qh, new THREE.Matrix4()));

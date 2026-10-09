@@ -5,7 +5,7 @@ import { mulberry32 } from './util.js';
 import { PaxLife, CrewService } from './cabinlife.js';
 import { IFE, ifeGeometry } from './ife.js';
 
-const TINT = new Set(['Seat_FabricY', 'Seat_FabricJ', 'Pax_Skin', 'Pax_Shirt', 'Pax_Pants', 'Pax_Hair', 'Pax_HairLong', 'Pax_HairBun']);
+const TINT = new Set(['Seat_FabricY', 'Seat_FabricJ', 'Pax_Skin', 'Pax_Shirt', 'Pax_Pants', 'Pax_Hair', 'Pax_HairLong', 'Pax_HairBun', 'Pax_Brow']);
 // passenger variants switched per instance (collapsed to a point when hidden)
 const VARIANT = new Set(['Pax_Hair', 'Pax_HairLong', 'Pax_HairBun', 'Pax_Glasses']);
 // emissive / self-lit materials keep their own light
@@ -122,7 +122,8 @@ function patchCabinMaterial(m, variant) {
   m.needsUpdate = true;
 }
 // articulated passenger / crew parts (Blender prototypes)
-const PAX_PARTS = { body: 'Proto_Pax', head: 'Proto_PaxHead', uL: 'Proto_PaxUArmL', uR: 'Proto_PaxUArmR', fL: 'Proto_PaxFArmL', fR: 'Proto_PaxFArmR' };
+// (bodyF: the female body, switched per passenger like the hair styles; older cabins have none)
+const PAX_PARTS = { body: 'Proto_Pax', bodyF: 'Proto_PaxF', head: 'Proto_PaxHead', uL: 'Proto_PaxUArmL', uR: 'Proto_PaxUArmR', fL: 'Proto_PaxFArmL', fR: 'Proto_PaxFArmR' };
 const CREW_PARTS = { crew: 'Proto_Crew', armL: 'Proto_CrewArmL', armR: 'Proto_CrewArmR', legL: 'Proto_CrewLegL', legR: 'Proto_CrewLegR', cart: 'Proto_Cart', tray: 'Proto_Tray' };
 const SHIRTS = ['#2d4a7a', '#b8423a', '#f2f2f0', '#2f6b4f', '#1d1f24', '#7a5c9e', '#d9a441', '#4f7fa8', '#8c8f94',
   '#c46d8e', '#3c7d86', '#e7ddc9', '#5a3b2e', '#243a5e'];
@@ -195,7 +196,7 @@ export class Cabin {
     this.inst.Y = this._instances(protos.Proto_SeatY, Y.length);
     this.inst.J = this._instances(protos.Proto_SeatJ, J.length);
     this.parts = {};
-    for (const [k, n] of Object.entries(PAX_PARTS)) this.parts[k] = this._instances(protos[n], seats.length);
+    for (const [k, n] of Object.entries(PAX_PARTS)) this.parts[k] = this._instances(protos[n], seats.length, (k === 'body' || k === 'bodyF') && !!protos.Proto_PaxF);
     this.inst.pax = Object.values(this.parts).flat();
     const na = (this.info.aisles || [0]).length;
     this.crewParts = {};
@@ -243,10 +244,12 @@ export class Cabin {
     if (m.name === 'Cabin_Sidewall') { m.alphaTest = 0.5; m.transparent = false; m.depthWrite = true; }
     if (m.name === 'Cabin_WindowPane') { m.transparent = true; m.depthWrite = false; m.opacity = 0.16; return; }
     if (SELF_LIT.has(m.name)) return;
-    patchCabinMaterial(m, VARIANT.has(m.name));
+    // (every passenger material can collapse hidden variants; meshes without aHide read 0 = shown)
+    patchCabinMaterial(m, VARIANT.has(m.name) || m.name.startsWith('Pax_'));
   }
 
-  _instances(proto, count) {
+  // variant: every mesh of this prototype can be hidden per instance (aHide)
+  _instances(proto, count, variant = false) {
     if (!proto || !count) return [];
     proto.updateMatrixWorld(true);
     const o = this.info.protoOrigin;
@@ -260,6 +263,7 @@ export class Cabin {
       const im = new THREE.InstancedMesh(o.geometry, mat, count);
       im.userData.rel = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
       im.userData.mat = mat.name;
+      im.userData.part = proto.name;
       im.castShadow = false; im.receiveShadow = false;
       im.frustumCulled = false;
       if (TINT.has(mat.name)) {
@@ -267,7 +271,7 @@ export class Cabin {
         mat.envMapIntensity = 1.0;
         im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3).fill(1), 3);
       }
-      if (VARIANT.has(mat.name)) {
+      if (VARIANT.has(mat.name) || variant) {
         im.geometry = im.geometry.clone();
         im.geometry.setAttribute('aHide', new THREE.InstancedBufferAttribute(new Float32Array(count), 1));
       }
@@ -350,15 +354,18 @@ export class Cabin {
       m.compose(p, q, sc);
       entries.push({ k, seat: order[k], m: m.clone() });
       const hair = pick(HAIR);
-      const cols = { Pax_Skin: pick(SKIN), Pax_Shirt: pick(SHIRTS), Pax_Pants: pick(PANTS), Pax_Hair: hair, Pax_HairLong: hair, Pax_HairBun: hair };
-      // hair style (short / long / bun / bald) and glasses
-      const r1 = rnd(), r2 = rnd();
-      const hide = { Pax_Hair: r1 > 0.95 ? 1 : 0, Pax_HairLong: r1 < 0.34 ? 0 : 1, Pax_HairBun: r1 >= 0.34 && r1 < 0.45 ? 0 : 1, Pax_Glasses: r2 < 0.24 ? 0 : 1 };
+      const cols = { Pax_Skin: pick(SKIN), Pax_Shirt: pick(SHIRTS), Pax_Pants: pick(PANTS), Pax_Hair: hair, Pax_HairLong: hair, Pax_HairBun: hair, Pax_Brow: hair };
+      // body (female / male), hair style (short / long / bun / bald) and glasses
+      const female = rnd() < 0.48, r1 = rnd(), r2 = rnd();
+      const style = female ? (r1 < 0.55 ? 'long' : r1 < 0.8 ? 'bun' : 'short') : (r1 < 0.05 ? 'bald' : r1 < 0.09 ? 'long' : 'short');
+      const hide = { Pax_Hair: style === 'bald' ? 1 : 0, Pax_HairLong: style === 'long' ? 0 : 1, Pax_HairBun: style === 'bun' ? 0 : 1, Pax_Glasses: r2 < 0.24 ? 0 : 1 };
       for (const im of this.inst.pax) {
         im.setMatrixAt(k, m.clone().multiply(im.userData.rel));
         if (im.instanceColor && cols[im.userData.mat]) im.setColorAt(k, cols[im.userData.mat]);
         const ah = im.geometry.attributes.aHide;
-        if (ah) ah.array[k] = hide[im.userData.mat] ?? 0;
+        if (!ah) continue;
+        const part = im.userData.part;
+        ah.array[k] = part === 'Proto_PaxF' ? (female ? 0 : 1) : part === 'Proto_Pax' ? (female ? 1 : 0) : (hide[im.userData.mat] ?? 0);
       }
     }
     for (const im of this.inst.pax) {
