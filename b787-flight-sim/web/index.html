@@ -7,6 +7,7 @@
 <meta name="description" content="Micomsoft Fright Simulator — Boeing 787-9 / 767-300ER / 737-800 flight simulator with Blender-built aircraft, airports and city.">
 <style>
   :root {
+    --title-img: url("assets/title.jpg");
     color-scheme: dark;
     --bg: #05080d;
     --panel: rgba(10, 16, 26, 0.82);
@@ -32,7 +33,7 @@
   /* ---------- title screen ---------- */
   #title { position: fixed; inset: 0; z-index: 25; overflow: hidden; cursor: pointer; background: #06131f; color: #fff;
     font-family: "Inter", "Helvetica Neue", Arial, "Hiragino Sans", "Noto Sans JP", sans-serif; }
-  #title .tBg { position: absolute; inset: -2%; background: url("assets/title.jpg") center 60% / cover no-repeat; animation: tZoom 30s ease-in-out infinite alternate; }
+  #title .tBg { position: absolute; inset: -2%; background: var(--title-img) center 60% / cover no-repeat; animation: tZoom 30s ease-in-out infinite alternate; }
   @keyframes tZoom { from { transform: scale(1); } to { transform: scale(1.06) translate(-1%, .5%); } }
   #title .tShade { position: absolute; inset: 0; background:
     linear-gradient(90deg, rgba(4,14,28,.78) 0%, rgba(4,14,28,.45) 38%, rgba(4,14,28,0) 64%),
@@ -485,7 +486,7 @@
   /* --- home / menu --- */
   #menu { padding: 0; align-items: stretch; justify-content: stretch; font-family: var(--ms-font);
     background: linear-gradient(90deg, rgba(5,8,12,.92) 0%, rgba(5,8,12,.55) 55%, rgba(5,8,12,.35) 100%),
-      linear-gradient(0deg, rgba(5,8,12,.85) 0%, rgba(5,8,12,0) 45%), url("assets/title.jpg") center / cover no-repeat, #05080c;
+      linear-gradient(0deg, rgba(5,8,12,.85) 0%, rgba(5,8,12,0) 45%), var(--title-img) center / cover no-repeat, #05080c;
     backdrop-filter: none; }
   #menu .card.hub { width: 100%; max-width: none; max-height: none; height: 100%; border: 0; border-radius: 0; background: transparent;
     box-shadow: none; padding: 0 clamp(16px, 4vw, 64px); display: flex; flex-direction: column; overflow-y: auto; }
@@ -792,6 +793,9 @@
         <div><b>C</b> 視点 Camera（客室窓・座席モニター・機内）</div>
         <div><b>マウス</b> 視点回転 · ホイール ズーム</div>
         <div><b>I</b> 計器パネル Panel</div>
+        <div><b>Shift+M</b> オートパイロット画面 AP panel</div>
+        <div><b>Shift+I</b> フライト情報 Flight info</div>
+        <div><b>Shift+V</b> 無線ログ Radio log</div>
         <div><b>U</b> HUD</div>
         <div><b>L</b> 着陸灯 Lights</div>
         <div><b>T</b> 時刻 Time +1h</div>
@@ -863,6 +867,9 @@
         <div><b>C</b> 視点 Camera（客室窓・座席モニター・機内）</div>
         <div><b>マウス</b> 視点回転 · ホイール ズーム</div>
         <div><b>I</b> 計器パネル Panel</div>
+        <div><b>Shift+M</b> オートパイロット画面 AP panel</div>
+        <div><b>Shift+I</b> フライト情報 Flight info</div>
+        <div><b>Shift+V</b> 無線ログ Radio log</div>
         <div><b>U</b> HUD</div>
         <div><b>L</b> 着陸灯 Lights</div>
         <div><b>T</b> 時刻 Time +1h</div>

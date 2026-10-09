@@ -2,7 +2,7 @@
 # Sources: Poly Haven (CC0) 1k diffuse JPEGs, downloaded into SRC_DIR from https://polyhaven.com:
 #   rocky_terrain_02 grass_ground aerial_rocks_02 aerial_grass_rock aerial_ground_rock farm_soil
 #   aerial_beach_01 snow_field_aerial (files named <name>.jpg); layer 8 (tree canopy) is generated.
-#   python3 tools/build_terrain_layers.py SRC_DIR web/assets/terrain_layers.jpg 80
+#   python3 tools/build_terrain_layers.py SRC_DIR web/assets/terrain_layers.jpg 70
 import sys, os
 import numpy as np
 from PIL import Image

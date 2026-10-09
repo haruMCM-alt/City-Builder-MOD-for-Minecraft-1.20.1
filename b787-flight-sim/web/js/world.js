@@ -37,10 +37,11 @@ export const WET = { uWet: { value: 0 } };
 export const LIGHT = { SUN_K: 2.5, EXP_K: 0.58, HEMI_K: 0.35, dayK: 1 };
 
 // ------------------------------------------------------------------ textures
-// terrain material layers (assets/terrain_layers.jpg, 512 x 512 tiles stacked vertically; built
+// terrain material layers (assets/terrain_layers.jpg, square tiles stacked vertically - 512 px, 384 in
+// the single-file build; built
 // by tools/build_terrain_layers.py from Poly Haven CC0 photo scans + a generated tree canopy):
 // 0 grass, 1 dry grass, 2 rock, 3 alpine scrub, 4 bare ground, 5 farm soil, 6 sand, 7 snow, 8 canopy
-const T_LAYERS = 9, T_SIZE = 512;
+const T_LAYERS = 9;
 function terrainLayersPlaceholder() {
   const t = new THREE.DataArrayTexture(new Uint8Array(4 * T_LAYERS).fill(255), 1, 1, T_LAYERS);
   t.needsUpdate = true;
@@ -48,24 +49,24 @@ function terrainLayersPlaceholder() {
 }
 function loadTerrainLayers(renderer, done) {
   new THREE.ImageLoader().load('./assets/terrain_layers.jpg', (img) => {
-    const n = Math.min(T_LAYERS, Math.floor(img.height / T_SIZE));
-    if (img.width !== T_SIZE || n < T_LAYERS) return;
+    const S = img.width;
+    if (!S || img.height < S * T_LAYERS) return;
     const cv = document.createElement('canvas');
-    cv.width = T_SIZE; cv.height = T_SIZE * T_LAYERS;
+    cv.width = S; cv.height = S * T_LAYERS;
     const cx = cv.getContext('2d', { willReadFrequently: true });
     cx.drawImage(img, 0, 0);
     const data = new Uint8Array(cx.getImageData(0, 0, cv.width, cv.height).data.buffer);
     // mean linear colour per layer (what the texture mip-maps to far away)
     const lin = new Float32Array(256);
     for (let i = 0; i < 256; i++) { const c = i / 255; lin[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
-    const means = [], px = T_SIZE * T_SIZE;
+    const means = [], px = S * S;
     for (let l = 0; l < T_LAYERS; l++) {
       let r = 0, g = 0, b = 0;
       for (let i = l * px * 4, e = (l + 1) * px * 4; i < e; i += 16) { r += lin[data[i]]; g += lin[data[i + 1]]; b += lin[data[i + 2]]; }
       const k = 4 / px;
       means.push(new THREE.Vector3(Math.max(r * k, 1e-3), Math.max(g * k, 1e-3), Math.max(b * k, 1e-3)));
     }
-    const tex = new THREE.DataArrayTexture(data, T_SIZE, T_SIZE, T_LAYERS);
+    const tex = new THREE.DataArrayTexture(data, S, S, T_LAYERS);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.magFilter = THREE.LinearFilter;

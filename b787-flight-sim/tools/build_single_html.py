@@ -177,12 +177,33 @@ def pack_asset(key, path, video_kbps, shared=None, shared_out=None):
     if key.endswith(".glb"):
         strip = bool(STRIP_TEX.search(key))
         data = repack_glb(data, strip, None if strip else shared, shared_out)
+    if key.endswith("terrain_layers.jpg"):
+        data = shrink_layers(data)
     if key.endswith(".mp4") and video_kbps:
         data = reencode_video(path, video_kbps) or data
     gz = gzip.compress(data, 9, mtime=0)
     if len(gz) < len(data) * 0.92:
         return gz, True
     return data, False
+
+
+def shrink_layers(data, tile=384, q=66):
+    """terrain material atlas (N square tiles stacked vertically) at a smaller tile size"""
+    from PIL import Image
+    im = Image.open(io.BytesIO(data)).convert("RGB")
+    n = im.height // im.width
+    im = im.resize((tile, tile * n), Image.LANCZOS)
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=q, optimize=True)
+    return out.getvalue()
+
+
+def jpeg_b64(path, q=64):
+    """a photo re-encoded for inlining"""
+    from PIL import Image
+    out = io.BytesIO()
+    Image.open(path).convert("RGB").save(out, "JPEG", quality=q, optimize=True, progressive=True)
+    return base64.b64encode(out.getvalue()).decode("ascii")
 
 
 def reencode_video(path, kbps):
@@ -220,7 +241,7 @@ def main():
     html = re.sub(r'<script type="importmap">.*?</script>\s*', "", html, flags=re.S)
     html = re.sub(r'<script type="module" src="\./js/main\.js"></script>\s*', "", html)
     # title picture as a data: URI
-    html = html.replace('url("assets/title.jpg")', 'url("data:image/jpeg;base64,%s")' % b64(os.path.join(WEB, "assets", "title.jpg")))
+    html = html.replace('url("assets/title.jpg")', 'url("data:image/jpeg;base64,%s")' % jpeg_b64(os.path.join(WEB, "assets", "title.jpg")))
 
     assets = []
     for f in sorted(os.listdir(os.path.join(WEB, "assets"))):
