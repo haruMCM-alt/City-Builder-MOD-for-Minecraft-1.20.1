@@ -73,27 +73,27 @@ const TYPES = [
 // play modes on the menu's first screen: each opens a compact slide show with only the
 // slides it needs (keys of the <section data-key> slides) and presets its scenario
 const MODES = [
-  { id: 'tutorial', icon: '🎓', name: 'チュートリアル', en: 'Tutorial', img: 'type_ma7.jpg', tutorial: true,
+  { id: 'tutorial', icon: '🎓', name: 'チュートリアル', en: 'Tutorial', img: 'mode_tutorial.jpg', tutorial: true,
     desc: '離陸から着陸までを、実際に操縦しながら覚えます（約 5 分）。はじめての人はここから。', slides: [], scen: null, preset: {} },
-  { id: 'beginner', icon: '🔰', name: '初心者モード', en: 'Beginner', badge: 'おすすめ', img: 'type_b789.jpg',
+  { id: 'beginner', icon: '🔰', name: '初心者モード', en: 'Beginner', badge: 'おすすめ', img: 'mode_beginner.jpg',
     desc: '管制の指示を日本語に訳し、次にやる操作を画面でガイド。羽田のゲートから出発します。',
     slides: ['type', 'env', 'opts'], scen: ['gate', 'rwy27', 'final'], preset: { scenario: 'gate', beginner: true, weather: 'clear', wind: 5, turb: 0, tod: 10 } },
-  { id: 'free', icon: '✈', name: 'フリーフライト', en: 'Free flight', img: 'type_b763.jpg',
+  { id: 'free', icon: '✈', name: 'フリーフライト', en: 'Free flight', img: 'mode_free.jpg',
     desc: 'すべての設定を自由に。離陸・進入・遊覧から選び、機種・重量・塗装・天候まで細かく決めます。',
     slides: ['flight', 'type', 'load', 'env', 'opts'], scen: null, preset: { beginner: false } },
-  { id: 'auto', icon: '🤖', name: '自動操縦の旅', en: 'Auto flight', img: 'type_ma7.jpg',
+  { id: 'auto', icon: '🤖', name: '自動操縦の旅', en: 'Auto flight', img: 'mode_auto.jpg',
     desc: '出発から着陸まで全自動。目的地を選んで、客室の窓や機内から空の旅を楽しめます。',
     slides: ['flight', 'type', 'env', 'opts'], scen: ['auto'], preset: { scenario: 'auto', beginner: false } },
-  { id: 'landing', icon: '🛬', name: '着陸チャレンジ', en: 'Landing challenge', img: 'type_b738.jpg',
+  { id: 'landing', icon: '🛬', name: '着陸チャレンジ', en: 'Landing challenge', img: 'mode_landing.jpg',
     desc: 'ILS 進入・ショートファイナル・目的地への最終進入。横風や悪天候で腕試し。',
     slides: ['flight', 'type', 'env', 'opts'], scen: ['ils27', 'final', 'apt2'], preset: { scenario: 'ils27', beginner: false } },
-  { id: 'emergency', icon: '🚨', name: '緊急事態訓練', en: 'Emergency training', img: 'type_ma9.jpg',
+  { id: 'emergency', icon: '🚨', name: '緊急事態訓練', en: 'Emergency training', img: 'mode_emergency.jpg',
     desc: 'エンジン火災や両エンジン停止を訓練。メーデー宣言、消防車の出動、緊急着陸まで。',
     slides: ['flight', 'fail', 'type', 'env', 'opts'], scen: ['ils27', 'rwy27', 'cruise'], preset: { scenario: 'ils27', beginner: false } },
-  { id: 'sightseeing', icon: '🏙', name: '遊覧飛行', en: 'Sightseeing', img: 'type_ma3.jpg',
+  { id: 'sightseeing', icon: '🏙', name: '遊覧飛行', en: 'Sightseeing', img: 'mode_sightseeing.jpg',
     desc: '東京の街やランドマークの上空をのんびり。夕焼けや夜景の時刻もおすすめ。',
     slides: ['flight', 'type', 'env', 'opts'], scen: ['city', 'cruise'], preset: { scenario: 'city', beginner: false, tod: 17.5 } },
-  { id: 'spotter', icon: '📷', name: 'スポッター', en: 'Plane spotting', img: 'type_b789.jpg',
+  { id: 'spotter', icon: '📷', name: 'スポッター', en: 'Plane spotting', img: 'mode_spotter.jpg',
     desc: '空港で行き交う飛行機を眺めるモード。カメラが離着陸機を自動で追います（B で次の機体）。',
     slides: ['env', 'opts'], scen: ['gate'], preset: { scenario: 'gate', beginner: false, spotter: true } },
 ];
@@ -307,7 +307,8 @@ class App {
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     if (this.isTouch) this.input.bindTouch($('touch'));
     this.audio = new Audio();
-    this.panelOn = true;
+    this.ui = this.loadUIPrefs();
+    this.panelOn = this.ui.panel;
     this.paused = true;
     this.acc = 0;
     this.events = [];
@@ -470,6 +471,10 @@ class App {
     $('btnView').onclick = () => this.command('view');
     $('atcHint').onclick = () => this.command('atc');
     $('btnPanel').onclick = () => this.command('panel');
+    $('btnMcp').onclick = () => this.command('uiMcp');
+    $('btnInfo').onclick = () => this.command('uiInfo');
+    $('btnRadio').onclick = () => this.command('uiRadio');
+    $('btnAtc').onclick = () => this.command('atc');
     $('btnMenu').onclick = () => this.command('menu');
     this.fids = new FIDS(this, $('fids'));
     $('btnFids').onclick = () => this.command('fids');
@@ -593,6 +598,22 @@ class App {
       grid.appendChild(b);
     }
     if ($('hubSettings')) $('hubSettings').onclick = () => this.selectMode('settings');
+    // home screen: arrow keys move between the tiles, the clock in the top bar
+    grid.addEventListener('keydown', (e) => {
+      const bs = [...grid.children], i = bs.indexOf(document.activeElement);
+      if (i < 0) return;
+      const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').length;
+      const d = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols }[e.key];
+      if (d == null) return;
+      e.preventDefault();
+      bs[Math.max(0, Math.min(bs.length - 1, i + d))].focus();
+    });
+    const clock = () => { const c = $('hubClock'); if (c) c.textContent = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }); };
+    clock(); setInterval(clock, 15000);
+    // Esc in a mode's settings goes back to the home screen
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !$('menu').classList.contains('hidden') && !$('wizCard').classList.contains('hidden')) { e.preventDefault(); this.showModeHub(); }
+    });
     for (const id of SAVED_OPTS) {
       const el = $(id);
       if (!el) continue;
@@ -610,6 +631,7 @@ class App {
   showModeHub() {
     $('wizCard').classList.add('hidden');
     $('modeHub').classList.remove('hidden');
+    requestAnimationFrame(() => $('modeGrid').firstElementChild?.focus({ preventScroll: true }));
   }
 
   // a mode opens its own compact slide show
@@ -1159,10 +1181,37 @@ class App {
       ['mcp', 'status', 'corner'].forEach((i) => $(i).classList.remove('hidden'));
       if (this.isTouch) $('touch').classList.remove('hidden');
       $('view').focus();
-      $('panel').classList.toggle('hidden', !this.panelOn || this.rig.view === 'cockpit' || this.rig.view === 'ife');
+      this.applyUILayout(!!(this.tutorial?.active || this.beginner));
       this.toast(SCENARIOS.find((s) => s.id === id).name + ' — ' + SCENARIOS.find((s) => s.id === id).note, 5000);
       this.updateMCP(true);
     }
+  }
+
+  // ------------------------------------------------------------------- toolbar windows
+  // MSFS-style: the outside view stays clean, the top toolbar opens the instruments, the autopilot
+  // panel, flight info and the radio log; the choice is remembered. Tutorial and beginner flights
+  // open the instruments and the autopilot, which their guidance refers to.
+  loadUIPrefs() {
+    const d = { panel: false, mcp: false, info: true, radio: true };
+    try { return Object.assign(d, JSON.parse(localStorage.getItem('b787.ui') || '{}')); } catch (e) { return d; }
+  }
+
+  saveUIPrefs() {
+    if (this._uiLearn) return;          // tutorial / beginner layout is not the player's choice
+    try { localStorage.setItem('b787.ui', JSON.stringify(this.ui)); } catch (e) { /* storage unavailable */ }
+  }
+
+  applyUILayout(learning) {
+    if (learning != null) {
+      this._uiLearn = learning;
+      this.ui = learning ? { panel: true, mcp: true, info: true, radio: true } : this.loadUIPrefs();
+    }
+    this.panelOn = this.ui.panel;
+    const b = document.body.classList;
+    b.toggle('noMcp', !this.ui.mcp); b.toggle('noInfo', !this.ui.info); b.toggle('noRadio', !this.ui.radio);
+    $('panel').classList.toggle('hidden', !this.panelOn || this.rig.view === 'cockpit' || this.rig.view === 'ife');
+    const on = { btnPanel: this.panelOn, btnMcp: this.ui.mcp, btnInfo: this.ui.info, btnRadio: this.ui.radio };
+    for (const [id, v] of Object.entries(on)) $(id)?.classList.toggle('on', !!v);
   }
 
   // ------------------------------------------------------------------- commands
@@ -1234,7 +1283,12 @@ class App {
         this.toast('視点 ' + VIEW_NAMES[v]);
         break;
       }
-      case 'panel': this.panelOn = !this.panelOn; $('panel').classList.toggle('hidden', !this.panelOn || this.rig.view === 'cockpit' || this.rig.view === 'ife'); break;
+      case 'panel': this.panelOn = !this.panelOn; this.ui.panel = this.panelOn; this.saveUIPrefs(); this.applyUILayout(); break;
+      case 'uiMcp': case 'uiInfo': case 'uiRadio': {
+        const k = { uiMcp: 'mcp', uiInfo: 'info', uiRadio: 'radio' }[c];
+        this.ui[k] = !this.ui[k]; this.saveUIPrefs(); this.applyUILayout();
+        break;
+      }
       case 'hud': this.instruments.hudOn = !this.instruments.hudOn; break;
       case 'lights': {
         const L = this.visual.lightsOn;
