@@ -47,6 +47,38 @@ function fbm(x, z, oct) {
   return s;
 }
 
+// value noise with its analytic gradient (same hash / quintic fade as vnoise)
+const ND = [0, 0, 0];
+function vnoised(x, z) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const fx = x - ix, fz = z - iz;
+  const ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10), uz = fz * fz * fz * (fz * (fz * 6 - 15) + 10);
+  const dux = 30 * fx * fx * (fx * (fx - 2) + 1), duz = 30 * fz * fz * (fz * (fz - 2) + 1);
+  const a = hash2(ix, iz), b = hash2(ix + 1, iz), c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+  const k1 = b - a, k2 = c - a, k3 = a - b - c + d;
+  ND[0] = a + k1 * ux + k2 * uz + k3 * ux * uz;
+  ND[1] = dux * (k1 + k3 * uz);
+  ND[2] = duz * (k2 + k3 * ux);
+  return ND;
+}
+
+// Eroded relief: fbm whose octaves are damped where the slope accumulated by the larger ones is
+// steep (I. Quilez) - sharp ridges, smooth valley floors and spurs instead of round noise bumps.
+// Rotated octaves hide the grid. Result roughly -0.7 .. 0.7.
+export const EROSION_OCT = 8;
+function erosion(x, z) {
+  let a = 0, b = 0.5, dx = 0, dz = 0, px = x, pz = z;
+  for (let i = 0; i < EROSION_OCT; i++) {
+    const n = vnoised(px, pz);
+    dx += 2 * n[1]; dz += 2 * n[2];
+    a += b * (2 * n[0] - 1) / (1 + dx * dx + dz * dz);
+    b *= 0.5;
+    const qx = 1.6 * px - 1.2 * pz + 13.7, qz = 1.2 * px + 1.6 * pz - 7.3;
+    px = qx; pz = qz;
+  }
+  return a;
+}
+
 const smooth = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
   return t * t * (3 - 2 * t);
@@ -110,6 +142,44 @@ export function coastWiggle(x, z) {
 const PEAKS = GEO.peaks;          // [x, z, h, r, cone]
 const REEF = GEO.reef;            // [x, z, radius]
 const FL = GEO.flats;             // {x0, x1, z0, z1, hard}
+const URB = GEO.urban;            // [x, z, radius, strength, airport]
+export const RELIEF_L = 2400;     // base wavelength of the eroded hills (m)
+export const RELIEF_LM = 5200;    // ... and of the mountain ridges / valleys
+// the Blender landmarks (real_kit.py, geo.CITIES) were placed on the terrain heights of the time:
+// no relief around them
+const LANDMARKS = [[15357, 9556], [12394, 1880], [9509, 2385], [-4458, -16449], [-5753, -12743], [-12023, 5728], [6004, -250402], [4345, -243663], [2621, -247100], [36565, -262185], [38689, -259612], [14253, -246296], [46118, -229270], [213690, 256624], [212982, 257177], [213547, 256884], [-75417, -420920], [-74553, -415996]];
+
+// How rugged the land is: a little everywhere, rolling hills inland in broad hilly regions,
+// mountains around the ranges (geo.py peaks); flattened in the cities (their buildings and the
+// Blender landmarks stand on the old heights) and at the coast.
+const RA = [0, 0];
+function reliefAmp(x, z, d) {
+  const inland = smooth(800, 12000, -d);
+  const broad = smooth(0.4, 0.72, fbm(x / 45000 + 5.3, z / 45000 - 2.1, 3));
+  let rng = 0, cone = 1;
+  for (const p of PEAKS) {
+    const dx = x - p[0], dz = z - p[1], R = p[3] * 1.5;
+    if (Math.abs(dx) > R * 2.2 || Math.abs(dz) > R * 2.2) continue;
+    const r2 = (dx * dx + dz * dz) / (R * R);
+    rng = Math.max(rng, Math.exp(-r2) * Math.min(1, p[2] / 900));
+    // volcanic cones (Fuji, Yotei ...) keep their clean profile
+    if (p[4]) cone = Math.min(cone, smooth(0.45, 1.05, Math.sqrt(r2) * 1.5));
+  }
+  let urb = 0;
+  for (const m of LANDMARKS) {
+    const dx = x - m[0], dz = z - m[1];
+    if (Math.abs(dx) < 2500 && Math.abs(dz) < 2500) urb = Math.max(urb, 1 - smooth(1200, 2500, Math.hypot(dx, dz)));
+  }
+  for (const u of URB) {
+    const dx = x - u[0], dz = z - u[1];
+    if (Math.abs(dx) > u[2] || Math.abs(dz) > u[2]) continue;
+    urb = Math.max(urb, u[3] * (1 - smooth(u[2] * 0.5, u[2], Math.hypot(dx, dz))));
+  }
+  const k = (1 - urb) * cone * smooth(0, 2500, -d);
+  RA[0] = (12 + 20 * inland + 190 * broad * inland + 60 * rng) * k;     // rolling hills (positive)
+  RA[1] = 950 * rng * k;                                               // mountain relief (signed)
+  return RA;
+}
 
 export function terrainHeight(x, z) {
   // inside an airport flat zone the answer is 0 whatever the coast: skip the polygon search
@@ -121,6 +191,10 @@ export function terrainHeight(x, z) {
     const inland = smooth(0, 9000, -d);
     const n = fbm(x / 7000, z / 7000, 6);
     h = 2 + (10 + 170 * n * n) * inland;
+    const A = reliefAmp(x, z, d);
+    if (A[0] > 0.01) h += A[0] * Math.min(Math.max(erosion(x / RELIEF_L, z / RELIEF_L) * 0.9 + 0.5, 0), 1.3);
+    if (A[1] > 0.01) h += A[1] * erosion(x / RELIEF_LM + 31.7, z / RELIEF_LM - 17.2) * 1.15;
+    h = Math.max(h, 2);                        // valleys never dip under the sea
     for (const p of PEAKS) {
       const dx = x - p[0], dz = z - p[1];
       if (Math.abs(dx) > p[3] * 2.2 || Math.abs(dz) > p[3] * 2.2) continue;
@@ -182,6 +256,46 @@ const polys = POLYS.map((P) => `ivec3(${P.s}, ${P.n}, ${P.kind})`).join(', ');
 const boxes = POLYS.map((P) => v4(P)).join(', ');
 const peaks = PEAKS.map((p) => `vec4(${f1(p[0])}, ${f1(p[1])}, ${f1(p[2])}, ${f1(p[3] * (p[4] ? -1 : 1))})`).join(', ');
 
+// fragment-side copy of the relief noise (the terrain shader adds the octaves its vertex grid is
+// too coarse for as per-pixel normal detail)
+export const EROSION_GLSL = /* glsl */`
+const float E_RELIEF_L = ${RELIEF_L.toFixed(1)};
+const float E_RELIEF_LM = ${RELIEF_LM.toFixed(1)};
+float e_hash2(int ix, int iz) {
+  uint h = uint(ix) * 374761393u + uint(iz) * 668265263u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  h = h ^ (h >> 16u);
+  return float(h & 0xffffffu) / 16777216.0;
+}
+vec3 e_vnoised(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = p - i;
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+  int ix = int(i.x), iz = int(i.y);
+  float a = e_hash2(ix, iz), b = e_hash2(ix + 1, iz), c = e_hash2(ix, iz + 1), d = e_hash2(ix + 1, iz + 1);
+  float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
+  return vec3(a + k1 * u.x + k2 * u.y + k3 * u.x * u.y, du.x * (k1 + k3 * u.y), du.y * (k2 + k3 * u.x));
+}
+// gradient (per metre) of the relief octaves shorter than the local vertex spacing allows
+vec2 e_detailGrad(vec2 xz, float spacing, float L, vec2 off) {
+  vec2 q = xz / L + off;
+  vec2 D = vec2(0.0), g = vec2(0.0);
+  mat2 J = mat2(1.0);                    // d q / d (xz / L)
+  float b = 0.5, lam = L;
+  for (int i = 0; i < ${EROSION_OCT}; i++) {
+    vec3 n = e_vnoised(q);
+    D += 2.0 * n.yz;
+    float w = smoothstep(0.35 * lam, 0.9 * lam, spacing);
+    if (w > 0.001) g += w * b * 2.0 * (transpose(J) * n.yz) / (1.0 + dot(D, D));
+    b *= 0.5; lam *= 0.5;
+    q = vec2(1.6 * q.x - 1.2 * q.y + 13.7, 1.2 * q.x + 1.6 * q.y - 7.3);
+    J = mat2(1.6, 1.2, -1.2, 1.6) * J;
+  }
+  return g / L;
+}
+`;
+
 export const TERRAIN_GLSL = /* glsl */`
 ${FLATS_GLSL}
 const int N_VERTS = ${VERTS.length};
@@ -192,6 +306,12 @@ const ivec3 cPolys[${POLYS.length}] = ivec3[${POLYS.length}](${polys});
 const vec4 cBoxes[${POLYS.length}] = vec4[${POLYS.length}](${boxes});
 const vec4 cPeaks[${PEAKS.length}] = vec4[${PEAKS.length}](${peaks});
 const vec3 cReef = vec3(${f1(REEF[0])}, ${f1(REEF[1])}, ${f1(REEF[2])});
+const int N_URBT = ${URB.length};
+const vec4 cUrbT[${URB.length}] = vec4[${URB.length}](${URB.map((u) => `vec4(${f1(u[0])}, ${f1(u[1])}, ${f1(u[2])}, ${u[3].toFixed(3)})`).join(', ')});
+const float RELIEF_L = ${RELIEF_L.toFixed(1)};
+const float RELIEF_LM = ${RELIEF_LM.toFixed(1)};
+const vec2 cLandmarks[${LANDMARKS.length}] = vec2[${LANDMARKS.length}](${LANDMARKS.map((m) => `vec2(${f1(m[0])}, ${f1(m[1])})`).join(', ')});
+vec2 tReliefA = vec2(0.0);  // hill / mountain relief amplitudes at the last terrainHeight() call
 
 float t_hash2(int ix, int iz) {
   uint h = uint(ix) * 374761393u + uint(iz) * 668265263u;
@@ -215,6 +335,55 @@ float t_fbm(vec2 p, int oct) {
     f *= 2.03; amp *= 0.5;
   }
   return s;
+}
+vec3 t_vnoised(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = p - i;
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+  int ix = int(i.x), iz = int(i.y);
+  float a = t_hash2(ix, iz), b = t_hash2(ix + 1, iz), c = t_hash2(ix, iz + 1), d = t_hash2(ix + 1, iz + 1);
+  float k1 = b - a, k2 = c - a, k3 = a - b - c + d;
+  return vec3(a + k1 * u.x + k2 * u.y + k3 * u.x * u.y, du.x * (k1 + k3 * u.y), du.y * (k2 + k3 * u.x));
+}
+float t_erosion(vec2 p) {
+  float a = 0.0, b = 0.5;
+  vec2 d = vec2(0.0);
+  for (int i = 0; i < ${EROSION_OCT}; i++) {
+    vec3 n = t_vnoised(p);
+    d += 2.0 * n.yz;
+    a += b * (2.0 * n.x - 1.0) / (1.0 + dot(d, d));
+    b *= 0.5;
+    p = vec2(1.6 * p.x - 1.2 * p.y + 13.7, 1.2 * p.x + 1.6 * p.y - 7.3);
+  }
+  return a;
+}
+vec2 t_reliefAmp(vec2 xz, float d) {
+  float inland = smoothstep(800.0, 12000.0, -d);
+  float broad = smoothstep(0.4, 0.72, t_fbm(xz / 45000.0 + vec2(5.3, -2.1), 3));
+  float rng = 0.0, cone = 1.0;
+  for (int i = 0; i < N_PEAKS; i++) {
+    vec4 P = cPeaks[i];
+    float R = abs(P.w) * 1.5;
+    vec2 dd = xz - P.xy;
+    if (abs(dd.x) > R * 2.2 || abs(dd.y) > R * 2.2) continue;
+    float r2 = dot(dd, dd) / (R * R);
+    rng = max(rng, exp(-r2) * min(1.0, P.z / 900.0));
+    if (P.w < 0.0) cone = min(cone, smoothstep(0.45, 1.05, sqrt(r2) * 1.5));
+  }
+  float urb = 0.0;
+  for (int i = 0; i < ${LANDMARKS.length}; i++) {
+    vec2 dd = xz - cLandmarks[i];
+    if (abs(dd.x) < 2500.0 && abs(dd.y) < 2500.0) urb = max(urb, 1.0 - smoothstep(1200.0, 2500.0, length(dd)));
+  }
+  for (int i = 0; i < N_URBT; i++) {
+    vec4 U = cUrbT[i];
+    vec2 dd = xz - U.xy;
+    if (abs(dd.x) > U.z || abs(dd.y) > U.z) continue;
+    urb = max(urb, U.w * (1.0 - smoothstep(U.z * 0.5, U.z, length(dd))));
+  }
+  float k = (1.0 - urb) * cone * smoothstep(0.0, 2500.0, -d);
+  return vec2(12.0 + 20.0 * inland + 190.0 * broad * inland + 60.0 * rng, 950.0 * rng) * k;
 }
 float t_sdPoly(vec2 p, int k) {
   vec4 B = cBoxes[k];
@@ -250,12 +419,18 @@ float coastDist(vec2 p) {
 }
 float terrainHeight(vec2 xz) {
   float x = xz.x, z = xz.y;
+  tReliefA = vec2(0.0);
   float d = coastDist(xz);
   float h;
   if (d < 0.0) {
     float inland = smoothstep(0.0, 9000.0, -d);
     float n = t_fbm(xz / 7000.0, 6);
     h = 2.0 + (10.0 + 170.0 * n * n) * inland;
+    vec2 A = t_reliefAmp(xz, d);
+    tReliefA = A;
+    if (A.x > 0.01) h += A.x * clamp(t_erosion(xz / RELIEF_L) * 0.9 + 0.5, 0.0, 1.3);
+    if (A.y > 0.01) h += A.y * t_erosion(xz / RELIEF_LM + vec2(31.7, -17.2)) * 1.15;
+    h = max(h, 2.0);
     for (int i = 0; i < N_PEAKS; i++) {
       vec4 P = cPeaks[i];
       float R = abs(P.w);

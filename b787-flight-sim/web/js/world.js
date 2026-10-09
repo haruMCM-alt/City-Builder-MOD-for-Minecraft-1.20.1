@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL, terrainHeight } from './terrain.js';
+import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL, EROSION_GLSL, terrainHeight } from './terrain.js';
 import { patchFacade, patchStructure } from './shading.js';
 import { GROUND_GLSL } from './ground.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
@@ -37,6 +37,46 @@ export const WET = { uWet: { value: 0 } };
 export const LIGHT = { SUN_K: 2.5, EXP_K: 0.58, HEMI_K: 0.35, dayK: 1 };
 
 // ------------------------------------------------------------------ textures
+// terrain material layers (assets/terrain_layers.jpg, 512 x 512 tiles stacked vertically; built
+// by tools/build_terrain_layers.py from Poly Haven CC0 photo scans + a generated tree canopy):
+// 0 grass, 1 dry grass, 2 rock, 3 alpine scrub, 4 bare ground, 5 farm soil, 6 sand, 7 snow, 8 canopy
+const T_LAYERS = 9, T_SIZE = 512;
+function terrainLayersPlaceholder() {
+  const t = new THREE.DataArrayTexture(new Uint8Array(4 * T_LAYERS).fill(255), 1, 1, T_LAYERS);
+  t.needsUpdate = true;
+  return t;
+}
+function loadTerrainLayers(renderer, done) {
+  new THREE.ImageLoader().load('./assets/terrain_layers.jpg', (img) => {
+    const n = Math.min(T_LAYERS, Math.floor(img.height / T_SIZE));
+    if (img.width !== T_SIZE || n < T_LAYERS) return;
+    const cv = document.createElement('canvas');
+    cv.width = T_SIZE; cv.height = T_SIZE * T_LAYERS;
+    const cx = cv.getContext('2d', { willReadFrequently: true });
+    cx.drawImage(img, 0, 0);
+    const data = new Uint8Array(cx.getImageData(0, 0, cv.width, cv.height).data.buffer);
+    // mean linear colour per layer (what the texture mip-maps to far away)
+    const lin = new Float32Array(256);
+    for (let i = 0; i < 256; i++) { const c = i / 255; lin[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+    const means = [], px = T_SIZE * T_SIZE;
+    for (let l = 0; l < T_LAYERS; l++) {
+      let r = 0, g = 0, b = 0;
+      for (let i = l * px * 4, e = (l + 1) * px * 4; i < e; i += 16) { r += lin[data[i]]; g += lin[data[i + 1]]; b += lin[data[i + 2]]; }
+      const k = 4 / px;
+      means.push(new THREE.Vector3(Math.max(r * k, 1e-3), Math.max(g * k, 1e-3), Math.max(b * k, 1e-3)));
+    }
+    const tex = new THREE.DataArrayTexture(data, T_SIZE, T_SIZE, T_LAYERS);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    tex.needsUpdate = true;
+    done(tex, means);
+  }, undefined, () => {});
+}
+
 function noiseCanvas(size, seed, channels = 3, scales = [8, 32, 4]) {
   // tileable value noise, two octaves per channel (each octave has its own lattice)
   const c = document.createElement('canvas');
@@ -397,7 +437,9 @@ export class World {
   }
 
   _buildTerrain() {
-    const NG = this.quality === 'low' ? 160 : 256;
+    // vertex grid: ~5 m spacing under the aircraft, a few hundred metres on the far mountains
+    const NG = { low: 160, medium: 256, high: 384, ultra: 512 }[this.quality] || 384;
+    this.terrainN = NG;
     const geo = World.radialGrid(NG, 70000);
     // Performance: height and normal of every grid vertex (the full terrain function: coast
     // polygons, wiggle, peaks, flats - evaluated three times for the normal) are baked into a
@@ -424,10 +466,13 @@ void main() {
   vec2 pos = vec2(gmap(t.x), gmap(t.y));
   vec2 wxz = pos + uCenter;
   float h0 = terrainHeight(wxz);
+  vec2 A = tReliefA;
   float e = max(3.0, length(pos) * 0.006);
   float hx = terrainHeight(wxz + vec2(e, 0.0));
   float hz = terrainHeight(wxz + vec2(0.0, e));
-  gl_FragColor = vec4(h0, normalize(vec3(h0 - hx, e, h0 - hz)));
+  vec3 n = normalize(vec3(h0 - hx, e, h0 - hz));
+  // height, normal (y implied), relief amplitudes packed: mountain (integer m) * 1024 + hills
+  gl_FragColor = vec4(h0, n.x, n.z, floor(A.y + 0.5) * 1024.0 + min(A.x, 1000.0));
 }`,
       }));
       this._bakedAt = null;
@@ -436,35 +481,42 @@ void main() {
     detail.wrapS = detail.wrapT = THREE.RepeatWrapping;
     detail.colorSpace = THREE.NoColorSpace;
     detail.anisotropy = 8;
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0, envMapIntensity: 0.42 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0, envMapIntensity: 0.3 });
     this.terrainUniforms = {
       uCenter: { value: new THREE.Vector2() },
       uDetail: { value: detail },
+      uLayers: { value: terrainLayersPlaceholder() },
+      uLayerMean: { value: Array.from({ length: T_LAYERS }, () => new THREE.Vector3(1, 1, 1)) },
       uTerrH: { value: this.terrainRT ? this.terrainRT.texture : null },
+      uTerrCam: { value: new THREE.Vector3() }, uTerrN: { value: NG },
     };
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, this.terrainUniforms);
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', this._bakeOK ? `#include <common>
 uniform vec2 uCenter; uniform sampler2D uTerrH; attribute vec2 aGrid;
-varying vec3 vTW; varying float vSlope;` : `#include <common>
+varying vec3 vTW; varying float vSlope; varying vec3 vNW; varying vec2 vRelA;` : `#include <common>
 uniform vec2 uCenter;
-varying vec3 vTW; varying float vSlope;
+varying vec3 vTW; varying float vSlope; varying vec3 vNW; varying vec2 vRelA;
 ${TERRAIN_GLSL}`)
         .replace('#include <beginnormal_vertex>', this._bakeOK ? `
 vec2 wxz = position.xz + uCenter;
 vec4 tH = texelFetch(uTerrH, ivec2(aGrid + 0.5), 0);
 float h0 = tH.x;
-vec3 objectNormal = tH.yzw;
+vec3 objectNormal = vec3(tH.y, sqrt(max(1.0 - tH.y * tH.y - tH.z * tH.z, 0.0)), tH.z);
 vSlope = 1.0 - objectNormal.y;
+vNW = objectNormal;
+float aM = floor(tH.w / 1024.0); vRelA = vec2(tH.w - aM * 1024.0, aM);
 vTW = vec3(wxz.x, h0, wxz.y);` : `
 vec2 wxz = position.xz + uCenter;
 float h0 = terrainHeight(wxz);
+vRelA = tReliefA;
 float e = max(3.0, length(position.xz) * 0.006);
 float hx = terrainHeight(wxz + vec2(e, 0.0));
 float hz = terrainHeight(wxz + vec2(0.0, e));
 vec3 objectNormal = normalize(vec3(h0 - hx, e, h0 - hz));
 vSlope = 1.0 - objectNormal.y;
+vNW = objectNormal;
 vTW = vec3(wxz.x, h0, wxz.y);`)
         .replace('#include <begin_vertex>', 'vec3 transformed = vec3(position.x, h0, position.z);');
       sh.fragmentShader = sh.fragmentShader
@@ -479,9 +531,35 @@ float tfH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); 
 ${GROUND_GLSL}
 float gH = 0.0;
 float gRough = 0.97;
-varying vec3 vTW; varying float vSlope;`)
+varying vec3 vTW; varying float vSlope; varying vec3 vNW; varying vec2 vRelA;
+uniform vec3 uTerrCam; uniform float uTerrN;
+uniform mediump sampler2DArray uLayers; uniform vec3 uLayerMean[${T_LAYERS}];
+// photo detail of one material layer, divided by its mean colour so that it adds texture without
+// moving the hand-tuned albedo; sampled at three scales, rotated against each other so that no
+// tile repeats. Minified past the pixel it mip-maps to the mean and fades to 1 by itself.
+vec3 tDet(int L, vec2 xz, float s) {
+  vec3 m = uLayerMean[L];
+  vec3 a = texture(uLayers, vec3(xz / s, float(L))).rgb / m;
+  vec3 b = texture(uLayers, vec3(mat2(0.8, -0.6, 0.6, 0.8) * xz / (s * 4.3) + 0.37, float(L))).rgb / m;
+  vec3 c = texture(uLayers, vec3(mat2(-0.28, 0.96, -0.96, -0.28) * xz / (s * 19.0) + 0.71, float(L))).rgb / m;
+  return clamp(a * mix(vec3(1.0), b, 0.7) * mix(vec3(1.0), c, 0.5), 0.0, 3.0);
+}
+float tLum(vec3 c) { return dot(c, vec3(0.3, 0.55, 0.15)); }
+${EROSION_GLSL}
+vec3 gNW = vec3(0.0, 1.0, 0.0);`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 {
+  // per-pixel terrain normal: the vertex normal plus the relief octaves the grid cannot hold
+  {
+    float r = length(vTW.xz - uTerrCam.xz);
+    float t = pow(r / 68740.0, 0.303);
+    float spacing = 70000.0 * (0.018 + 3.2406 * pow(t, 2.3)) * 2.0 / uTerrN;
+    vec2 g = vec2(0.0);
+    if (vRelA.x > 0.5) g += vRelA.x * 0.9 * e_detailGrad(vTW.xz, spacing, E_RELIEF_L, vec2(0.0));
+    if (vRelA.y > 0.5) g += vRelA.y * 1.15 * e_detailGrad(vTW.xz, spacing, E_RELIEF_LM, vec2(31.7, -17.2));
+    gNW = normalize(normalize(vNW) + vec3(-g.x, 0.0, -g.y));
+  }
+  float vSlopeD = 1.0 - gNW.y;
   vec3 d1 = texture2D(uDetail, vTW.xz / 23.0).rgb;
   vec3 d2 = texture2D(uDetail, vTW.xz / 410.0).rgb;
   vec3 d3 = texture2D(uDetail, vTW.xz / 5300.0).rgb;
@@ -499,6 +577,8 @@ varying vec3 vTW; varying float vSlope;`)
   vec3 grass = mix(lush, midG, smoothstep(0.25, 0.75, d2.r * 0.55 + nA * 0.45));
   grass = mix(grass, dry, smoothstep(0.58, 0.82, d3.g * 0.55 + nA * 0.45) * 0.75);
   grass *= 0.8 + 0.4 * mix(d1.r, nB, 0.6);
+  vec3 pGrass = mix(tDet(0, vTW.xz, 9.0), tDet(1, vTW.xz, 11.0), smoothstep(0.3, 0.7, nA));
+  grass *= pGrass;
   grass *= mix(1.0, 0.72 + 0.56 * nC, nearC);
   float soil = smoothstep(0.74, 0.86, nB * 0.6 + nC * 0.4) * nearC * 0.6;
   grass = mix(grass, vec3(0.13, 0.10, 0.07) * (0.8 + 0.4 * nD), soil);
@@ -520,10 +600,19 @@ varying vec3 vTW; varying float vSlope;`)
     grass = mix(grass, mix(grass, dryG, 0.7 * dryA), airport);
     grass = mix(grass, vec3(0.04, 0.08, 0.025), airport * ditch * 0.6);
   }
-  gH = ((nB - 0.5) * 0.08 + (nC - 0.5) * 0.05 * nearC + (nD - 0.5) * 0.02 * nearB) * (1.0 - soil * 0.5);
-  vec3 forest = vec3(0.035, 0.065, 0.022) * (0.7 + 0.6 * d1.g) * (0.8 + 0.4 * nB);
-  float fm = smoothstep(0.52, 0.6, d3.r * 0.7 + d2.b * 0.3) * smoothstep(15.0, 60.0, h);
+  gH = ((nB - 0.5) * 0.08 + (nC - 0.5) * 0.05 * nearC + (nD - 0.5) * 0.02 * nearB) * (1.0 - soil * 0.5)
+     + (tLum(pGrass) - 1.0) * 0.05;
+  // forest: Japan's hills and mountains are wooded almost to the treeline (~2,400 m on Honshu,
+  // ~1,400 m in Hokkaido); the lowland keeps fields and meadows between woods
+  float treeLine = mix(2450.0, 1450.0, hok) + (d2.g - 0.5) * 300.0;
+  float alpine = smoothstep(treeLine - 250.0, treeLine + 150.0, h);
+  vec3 pCan = tDet(8, vTW.xz, 46.0);
+  vec3 forest = vec3(0.036, 0.064, 0.024) * (0.75 + 0.5 * d2.g) * (0.85 + 0.3 * nA) * pCan;
+  forest = mix(forest, forest * vec3(1.25, 1.05, 0.8), smoothstep(0.55, 0.8, d3.g) * 0.5);   // broadleaf vs cedar tones
+  float fz = d3.r * 0.62 + d2.b * 0.38 + 0.32 * smoothstep(40.0, 450.0, h) + 0.25 * smoothstep(0.06, 0.25, vSlope);
+  float fm = smoothstep(0.55, 0.62, fz) * smoothstep(8.0, 40.0, h) * (1.0 - alpine);
   vec3 col = mix(grass, forest, fm);
+  gH += fm * (tLum(pCan) - 1.0) * 0.35;
   // farmland patchwork outside the city: rotated field blocks, crops, soil, hedgerows
   {
     vec2 fp = vTW.xz;
@@ -536,6 +625,7 @@ varying vec3 vTW; varying float vSlope;`)
     vec3 fc = hc < 0.28 ? vec3(0.085, 0.14, 0.035) : hc < 0.46 ? vec3(0.25, 0.22, 0.11)
             : hc < 0.62 ? vec3(0.14, 0.105, 0.07) : hc < 0.8 ? vec3(0.06, 0.115, 0.03) : vec3(0.31, 0.27, 0.13);
     fc *= 0.82 + 0.3 * d1.r + 0.12 * (tfH(cell + 3.3) - 0.5);
+    fc *= hc >= 0.46 && hc < 0.62 ? tDet(5, r, 7.0) : tDet(1, r, 9.0);
     float px = length(fwidth(r));
     float rows = step(0.5, fract(r.x / 3.2 + hc * 7.0)) * (1.0 - smoothstep(0.4, 1.6, px));
     fc *= 1.0 - 0.1 * rows;
@@ -574,21 +664,38 @@ varying vec3 vTW; varying float vSlope;`)
       gH *= 1.0 - clamp(urb * 1.5, 0.0, 1.0) * 0.8;
     }
   }
-  vec3 rock = vec3(0.24, 0.225, 0.2) * (0.7 + 0.5 * d1.b) * (0.8 + 0.4 * nB);
-  gH += smoothstep(0.22, 0.42, vSlope) * (nB - 0.5) * 0.4;
-  col = mix(col, rock, smoothstep(0.22, 0.42, vSlope));
-  col = mix(col, rock, smoothstep(750.0, 1150.0, h + d2.g * 250.0));
-  float snowLine = mix(1500.0, 750.0, hok);
-  float snow = smoothstep(snowLine - 200.0, snowLine, h + d2.r * 200.0) * (1.0 - smoothstep(0.45, 0.7, vSlope));
-  col = mix(col, vec3(0.9, 0.93, 0.97), snow);
-  vec3 sand = mix(vec3(0.42, 0.37, 0.27), vec3(0.62, 0.6, 0.53), oki) * (0.85 + 0.3 * d1.r) * mix(1.0, 0.85 + 0.3 * nD, nearB);
+  // above the treeline: dwarf pine and scrub, then bare scree and rock toward the summits
+  vec3 pAlp = tDet(3, vTW.xz, 30.0);
+  vec3 scrub = vec3(0.075, 0.085, 0.04) * (0.8 + 0.4 * d2.r) * pAlp;
+  col = mix(col, scrub, alpine * (1.0 - fm));
+  vec3 pRock = tDet(2, vTW.xz, 24.0), pBare = tDet(4, vTW.xz, 28.0);
+  vec3 rock = vec3(0.2, 0.19, 0.17) * (0.75 + 0.5 * d1.b) * (0.85 + 0.3 * nB) * pRock;
+  vec3 scree = vec3(0.22, 0.19, 0.16) * (0.8 + 0.4 * d2.b) * pBare;
+  float cliff = smoothstep(0.3, 0.5, vSlopeD + (d2.r - 0.5) * 0.12);
+  float summit = smoothstep(treeLine + 250.0, treeLine + 750.0, h + d2.g * 300.0);
+  col = mix(col, scree, summit);
+  col = mix(col, rock, cliff);
+  gH += cliff * (tLum(pRock) - 1.0) * 0.6 + summit * (tLum(pBare) - 1.0) * 0.3;
+  float snowLine = mix(2500.0, 1500.0, hok);     // autumn: Fuji's cap, the Hokkaido peaks
+  float snow = smoothstep(snowLine - 200.0, snowLine, h + d2.r * 200.0) * (1.0 - smoothstep(0.45, 0.7, vSlopeD));
+  vec3 pSnow = tDet(7, vTW.xz, 60.0);
+  col = mix(col, vec3(0.9, 0.93, 0.97) * mix(vec3(1.0), pSnow, 0.5), snow);
+  vec3 sand = mix(vec3(0.42, 0.37, 0.27), vec3(0.62, 0.6, 0.53), oki) * (0.85 + 0.3 * d1.r) * mix(1.0, 0.85 + 0.3 * nD, nearB)
+            * tDet(6, vTW.xz, 14.0);
   col = mix(col, sand, smoothstep(-0.05, -1.2, h));
   col = mix(col, vec3(0.16, 0.19, 0.17), smoothstep(-6.0, -30.0, h));
   diffuseColor.rgb = col;
 }`)
+        .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+normal = normalize(mat3(viewMatrix) * gNW);`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
 normal = gBump(normal, - vViewPosition, gH, 1.0);`);
     };
+    loadTerrainLayers(this.renderer, (tex, means) => {
+      this.terrainUniforms.uLayers.value.dispose();
+      this.terrainUniforms.uLayers.value = tex;
+      this.terrainUniforms.uLayerMean.value = means;
+    });
     this.terrain = new THREE.Mesh(geo, mat);
     this.terrain.frustumCulled = false;
     this.terrain.receiveShadow = true;
@@ -807,7 +914,7 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
       const mats = [];
       for (let i = 0; i < n; i++) {
         const h = arr[i * 3 + 1];
-        p.set(arr[i * 3], 0, arr[i * 3 + 2]);
+        p.set(arr[i * 3], Math.max(0, terrainHeight(arr[i * 3], arr[i * 3 + 2])), arr[i * 3 + 2]);   // on the (now hilly) ground
         q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * Math.PI * 2);
         const w = h * (0.85 + rnd() * 0.3);
         s.set(w, h, w);
@@ -1320,6 +1427,7 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     const cx = Math.round(camera.position.x / step) * step, cz = Math.round(camera.position.z / step) * step;
     this.terrain.position.set(cx, 0, cz);
     this.terrainUniforms.uCenter.value.set(cx, cz);
+    this.terrainUniforms.uTerrCam.value.set(cx, 0, cz);    // the grid centre (vertex spacing grows from here)
     if (this._bakeOK && (!this._bakedAt || this._bakedAt.x !== cx || this._bakedAt.y !== cz)) {
       this._bakedAt = (this._bakedAt || new THREE.Vector2()).set(cx, cz);
       this.terrainBakeU.uCenter.value.set(cx, cz);
