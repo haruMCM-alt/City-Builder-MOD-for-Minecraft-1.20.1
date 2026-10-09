@@ -467,7 +467,10 @@ void main() {
   vec2 wxz = pos + uCenter;
   float h0 = terrainHeight(wxz);
   vec2 A = tReliefA;
-  float e = max(3.0, length(pos) * 0.006);
+  // finite-difference step = the local vertex spacing: finer relief octaves would alias here and
+  // are added per pixel in the material instead (e_detailGrad)
+  float tt = pow(length(pos) / 68740.0, 0.303);
+  float e = max(3.0, 0.7 * 70000.0 * (0.018 + 3.2406 * pow(tt, 2.3)) * 2.0 / uN);
   float hx = terrainHeight(wxz + vec2(e, 0.0));
   float hz = terrainHeight(wxz + vec2(0.0, e));
   vec3 n = normalize(vec3(h0 - hx, e, h0 - hz));
@@ -488,7 +491,7 @@ void main() {
       uLayers: { value: terrainLayersPlaceholder() },
       uLayerMean: { value: Array.from({ length: T_LAYERS }, () => new THREE.Vector3(1, 1, 1)) },
       uTerrH: { value: this.terrainRT ? this.terrainRT.texture : null },
-      uTerrCam: { value: new THREE.Vector3() }, uTerrN: { value: NG },
+      uTerrCam: { value: new THREE.Vector3() }, uTerrN: { value: NG }, uSunDir: { value: new THREE.Vector3(0, 1, 0) },
     };
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, this.terrainUniforms);
@@ -532,19 +535,25 @@ ${GROUND_GLSL}
 float gH = 0.0;
 float gRough = 0.97;
 varying vec3 vTW; varying float vSlope; varying vec3 vNW; varying vec2 vRelA;
-uniform vec3 uTerrCam; uniform float uTerrN;
+uniform vec3 uTerrCam; uniform float uTerrN; uniform vec3 uSunDir;
 uniform mediump sampler2DArray uLayers; uniform vec3 uLayerMean[${T_LAYERS}];
 // photo detail of one material layer, divided by its mean colour so that it adds texture without
 // moving the hand-tuned albedo; sampled at three scales, rotated against each other so that no
 // tile repeats. Minified past the pixel it mip-maps to the mean and fades to 1 by itself.
+float tLum(vec3 c) { return dot(c, vec3(0.3, 0.55, 0.15)); }
+// (mostly a brightness ratio: per-channel ratios of the dark pixels would tint shadows blue)
+vec3 tRatio(vec3 c, vec3 m, float sat) {
+  float l = tLum(c) / tLum(m);
+  return mix(vec3(l), c / m, sat);
+}
 vec3 tDet(int L, vec2 xz, float s) {
   vec3 m = uLayerMean[L];
-  vec3 a = texture(uLayers, vec3(xz / s, float(L))).rgb / m;
-  vec3 b = texture(uLayers, vec3(mat2(0.8, -0.6, 0.6, 0.8) * xz / (s * 4.3) + 0.37, float(L))).rgb / m;
-  vec3 c = texture(uLayers, vec3(mat2(-0.28, 0.96, -0.96, -0.28) * xz / (s * 19.0) + 0.71, float(L))).rgb / m;
+  float sat = L == 8 ? 0.2 : 0.55;
+  vec3 a = tRatio(texture(uLayers, vec3(xz / s, float(L))).rgb, m, sat);
+  vec3 b = tRatio(texture(uLayers, vec3(mat2(0.8, -0.6, 0.6, 0.8) * xz / (s * 4.3) + 0.37, float(L))).rgb, m, sat);
+  vec3 c = tRatio(texture(uLayers, vec3(mat2(-0.28, 0.96, -0.96, -0.28) * xz / (s * 19.0) + 0.71, float(L))).rgb, m, sat);
   return clamp(a * mix(vec3(1.0), b, 0.7) * mix(vec3(1.0), c, 0.5), 0.0, 3.0);
 }
-float tLum(vec3 c) { return dot(c, vec3(0.3, 0.55, 0.15)); }
 ${EROSION_GLSL}
 vec3 gNW = vec3(0.0, 1.0, 0.0);`)
         .replace('#include <color_fragment>', `#include <color_fragment>
@@ -607,8 +616,15 @@ vec3 gNW = vec3(0.0, 1.0, 0.0);`)
   float treeLine = mix(2450.0, 1450.0, hok) + (d2.g - 0.5) * 300.0;
   float alpine = smoothstep(treeLine - 250.0, treeLine + 150.0, h);
   vec3 pCan = tDet(8, vTW.xz, 46.0);
-  vec3 forest = vec3(0.036, 0.064, 0.024) * (0.75 + 0.5 * d2.g) * (0.85 + 0.3 * nA) * pCan;
+  vec3 forest = vec3(0.044, 0.066, 0.024) * (0.75 + 0.5 * d2.g) * (0.85 + 0.3 * nA) * pCan;
   forest = mix(forest, forest * vec3(1.25, 1.05, 0.8), smoothstep(0.55, 0.8, d3.g) * 0.5);   // broadleaf vs cedar tones
+  // October: the beech and maple belt turns yellow and red from ~1,100 m (lower up north)
+  {
+    float aut = smoothstep(mix(1000.0, 450.0, hok), mix(1700.0, 900.0, hok), h + (d2.r - 0.5) * 400.0) * (1.0 - oki);
+    float pat = smoothstep(0.35, 0.75, d2.b * 0.6 + nA * 0.4);
+    vec3 tint = mix(vec3(2.6, 1.5, 0.55), vec3(3.2, 1.1, 0.45), smoothstep(0.5, 0.8, d1.g));
+    forest = mix(forest, forest * tint, aut * pat * 0.8);
+  }
   float fz = d3.r * 0.62 + d2.b * 0.38 + 0.32 * smoothstep(40.0, 450.0, h) + 0.25 * smoothstep(0.06, 0.25, vSlope);
   float fm = smoothstep(0.55, 0.62, fz) * smoothstep(8.0, 40.0, h) * (1.0 - alpine);
   vec3 col = mix(grass, forest, fm);
@@ -684,12 +700,25 @@ vec3 gNW = vec3(0.0, 1.0, 0.0);`)
             * tDet(6, vTW.xz, 14.0);
   col = mix(col, sand, smoothstep(-0.05, -1.2, h));
   col = mix(col, vec3(0.16, 0.19, 0.17), smoothstep(-6.0, -30.0, h));
+  // relief shading: deepen the sun-side / shade-side contrast of slopes against flat ground; it
+  // stands in for the cast shadows and inter-reflections that photo scenery carries, so that hills
+  // read from the air instead of washing out under the sky light
+  {
+    float sunUp = smoothstep(0.0, 0.12, uSunDir.y);
+    float rel = dot(gNW, uSunDir) - uSunDir.y;
+    col *= mix(1.0, clamp(1.0 + 1.3 * rel, 0.3, 1.5), sunUp * (1.0 - smoothstep(-0.5, -6.0, h)));
+  }
   diffuseColor.rgb = col;
 }`)
         .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
 normal = normalize(mat3(viewMatrix) * gNW);`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-normal = gBump(normal, - vViewPosition, gH, 1.0);`);
+normal = gBump(normal, - vViewPosition, gH, 1.0);`)
+        // canopy, grass and soil are close to Lambertian: the default dielectric Fresnel put a pale
+        // sky-blue sheen on every slope seen at a grazing angle
+        .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+reflectedLight.indirectSpecular *= 0.2;
+reflectedLight.directSpecular *= 0.5;`);
     };
     loadTerrainLayers(this.renderer, (tex, means) => {
       this.terrainUniforms.uLayers.value.dispose();
@@ -1427,7 +1456,8 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     const cx = Math.round(camera.position.x / step) * step, cz = Math.round(camera.position.z / step) * step;
     this.terrain.position.set(cx, 0, cz);
     this.terrainUniforms.uCenter.value.set(cx, cz);
-    this.terrainUniforms.uTerrCam.value.set(cx, 0, cz);    // the grid centre (vertex spacing grows from here)
+    this.terrainUniforms.uTerrCam.value.set(cx, 0, cz);
+    if (this.sunDir) this.terrainUniforms.uSunDir.value.copy(this.sunDir);    // the grid centre (vertex spacing grows from here)
     if (this._bakeOK && (!this._bakedAt || this._bakedAt.x !== cx || this._bakedAt.y !== cz)) {
       this._bakedAt = (this._bakedAt || new THREE.Vector2()).set(cx, cz);
       this.terrainBakeU.uCenter.value.set(cx, cz);
