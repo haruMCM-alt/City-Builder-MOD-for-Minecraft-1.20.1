@@ -1840,7 +1840,7 @@ def build_trees(seed=7):
         if side < 0.65:
             y = rnd.uniform(16, 60)
         else:
-            y = rnd.uniform(-70, -24)
+            y = rnd.uniform(-90, -46)   # 側面図カメラ (y=-40) より外側
         x = rnd.uniform(-120, 120)
         spots.append((x, y))
     for (x, y) in spots:
@@ -1996,6 +1996,10 @@ def render_views():
         cam = bpy.data.objects.get("Cam_" + name)
         scene.camera = cam
         scene.render.resolution_x, scene.render.resolution_y = res
+        # 正投影の図面ビューでは遠近感が無く樹木が巨大に写るため非表示にする
+        for o in C_TRACK.objects:
+            if o.name.startswith("Tree_"):
+                o.hide_render = ortho is not None
         if name == "interior":
             scene.cycles.samples = 64 if PREVIEW else 320
             scene.view_settings.exposure = 0.6
