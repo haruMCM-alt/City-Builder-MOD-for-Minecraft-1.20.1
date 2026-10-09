@@ -5,7 +5,122 @@ import { mulberry32 } from './util.js';
 import { PaxLife, CrewService } from './cabinlife.js';
 import { IFE, ifeGeometry } from './ife.js';
 
-const TINT = new Set(['Seat_FabricY', 'Seat_FabricJ', 'Pax_Skin', 'Pax_Shirt', 'Pax_Pants', 'Pax_Hair']);
+const TINT = new Set(['Seat_FabricY', 'Seat_FabricJ', 'Pax_Skin', 'Pax_Shirt', 'Pax_Pants', 'Pax_Hair', 'Pax_HairLong', 'Pax_HairBun']);
+// passenger variants switched per instance (collapsed to a point when hidden)
+const VARIANT = new Set(['Pax_Hair', 'Pax_HairLong', 'Pax_HairBun', 'Pax_Glasses']);
+// emissive / self-lit materials keep their own light
+const SELF_LIT = new Set(['Cabin_Mood', 'Cabin_Light', 'Cabin_Exit', 'Cabin_ExitSign', 'Cabin_FloorLight', 'Cabin_Screen', 'Seat_Screen']);
+
+// ---------------------------------------------------------------------------------- cabin light
+// Inside the fuselage the scene's sun and sky would light every surface as if there were no hull.
+// Cabin materials replace them with a light model in the aircraft frame (x fwd, y up, z right):
+// the LED-lit ceiling as a broad overhead source, the cove uplight (mood colour at night), the
+// sidewall wash under the bins, daylight from the windows, and sun patches cast through the open
+// part of each window (window positions and shade states come from the Blender build). The baked
+// ambient occlusion (vertex colours) darkens all of it in corners, under bins and seats.
+const NSH = 128;
+const CAB_U = {
+  uCabInv: { value: new THREE.Matrix4() }, uCabV2C: { value: new THREE.Matrix3() },
+  uCabG: { value: new THREE.Vector4(-1, 1.45, 0.97, 2.6) },       // floor, ceiling, bin bottom, sidewall
+  uCabB: { value: new THREE.Vector4(1.3, 0.1, 0.5, 0.13) },        // bin front, window bottom / top, half width
+  uCabWin: { value: new THREE.Vector4(0, -1, 0, 0) },              // first window x, pitch (x), count
+  uCabSun: { value: new THREE.Vector4(0, 1, 0, 0) },               // sun direction (cabin frame), strength
+  uCabL: { value: new THREE.Vector4(1, 1, 0, 0) },                 // LED level, daylight, mood, -
+  uShL: { value: new Float32Array(NSH).fill(1) }, uShR: { value: new Float32Array(NSH).fill(1) },
+};
+const CAB_VERT_PARS = `
+uniform mat4 uCabInv;
+varying vec3 vCabP;
+#ifdef CAB_VARIANT
+attribute float aHide;
+#endif`;
+const CAB_VERT = `
+#ifdef CAB_VARIANT
+transformed *= 1.0 - aHide;
+#endif
+{
+  vec4 cw = vec4(transformed, 1.0);
+  #ifdef USE_INSTANCING
+  cw = instanceMatrix * cw;
+  #endif
+  vCabP = (uCabInv * (modelMatrix * cw)).xyz;
+}`;
+const CAB_FRAG_PARS = `
+uniform mat3 uCabV2C;
+uniform vec4 uCabG, uCabB, uCabWin, uCabSun, uCabL;
+uniform float uShL[${NSH}], uShR[${NSH}];
+varying vec3 vCabP;
+vec3 cabinIrradiance(vec3 p, vec3 n) {
+  float fl = uCabG.x, ce = uCabG.y, bb = uCabG.z, wall = uCabG.w;
+  float az = abs(p.z);
+  vec3 inward = vec3(0.0, 0.0, p.z > 0.0 ? -1.0 : 1.0);
+  vec3 led = vec3(1.0, 0.92, 0.80);
+  float L = uCabL.x;
+  // lit ceiling: a broad overhead source, stronger for up-facing surfaces and near it
+  float dh = max(ce - p.y, 0.0);
+  vec3 E = led * L * (0.55 + 0.45 * n.y) * (0.45 + 0.55 / (1.0 + dh * dh * 0.45));
+  // cove uplight on the ceiling and the bin faces near it
+  vec3 moodC = mix(led, vec3(0.58, 0.52, 1.0), uCabL.z);
+  E += moodC * L * 2.2 * max(-n.y, 0.0) * smoothstep(ce - 0.45, ce + 0.05, p.y);
+  E += moodC * L * 0.5 * max(dot(n, -inward), 0.0) * smoothstep(bb + 0.1, ce, p.y);
+  // sidewall wash grazing down from under the bins
+  float nearW = smoothstep(wall - 0.6, wall - 0.05, az);
+  E += led * L * 1.2 * nearW * step(p.y, bb) * exp(-max(bb - p.y, 0.0) * 1.4) * (0.4 + 0.6 * max(dot(n, inward), 0.0));
+  // daylight through the windows: soft fill from both sides, brighter close to them
+  float wF = 0.3 + 0.7 * smoothstep(1.9, 0.0, wall - az);
+  E += vec3(0.84, 0.91, 1.0) * uCabL.y * wF * (0.45 + 0.55 * max(dot(n, inward), 0.0)) * smoothstep(fl - 0.1, fl + 0.7, p.y);
+  // bounce from the carpet / seats onto down-facing surfaces
+  E += led * L * 0.15 * max(-n.y, 0.0);
+  // sun patches through the open part of the windows on the sun side
+  vec3 sd = uCabSun.xyz;
+  if (uCabSun.w > 0.0 && abs(sd.z) > 0.03) {
+    float side = sd.z > 0.0 ? 1.0 : -1.0;
+    float t = (side * (wall + 0.06) - p.z) / sd.z;
+    float lam = max(dot(n, sd), 0.0);
+    if (t > 0.0 && lam > 0.0) {
+      vec3 h = p + sd * t;
+      float k = (h.x - uCabWin.x) / uCabWin.y;
+      float ki = floor(k + 0.5);
+      if (ki >= 0.0 && ki < uCabWin.z) {
+        int ii = int(ki);
+        float sh = side > 0.0 ? uShR[ii] : uShL[ii];
+        float top = mix(uCabB.z, uCabB.y, sh);
+        float dx = abs(k - ki) * abs(uCabWin.y);
+        float soft = 0.015 + 0.02 * t;
+        float inW = smoothstep(uCabB.w + soft, uCabB.w - soft, dx) * smoothstep(uCabB.y - soft, uCabB.y + soft, h.y)
+                  * smoothstep(top + soft, top - soft, h.y);
+        E += uCabSun.w * inW * lam * vec3(1.0, 0.95, 0.86);
+      }
+    }
+  }
+  return E;
+}`;
+const CAB_FRAG = `
+#include <lights_fragment_end>
+{
+  // the hull blocks the scene's sun and sky: keep a trace of them, then add the cabin light
+  reflectedLight.directDiffuse *= 0.04;
+  reflectedLight.directSpecular *= 0.04;
+  reflectedLight.indirectDiffuse *= 0.1;
+  reflectedLight.indirectSpecular *= 0.3;
+  vec3 nC = normalize(uCabV2C * normal);
+  reflectedLight.indirectDiffuse += cabinIrradiance(vCabP, nC) * BRDF_Lambert(material.diffuseColor);
+}`;
+
+function patchCabinMaterial(m, variant) {
+  m.userData.cabinLit = true;
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, CAB_U);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', (variant ? '#define CAB_VARIANT\n' : '') + '#include <common>' + CAB_VERT_PARS)
+      .replace('#include <project_vertex>', CAB_VERT + '\n#include <project_vertex>');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>' + CAB_FRAG_PARS)
+      .replace('#include <lights_fragment_end>', CAB_FRAG);
+  };
+  m.customProgramCacheKey = () => 'cabin-lit' + (variant ? '-v' : '');
+  m.needsUpdate = true;
+}
 // articulated passenger / crew parts (Blender prototypes)
 const PAX_PARTS = { body: 'Proto_Pax', head: 'Proto_PaxHead', uL: 'Proto_PaxUArmL', uR: 'Proto_PaxUArmR', fL: 'Proto_PaxFArmL', fR: 'Proto_PaxFArmR' };
 const CREW_PARTS = { crew: 'Proto_Crew', armL: 'Proto_CrewArmL', armR: 'Proto_CrewArmR', legL: 'Proto_CrewLegL', legR: 'Proto_CrewLegR', cart: 'Proto_Cart', tray: 'Proto_Tray' };
@@ -13,7 +128,8 @@ const SHIRTS = ['#2d4a7a', '#b8423a', '#f2f2f0', '#2f6b4f', '#1d1f24', '#7a5c9e'
   '#c46d8e', '#3c7d86', '#e7ddc9', '#5a3b2e', '#243a5e'];
 const PANTS = ['#1f2533', '#2b2d31', '#3a4a66', '#5c4a3a', '#6f6a60', '#22324a', '#111214'];
 const SKIN = ['#f1c9a5', '#e0b896', '#c99a74', '#a8764f', '#7d5537', '#5a3a26', '#f5d7bd'];
-const HAIR = ['#141110', '#2b1d14', '#4a3222', '#7a5a3a', '#b89a6a', '#9a9a9a', '#d8d4cc', '#1c1a1a'];
+// (mostly dark hair on these routes; some brown, dyed, grey)
+const HAIR = ['#141110', '#1c1a1a', '#0f0d0c', '#2b1d14', '#22170f', '#3a2a1e', '#4a3222', '#5e4330', '#7a5a3a', '#b89a6a', '#8f8f8f', '#cfcac2'];
 
 export class Cabin {
   constructor(visual, meta, load) {
@@ -29,26 +145,40 @@ export class Cabin {
     this.paxCount = 0;
     this.pax = 0;
     this.visible = false;
-    // cabin lights: an ambient term that is only on while the camera is inside
-    // (ambient lights do not change the shader light count, so toggling is free)
-    this.amb = new THREE.AmbientLight(0xfff3e6, 0);
-    visual.scene.add(this.amb);
+    this._sun = new THREE.Vector3(0, 1, 0); this._sunK = 0;
+  }
+
+  // sun direction (world, towards the sun) and strength (0 at night / under cloud)
+  setSun(dir, k) { if (dir) this._sun.copy(dir); this._sunK = k; }
+
+  _setLightInfo() {
+    const L = this.info.light;
+    if (!L) return;
+    CAB_U.uCabG.value.set(L.floor, L.ceil, L.binBot, L.wall);
+    CAB_U.uCabB.value.set(L.binFront, L.winY[0], L.winY[1], L.winW / 2);
+    const n = Math.min(NSH, L.shadeL.length);
+    CAB_U.uCabWin.value.set(L.winX0, L.winDX, n, 0);
+    CAB_U.uShL.value.fill(1); CAB_U.uShR.value.fill(1);
+    for (let k = 0; k < n; k++) { CAB_U.uShL.value[k] = L.shadeL[k]; CAB_U.uShR.value[k] = L.shadeR[k]; }
   }
 
   get available() { return !!this.info; }
 
   ensure() {
     if (!this.info) return Promise.resolve(null);
-    if (!this.loading) this.loading = this.load().then((g) => this._build(g)).catch((e) => { console.warn('cabin', e); this.loading = null; });
+    if (!this.loading) this.loading = this.load().then((g) => (Array.isArray(g) ? this._build(g[0], g[1]) : this._build(g))).catch((e) => { console.warn('cabin', e); this.loading = null; });
     return this.loading;
   }
 
-  _build(gltf) {
+  // protoGltf: the shared prototypes file (seats, passengers, crew; older cabins carry their own)
+  _build(gltf, protoGltf) {
     const root = gltf.scene;
     root.updateMatrixWorld(true);
+    const src = protoGltf ? protoGltf.scene : root;
+    src.updateMatrixWorld(true);
     const protos = {};
-    for (const n of ['Proto_SeatY', 'Proto_SeatJ', ...Object.values(PAX_PARTS), ...Object.values(CREW_PARTS)]) protos[n] = root.getObjectByName(n);
-    for (const p of Object.values(protos)) if (p) p.parent.remove(p);
+    for (const n of ['Proto_SeatY', 'Proto_SeatJ', ...Object.values(PAX_PARTS), ...Object.values(CREW_PARTS)]) protos[n] = src.getObjectByName(n);
+    if (!protoGltf) for (const p of Object.values(protos)) if (p) p.parent.remove(p);
     this.mats = new Set();
     root.traverse((o) => {
       if (!o.isMesh) return;
@@ -99,6 +229,7 @@ export class Cabin {
     for (const im of [...this.inst.Y, ...this.inst.J, ...this.inst.pax]) this.group.add(im);
     this.visual.root.add(this.group);
     this.group.visible = this.visible;
+    this._setLightInfo();
     if (this._livery) this.setLivery(this._livery);
     this.setPassengers(this.pax, this._seed || 1);
     return this;
@@ -110,14 +241,9 @@ export class Cabin {
     if (m.name === 'Seat_Screen') { this.ife.patchScreen(m); return; }
     m.envMapIntensity = 0.7;
     if (m.name === 'Cabin_Sidewall') { m.alphaTest = 0.5; m.transparent = false; m.depthWrite = true; }
-    if (m.name === 'Cabin_WindowPane') { m.transparent = true; m.depthWrite = false; m.opacity = 0.16; }
-    // cabin lighting: a soft self-illumination that rises at night (cabin lights on)
-    if (!m.emissiveMap && m.emissive && m.emissive.getHex() === 0 && m.name !== 'Cabin_WindowPane') {
-      m.userData.cabinGlow = true;
-      m.emissive.copy(m.color);
-      if (m.map) m.emissiveMap = m.map;
-      m.emissiveIntensity = 0.15;
-    }
+    if (m.name === 'Cabin_WindowPane') { m.transparent = true; m.depthWrite = false; m.opacity = 0.16; return; }
+    if (SELF_LIT.has(m.name)) return;
+    patchCabinMaterial(m, VARIANT.has(m.name));
   }
 
   _instances(proto, count) {
@@ -138,8 +264,12 @@ export class Cabin {
       im.frustumCulled = false;
       if (TINT.has(mat.name)) {
         mat.color.set(0xffffff);
-        mat.userData.cabinGlow = false; mat.emissive.set(0x000000); mat.envMapIntensity = 1.0;
+        mat.envMapIntensity = 1.0;
         im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3).fill(1), 3);
+      }
+      if (VARIANT.has(mat.name)) {
+        im.geometry = im.geometry.clone();
+        im.geometry.setAttribute('aHide', new THREE.InstancedBufferAttribute(new Float32Array(count), 1));
       }
       out.push(im);
     });
@@ -219,16 +349,23 @@ export class Cabin {
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (rnd() - 0.5) * 0.12);
       m.compose(p, q, sc);
       entries.push({ k, seat: order[k], m: m.clone() });
-      const cols = { Pax_Skin: pick(SKIN), Pax_Shirt: pick(SHIRTS), Pax_Pants: pick(PANTS), Pax_Hair: pick(HAIR) };
+      const hair = pick(HAIR);
+      const cols = { Pax_Skin: pick(SKIN), Pax_Shirt: pick(SHIRTS), Pax_Pants: pick(PANTS), Pax_Hair: hair, Pax_HairLong: hair, Pax_HairBun: hair };
+      // hair style (short / long / bun / bald) and glasses
+      const r1 = rnd(), r2 = rnd();
+      const hide = { Pax_Hair: r1 > 0.95 ? 1 : 0, Pax_HairLong: r1 < 0.34 ? 0 : 1, Pax_HairBun: r1 >= 0.34 && r1 < 0.45 ? 0 : 1, Pax_Glasses: r2 < 0.24 ? 0 : 1 };
       for (const im of this.inst.pax) {
         im.setMatrixAt(k, m.clone().multiply(im.userData.rel));
         if (im.instanceColor && cols[im.userData.mat]) im.setColorAt(k, cols[im.userData.mat]);
+        const ah = im.geometry.attributes.aHide;
+        if (ah) ah.array[k] = hide[im.userData.mat] ?? 0;
       }
     }
     for (const im of this.inst.pax) {
       im.count = n;
       im.instanceMatrix.needsUpdate = true;
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      if (im.geometry.attributes.aHide) im.geometry.attributes.aHide.needsUpdate = true;
     }
     this.service.stop();
     this.life.reset(entries, rnd);
@@ -258,9 +395,17 @@ export class Cabin {
       if (inside) this.service.draw(this._time = (this._time || 0) + dt, this.crewParts);
       this.ife.update(dt, inside, ifeView, data || {});
     }
-    this.amb.intensity = inside ? 0.35 + 1.1 * night : 0;
     if (!inside) return;
-    const k = 0.08 + 0.18 * night;
-    for (const m of this.mats) if (m.userData.cabinGlow) m.emissiveIntensity = k;
+    // cabin frame: the aircraft group's inverse, and view -> cabin for the normals
+    const g = this.group;
+    g.updateMatrixWorld();
+    const inv = CAB_U.uCabInv.value.copy(g.matrixWorld).invert();
+    const cam = this.camera || null;
+    if (cam) CAB_U.uCabV2C.value.setFromMatrix4(this._m4 = (this._m4 || new THREE.Matrix4()).multiplyMatrices(inv, cam.matrixWorld));
+    const sd = this._sd = (this._sd || new THREE.Vector3()).copy(this._sun).transformDirection(inv);
+    const day = 1 - night;
+    // LEDs: bright warm white by day, dimmed with the mood colour at night
+    CAB_U.uCabL.value.set(Math.PI * (0.78 - 0.48 * night), Math.PI * 0.85 * day * (0.35 + 0.65 * this._sunK), night, 0);
+    CAB_U.uCabSun.value.set(sd.x, sd.y, sd.z, Math.PI * 9.0 * this._sunK * day);
   }
 }

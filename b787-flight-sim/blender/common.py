@@ -456,7 +456,7 @@ def hex_color(h, a=1.0):
 # --------------------------------------------------------------------------
 # Export
 # --------------------------------------------------------------------------
-def export_glb(path, selected_only=False, draco=False, instancing=False):
+def export_glb(path, selected_only=False, draco=False, instancing=False, vertex_color=None, quant=None):
     kwargs = dict(
         filepath=path,
         export_format="GLB",
@@ -474,12 +474,17 @@ def export_glb(path, selected_only=False, draco=False, instancing=False):
     )
     if instancing:
         kwargs["export_gpu_instances"] = True
+    if vertex_color:
+        kwargs["export_vertex_color"] = vertex_color      # e.g. "ACTIVE": the baked AO attribute
     if draco:
         kwargs.update(export_draco_mesh_compression_enable=True,
                       export_draco_mesh_compression_level=6,
                       export_draco_position_quantization=14,
                       export_draco_normal_quantization=10,
                       export_draco_texcoord_quantization=12)
+        if quant:      # (position, normal, texcoord, colour) bits
+            kwargs.update(export_draco_position_quantization=quant[0], export_draco_normal_quantization=quant[1],
+                          export_draco_texcoord_quantization=quant[2], export_draco_color_quantization=quant[3])
     bpy.ops.export_scene.gltf(**kwargs)
     print("exported", path, os.path.getsize(path) // 1024, "KiB")
 

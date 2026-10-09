@@ -365,7 +365,12 @@ class App {
       T.visual.setDisplayTextures(this.instruments.textures);
       // live face of the 3-D MCP on the glareshield
       if (m.mcp && T.visual.displayMats.MCP) { T.mcp3d = new MCP3D(m.mcp); T.mcp3d.apply(T.visual.displayMats.MCP); }
-      T.cabin = new Cabin(T.visual, m, () => loadGLB(this.loader, ASSET + T.asset + '-cabin' + MODEL_EXT, () => {}));
+      // cabin shell of this type + the seat / passenger / crew prototypes shared by every type
+      const protoFile = m.cabin && m.cabin.protoFile;
+      T.cabin = new Cabin(T.visual, m, () => Promise.all([
+        loadGLB(this.loader, ASSET + T.asset + '-cabin' + MODEL_EXT, () => {}),
+        protoFile ? (this._cabinProtos ||= loadGLB(this.loader, ASSET + protoFile + MODEL_EXT, () => {})) : null,
+      ]));
       T.vapor = new Vapor(this.scene, m, T.visual);
       if (m.ao !== false && T.id === 'b789') {
         // baked ambient occlusion (Blender / Cycles) for the 787 fuselage and wings
@@ -1643,6 +1648,8 @@ class App {
       const tod = this.world.tod || 0;
       const dap = remoteById(this.dest) || REMOTES[0];
       const dist = Math.hypot(fm.pos.x - dap.x, fm.pos.z - dap.z) / 1000;
+      this.cabin.camera = this.camera;
+      this.cabin.setSun(this.world.sunDir, this.world.sunT ?? 1);
       this.cabin.update(inside, this.world.night, this.paused ? 0 : dt, {
         altFt: o.altFt || 0, gs: o.gs || 0, hdg: o.hdg || 0, oat: 15 - 1.98 * (o.altFt || 0) / 1000, x: fm.pos.x, z: fm.pos.z, dist,
         destX: dap.x, destZ: dap.z, destName: aptName(dap.id),

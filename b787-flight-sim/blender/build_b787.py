@@ -4,6 +4,7 @@ Procedural Boeing airliners for Blender (run with Blender's Python or `pip insta
     python3 build_b787.py            # full build (textures + .blend + .glb)
     python3 build_b787.py --quick    # skip texture generation (reuse existing)
     python3 build_b787.py --lod      # low-poly model for parked / AI aircraft
+    python3 build_b787.py --cabin    # passenger cabin only (<asset>-cabin.glb + the "cabin" metadata)
     AC_TYPE=b738 python3 build_b787.py   # Boeing 737-800   (b763: 767-300ER, default b789: 787-9)
 
 Output (<asset> = b787-9 / b737-800 / b767-300er):
@@ -1742,7 +1743,50 @@ def bake_ao():
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def export_cabin(cabin_root):
+    """<asset>-cabin.glb (the shell) + cabin-protos.glb (seats, passengers, crew: the same for
+    every type, so they are stored once)"""
+    import cabin_b787
+    protos = next(o for o in cabin_root.children if o.name.startswith("Cabin_Prototypes"))
+    sub = set([protos] + list(protos.children_recursive))
+    shell = [o for o in [cabin_root] + list(cabin_root.children_recursive) if o not in sub]
+    for ob in bpy.data.objects:
+        ob.select_set(False)
+    for ob in shell:
+        ob.select_set(True)
+    C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + "-cabin.glb"), selected_only=True, draco=True,
+                 vertex_color="ACTIVE", quant=(12, 7, 12, 7))
+    cabin_b787.center_protos(protos)
+    bpy.context.view_layer.update()
+    for ob in bpy.data.objects:
+        ob.select_set(False)
+    for ob in [protos] + list(protos.children_recursive):
+        ob.select_set(True)
+    C.export_glb(os.path.join(C.WEB_ASSETS, "cabin-protos.glb"), selected_only=True, draco=True,
+                 vertex_color="ACTIVE", quant=(14, 8, 10, 8))
+    print("cabin polygons:", sum(len(o.data.polygons) for o in shell if o.type == "MESH"))
+
+
+def build_cabin_only():
+    """--cabin: rebuild only the passenger cabin (<asset>-cabin.glb) and its metadata"""
+    import cabin_b787
+    if not QUICK:
+        cabin_b787.generate_textures()
+    C.reset_scene()
+    ccol = C.collection("B787-9_Cabin")
+    cabin_root, cabin = cabin_b787.build_cabin(ccol, tex, bake="--no-bake" not in sys.argv)
+    export_cabin(cabin_root)
+    jp = os.path.join(C.WEB_ASSETS, G.ASSET + ".json")
+    meta = json.load(open(jp))
+    meta["cabin"] = cabin
+    with open(jp, "w") as fh:
+        json.dump(meta, fh, indent=1)
+
+
 def main():
+    if "--cabin" in sys.argv:
+        build_cabin_only()
+        return
     if not QUICK:
         import textures_b787
         textures_b787.generate_all()
@@ -1823,13 +1867,7 @@ def main():
     ccol = C.collection("B787-9_Cabin")
     cabin_root, cabin = cabin_b787.build_cabin(ccol, tex)
     meta["cabin"] = cabin
-    for ob in bpy.data.objects:
-        ob.select_set(False)
-    cabin_objs = [cabin_root] + list(cabin_root.children_recursive)
-    for ob in cabin_objs:
-        ob.select_set(True)
-    C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + "-cabin.glb"), selected_only=True, draco=True)
-    print("cabin polygons:", sum(len(o.data.polygons) for o in cabin_objs if o.type == "MESH"))
+    export_cabin(cabin_root)
     meta.pop("seats")
     with open(os.path.join(C.WEB_ASSETS, G.ASSET + ".json"), "w") as fh:
         json.dump(meta, fh, indent=1)

@@ -5,8 +5,10 @@
 
 * all JavaScript (web/js + three.js) is bundled into one script with esbuild
 * every asset (models, data, textures, the safety video, the Draco decoder) is embedded as
-  base64; a small bootstrap turns them into in-memory blob URLs (window.B787_ASSETS) before
-  the game starts, and main.js redirects fetch() and the three.js loaders to them
+  base85 text (5 characters per 4 bytes, 6 % smaller than base64; the alphabet has no < > &, so
+  the text can never close or confuse its <script> element); a small bootstrap decodes them into
+  in-memory blob URLs (window.B787_ASSETS) before the game starts, and main.js redirects fetch()
+  and the three.js loaders to them
 * the title-screen picture and the menu thumbnails become data: URIs
 
 The result is large (~75 MB) because it contains every model; open it directly in a desktop
@@ -67,6 +69,23 @@ def bundle(esbuild):
     if out.stderr.strip():
         print(out.stderr.strip())
     return out.stdout
+
+
+B85 = "".join(chr(c) for c in range(33, 127) if chr(c) not in "<>&'\"\\`$%")
+assert len(B85) == 85
+
+
+def b85(raw):
+    """bytes -> (base85 text, original length); 4 bytes (big endian, zero padded) -> 5 characters"""
+    import numpy as np
+    n = len(raw)
+    a = np.frombuffer(bytes(raw) + b"\0" * ((-n) % 4), ">u4").astype(np.uint64)
+    alpha = np.frombuffer(B85.encode("ascii"), np.uint8)
+    out = np.empty((len(a), 5), np.uint8)
+    for i in range(4, -1, -1):
+        out[:, i] = alpha[(a % 85).astype(np.int64)]
+        a //= 85
+    return out.tobytes().decode("ascii"), n
 
 
 def b64(path):
@@ -265,19 +284,19 @@ def main():
             assets_sh = sorted(shared_out)
             for k in assets_sh:
                 raw = shared_out[k]
-                data = base64.b64encode(raw).decode("ascii")
+                data, n = b85(raw)
                 total += len(data)
-                blocks.append('<script type="application/octet-stream" data-asset="%s" data-type="%s">%s</script>' % (
-                    k, MIME.get(os.path.splitext(k)[1], "application/octet-stream"), data))
+                blocks.append('<script type="application/octet-stream" data-asset="%s" data-type="%s" data-len="%d">%s</script>' % (
+                    k, MIME.get(os.path.splitext(k)[1], "application/octet-stream"), n, data))
             print("shared images: %d (%.1f MB)" % (len(shared_out), sum(len(v) for v in shared_out.values()) / 1e6))
             break
         key, p = item
         ext = os.path.splitext(p)[1].lower()
         raw, gz = pack_asset(key, p, args.video_kbps, shared, shared_out)
-        data = base64.b64encode(raw).decode("ascii")
+        data, n = b85(raw)
         total += len(data)
-        blocks.append('<script type="application/octet-stream" data-asset="%s" data-type="%s"%s>%s</script>' % (
-            key, MIME.get(ext, "application/octet-stream"), ' data-gz="1"' if gz else "", data))
+        blocks.append('<script type="application/octet-stream" data-asset="%s" data-type="%s" data-len="%d"%s>%s</script>' % (
+            key, MIME.get(ext, "application/octet-stream"), n, ' data-gz="1"' if gz else "", data))
 
     boot = """<script>
 // single-file build: unpack the embedded assets into blob URLs, then start the game
@@ -285,9 +304,20 @@ def main():
   const lt = document.getElementById('loadText'), lb = document.getElementById('loadBar');
   const nodes = [...document.querySelectorAll('script[data-asset]')];
   const map = {};
+  // base85 (build_single_html.py: B85)
+  const A = '%s', T = new Uint8Array(128);
+  for (let i = 0; i < 85; i++) T[A.charCodeAt(i)] = i;
+  const dec = (s, len) => {
+    const out = new Uint8Array((s.length / 5) * 4);
+    for (let i = 0, o = 0; i < s.length; i += 5, o += 4) {
+      const v = (((T[s.charCodeAt(i)] * 85 + T[s.charCodeAt(i + 1)]) * 85 + T[s.charCodeAt(i + 2)]) * 85 + T[s.charCodeAt(i + 3)]) * 85 + T[s.charCodeAt(i + 4)];
+      out[o] = v >>> 24; out[o + 1] = (v >>> 16) & 255; out[o + 2] = (v >>> 8) & 255; out[o + 3] = v & 255;
+    }
+    return out.subarray(0, len);
+  };
   let n = 0;
   for (const el of nodes) {
-    let blob = await (await fetch('data:application/octet-stream;base64,' + el.textContent)).blob();
+    let blob = new Blob([dec(el.textContent, +el.dataset.len)]);
     if (el.dataset.gz) blob = await new Response(blob.stream().pipeThrough(new DecompressionStream('gzip'))).blob();
     map[el.dataset.asset] = URL.createObjectURL(new Blob([blob], { type: el.dataset.type }));
     el.textContent = '';
@@ -297,18 +327,19 @@ def main():
   }
   window.B787_ASSETS = map;
   const s = document.createElement('script');
-  const zb = await (await fetch('data:application/octet-stream;base64,' + document.getElementById('app-bundle').textContent)).blob();
+  const ab = document.getElementById('app-bundle');
+  const zb = new Blob([dec(ab.textContent, +ab.dataset.len)]);
   s.textContent = await new Response(zb.stream().pipeThrough(new DecompressionStream('gzip'))).text();
   document.body.appendChild(s);
 })().catch((e) => { const lt = document.getElementById('loadText'); if (lt) lt.textContent = 'error: ' + e; console.error(e); });
-</script>"""
-    jsz = base64.b64encode(gzip.compress(js.encode("utf-8"), 9, mtime=0)).decode("ascii")
-    tail = "\n".join(blocks) + '\n<script type="application/octet-stream" id="app-bundle">' + jsz + "</script>\n" + boot + "\n"
+</script>""".replace("'%s'", "'" + B85 + "'")
+    jsz, jn = b85(gzip.compress(js.encode("utf-8"), 9, mtime=0))
+    tail = "\n".join(blocks) + '\n<script type="application/octet-stream" id="app-bundle" data-len="%d">' % jn + jsz + "</script>\n" + boot + "\n"
     html = html.replace("</body>", tail + "</body>") if "</body>" in html else html + tail
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(html)
-    print("wrote %s  %.1f MB  (%d assets, %.1f MB base64, bundle %.1f MB)" % (
+    print("wrote %s  %.1f MB  (%d assets, %.1f MB base85, bundle %.1f MB)" % (
         args.out, os.path.getsize(args.out) / 1e6, len(assets), total / 1e6, len(js) / 1e6))
 
 
