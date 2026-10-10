@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.blend1
+node_modules/
+dist/
+blender/output/wallpaper_tex/

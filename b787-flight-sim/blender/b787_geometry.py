@@ -1,0 +1,1133 @@
+"""
+Boeing 787-9 geometry definition (pure numpy, no bpy).
+
+Design coordinate system (used everywhere in this file):
+    s : station, metres aft of the nose tip           (0 .. 62.81)
+    y : lateral, metres, +left  (right wing is y < 0)
+    z : vertical, metres, 0 = fuselage reference line (+up)
+
+Published figures this geometry is built to (see ../docs/SPECS.md):
+    overall length 62.81 m, wingspan 60.12 m, height 17.02 m,
+    fuselage 5.77 m wide x 5.97 m high, wing area 377 m^2,
+    1/4-chord sweep 32.2 deg, wheelbase 25.83 m, main-gear track 9.80 m,
+    GEnx-1B fan diameter 2.82 m (111 in).
+"""
+import math
+from contextlib import contextmanager
+import os
+
+import numpy as np
+from scipy.interpolate import PchipInterpolator
+
+# ---------------------------------------------------------------------------
+# Aircraft type (AC_TYPE environment variable): b789 (default), b738, b763, and the three
+# original Micomsoft Aerospace designs ma3 (MA-300), ma7 (MA-700), ma9 (MA-900).
+# Everything below is first defined for the 787-9; the other types override the
+# published figures and derive the rest by mapping the 787 shapes (see apply_type).
+# ---------------------------------------------------------------------------
+TYPE = os.environ.get("AC_TYPE", "b789")
+ASSET = {"b789": "b787-9", "b738": "b737-800", "b763": "b767-300er",
+         "ma3": "ma-300", "ma7": "ma-700", "ma9": "ma-900", "b744": "b747-400", "at76": "atr72-600", "maw": "ma-w8"}[TYPE]
+NAME = {"b789": "Boeing 787-9", "b738": "Boeing 737-800", "b763": "Boeing 767-300ER",
+        "ma3": "Micomsoft MA-300 Tsubame", "ma7": "Micomsoft MA-700 Hayabusa", "ma9": "Micomsoft MA-900 Otori",
+        "b744": "Boeing 747-400", "at76": "ATR 72-600", "maw": "Micomsoft MA-W8 Ootaka"}[TYPE]
+
+# ---------------------------------------------------------------------------
+# Global figures
+# ---------------------------------------------------------------------------
+LENGTH = 62.81
+SPAN = 60.12
+HEIGHT = 17.02
+FUS_W = 5.77
+FUS_H = 5.97
+R_W = FUS_W / 2.0          # 2.885
+H_T = FUS_H / 2.0          # 2.985 above reference line
+H_B = FUS_H / 2.0          # 2.985 below
+WHEELBASE = 25.83
+TRACK = 9.80
+
+GROUND_Z = -5.25           # ground plane (static, gear uncompressed-ish)
+S_CG = 31.85               # reference CG station (~25 % MAC)
+FLOOR_Z = -1.00            # main deck floor
+
+S_MAIN = 33.55             # main gear station
+S_NOSE = S_MAIN - WHEELBASE  # 7.72
+Y_MAIN = TRACK / 2.0
+
+# ---------------------------------------------------------------------------
+# Fuselage
+# ---------------------------------------------------------------------------
+_top = PchipInterpolator(
+    [0.0, 0.05, 0.25, 0.6, 1.2, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 7.0, 8.0, 9.5,
+     11.0, 49.0, 52.0, 55.0, 58.0, 60.5, LENGTH],
+    [-0.55, -0.34, -0.10, 0.10, 0.33, 0.57, 0.78, 1.01, 1.26, 1.50, 1.72, 1.92, 2.10, 2.27,
+     2.54, 2.75, 2.92, H_T, H_T, 2.90, 2.66, 2.32, 2.02, 1.72])
+_bot = PchipInterpolator(
+    [0.0, 0.05, 0.25, 0.6, 1.2, 2.0, 3.0, 4.2, 5.5, 7.0, 8.5, 40.5, 44.0, 48.0, 52.0,
+     55.0, 58.0, 60.5, LENGTH],
+    [-0.55, -0.76, -1.02, -1.32, -1.70, -2.08, -2.42, -2.68, -2.85, -2.955, -H_B, -H_B,
+     -2.90, -2.55, -1.85, -1.15, -0.35, 0.35, 0.92])
+_hw = PchipInterpolator(
+    [0.0, 0.05, 0.25, 0.6, 1.2, 2.0, 3.0, 4.2, 5.5, 7.0, 8.5, 10.0, 44.5, 48.0, 52.0,
+     56.0, 59.5, LENGTH],
+    [0.0, 0.22, 0.50, 0.78, 1.12, 1.50, 1.88, 2.22, 2.50, 2.72, 2.84, R_W, R_W, 2.72,
+     2.20, 1.45, 0.78, 0.36])
+_zw = PchipInterpolator([0.0, 2.0, 5.0, 8.5, 44.0, 50.0, 56.0, LENGTH],
+                        [-0.55, -0.42, -0.18, 0.0, 0.0, 0.25, 0.75, 1.32])
+
+
+# optional features of some types (set by apply_type): an upper-deck hump (747), a second
+# engine pair, propellers instead of fans, body gear, a second row of windows
+HUMP = None        # dict(h, a, b, c, d, narrow): crown raised by h over stations a-b-c-d
+ENG2 = None        # dict(Y, Z, FWD[, KA, KR]) or a list of them: the further engines of a side
+PROP = None        # dict(R, blades, ...): turboprop nacelles and propellers
+BODY_GEAR = None   # dict(y, ds): second main gear pair (inboard, ds aft of the wing gear)
+WIN2 = None        # (z, s0, s1) or (z, [(s0, s1), ...]): upper-deck window row(s)
+WIN_RUNS = None    # [(s0, s1), ...]: main-deck window runs as on the aircraft (else WIN_S minus doors)
+
+
+def window_stations(skip_exits=True):
+    """main-deck window centres"""
+    if WIN_RUNS:
+        out = []
+        for a, b in WIN_RUNS:
+            s = a
+            while s <= b + 1e-6:
+                out.append(round(s, 4))
+                s += WIN_PITCH
+        return out
+    out, s = [], WIN_S[0]
+    while s < WIN_S[1]:
+        if all(abs(s - d) > DOOR_GAP for d in DOORS) and \
+                (not skip_exits or all(abs(s - e[0]) > e[1] / 2 + 0.05 for e in EXITS)):
+            out.append(round(s, 4))
+        s += WIN_PITCH
+    return out
+
+
+def window_rows():
+    """[(z, [s ...]), ...]: main deck, then the upper deck (747)"""
+    rows = [(WIN_Z, window_stations())]
+    if WIN2:
+        z2, runs = WIN2[0], (WIN2[1] if isinstance(WIN2[1], list) else [(WIN2[1], WIN2[2])])
+        ws = []
+        for a, b in runs:
+            s = a
+            while s <= b + 1e-6:
+                ws.append(round(s, 4))
+                s += WIN_PITCH
+        rows.append((z2, ws))
+    return rows
+SPONSON = None     # dict(s0, s1, y, z, ry, rz): main-gear fairings (high-wing turboprops)
+DORSAL = None      # dict(h, n): high wing: the crown is raised by h and flattened (superellipse n)
+                   # under the wing root so the wing sits on the fuselage (stations set from the wing)
+WING_ROOT_Y = 1.2  # wing root station (m from the centre line)
+
+
+def _hump(s):
+    if not HUMP:
+        return np.zeros_like(np.asarray(s, dtype=np.float64))
+    H = HUMP
+    return H["h"] * _bump(s, H["a"], H["b"], H["c"], H["d"])
+
+
+def fus_profile(s):
+    s = np.asarray(s, dtype=np.float64)
+    return _top(s) + _hump(s), _bot(s), _hw(s), _zw(s)
+
+
+def _bump(s, a, b, c, d):
+    s = np.asarray(s, dtype=np.float64)
+    up = np.clip((s - a) / (b - a), 0, 1)
+    dn = np.clip((d - s) / (d - c), 0, 1)
+    up = up * up * (3 - 2 * up)
+    dn = dn * dn * (3 - 2 * dn)
+    return np.minimum(up, dn)
+
+
+BUMP = (19.0, 25.5, 36.5, 43.5)     # wing-to-body fairing extent (stations)
+BUMP_W, BUMP_D = 0.105, 0.30
+# flat-glass windshield (737 / 767): the upper nose section turns from round to a blunt
+# "V" -- two flat No. 1 panes meeting at the centre post -- over these stations
+WS_ZONE = None                      # (s start, s full, s end full, s end)
+WS_N = 2.0                          # superellipse exponent of the upper lobe there (2 = round)
+
+
+def fus_section(s, phi):
+    """Points of the fuselage skin at station s for parameter(s) phi.
+
+    phi = 0 bottom centre, pi/2 right side (y<0), pi top, 3pi/2 left side.
+    Returns y, z arrays (broadcast over s, phi).
+    """
+    s = np.asarray(s, dtype=np.float64)
+    phi = np.asarray(phi, dtype=np.float64)
+    zt, zb, hw, zw = fus_profile(s)
+    sp, cp = np.sin(phi), np.cos(phi)
+    lower = cp > 0
+    n_side_top, n_side_bot = 2.0, 2.15
+    ex_top, ex_bot = 2.0, 2.3
+    if WS_ZONE is not None:
+        # only the cap around the No. 1 windshields and the centre post goes flat; the sides
+        # (No. 2 / No. 3 windows) keep the round section
+        w = _bump(s, *WS_ZONE) * np.clip((np.abs(cp) - 0.45) / 0.35, 0, 1) ** 2 * (cp < 0)
+        n_side_top = 2.0 + (WS_N - 2.0) * w
+        ex_top = 2.0 + (WS_N - 2.0) * w
+    n_y = np.where(lower, n_side_bot, n_side_top)
+    n_z = np.where(lower, ex_bot, ex_top)
+    y = -hw * np.sign(sp) * np.abs(sp) ** (2.0 / n_y)
+    z_up = zw + (zt - zw) * np.abs(cp) ** (2.0 / n_z)
+    z_dn = zw - (zw - zb) * np.abs(cp) ** (2.0 / n_z)
+    z = np.where(lower, z_dn, z_up)
+    if HUMP:
+        # upper deck: the crown rises and narrows into a second, smaller lobe
+        hh = _hump(s)
+        zt0 = zt - hh
+        up = np.where(lower, 0.0, np.abs(cp))
+        z_up0 = zw + (zt0 - zw) * up ** (2.0 / n_z)
+        k = np.clip((up - 0.25) / 0.5, 0, 1)
+        k = k * k * (3 - 2 * k)
+        z = np.where(lower, z, z_up0 + hh * k)
+        n = np.clip((up - 0.30) / 0.55, 0, 1)
+        y = y * (1.0 - HUMP.get("narrow", 0.24) * (hh / max(HUMP["h"], 1e-6)) * n * n * (3 - 2 * n))
+    if DORSAL:
+        # high-wing root fairing: a flat-topped crown under the wing
+        Ad = _bump(s, *DORSAL["st"])
+        up = np.where(lower, 0.0, np.abs(cp))
+        nf = 2.0 + (DORSAL["n"] - 2.0) * Ad
+        ztd = zt + DORSAL["h"] * Ad
+        yd = -hw * np.sign(sp) * np.abs(sp) ** (2.0 / nf)
+        zd = zw + (ztd - zw) * up ** (2.0 / nf)
+        y = np.where(lower, y, yd)
+        z = np.where(lower, z, zd)
+    # wing-to-body (belly) fairing: broadens and deepens the lower lobe
+    A = _bump(s, *BUMP)
+    d = np.where(lower, np.abs(cp), 0.0)
+    side_w = np.where(lower, np.clip(1.0 - np.abs(cp - 0.55) / 0.55, 0, 1), 0.0)
+    y = y * (1.0 + BUMP_W * A * side_w)
+    z = z - BUMP_D * A * d ** 1.5
+    return y, z
+
+
+def section_arc(s, n=512):
+    """Return phi samples and normalised arc length (0..1) for station s."""
+    phi = np.linspace(0.0, 2 * math.pi, n + 1)
+    y, z = fus_section(s, phi)
+    seg = np.hypot(np.diff(y), np.diff(z))
+    arc = np.r_[0.0, np.cumsum(seg)]
+    C = arc[-1]
+    return phi, arc / max(C, 1e-9), C
+
+
+def fus_stations():
+    """Station distribution: dense at nose and tail."""
+    a = np.linspace(0.0, 1.0, 40) ** 2 * 1.2          # 0 .. 1.2 (blunt tip)
+    s1, s2 = (11.0, 40.0) if LENGTH > 35.0 else (0.3 * LENGTH, 0.66 * LENGTH)   # short types (ATR)
+    b = np.linspace(1.2, s1, 70)[1:]
+    c = np.linspace(s1, s2, 70)[1:]
+    d = np.linspace(s2, LENGTH, 110)[1:]
+    st = np.unique(np.r_[a, b, c, d])
+    st = st[st <= max(LENGTH, 40.0)]
+    st[0] = 0.0015
+    return st
+
+
+# ---------------------------------------------------------------------------
+# Airfoils (CST parameterisation)
+# ---------------------------------------------------------------------------
+def _bernstein(x, n):
+    from math import comb
+    return np.stack([comb(n, i) * x ** i * (1 - x) ** (n - i) for i in range(n + 1)], axis=-1)
+
+
+def cst(x, A, n1=0.5, n2=1.0, te=0.0):
+    C = x ** n1 * (1 - x) ** n2
+    S = _bernstein(x, len(A) - 1) @ np.asarray(A)
+    return C * S + x * te
+
+
+# supercritical (SC(2)-07xx-like) upper/lower CST weights
+SC_UP = [0.1305, 0.1355, 0.1560, 0.1480, 0.2150, 0.2080]
+SC_LO = [-0.1290, -0.1195, -0.0560, -0.1950, 0.0180, 0.0820]
+SYM = [0.1450, 0.1250, 0.1400, 0.1150, 0.1100, 0.1000]
+
+
+def airfoil(x, tc, kind="sc"):
+    """Upper / lower z (fraction of chord) at chord stations x for thickness tc."""
+    x = np.clip(np.asarray(x, dtype=np.float64), 0.0, 1.0)
+    if kind == "sc":
+        zu = cst(x, SC_UP, te=0.0012)
+        zl = cst(x, SC_LO, te=-0.0012)
+        ref_t = 0.09833
+    else:
+        zu = cst(x, SYM, te=0.001)
+        zl = -zu
+        ref_t = 0.10120
+    k = tc / ref_t
+    camber = (zu + zl) * 0.5
+    thick = (zu - zl) * 0.5 * k
+    ck = 1.0 if kind == "sc" else 0.0
+    cm = camber * ck * np.minimum(1.0, 0.55 + 0.45 * k)
+    return cm + thick, cm - thick
+
+
+def cos_space(a, b, n):
+    t = (1 - np.cos(np.linspace(0, math.pi, n))) / 2
+    return a + (b - a) * t
+
+
+# ---------------------------------------------------------------------------
+# Main wing
+# ---------------------------------------------------------------------------
+TAN = math.tan
+_trapz = getattr(np, "trapezoid", None) or np.trapz
+D2R = math.pi / 180.0
+WING_S_LE0 = 22.15         # LE station at the aircraft centreline (virtual)
+WING_C0 = 12.70            # centreline chord (gross)
+Y_KINK = 9.85              # trailing-edge kink (engine)
+Y_RAKE = 27.55             # start of raked tip
+Y_TIP = SPAN / 2.0         # 30.06
+LE_SWEEP = 35.4 * D2R
+TE_IN_SWEEP = 8.0 * D2R
+TE_OUT_SWEEP = 24.8 * D2R
+RAKE_LE_SWEEP = 55.0 * D2R
+RAKE_TE_SWEEP = 32.0 * D2R
+WING_Z0 = -1.78            # chord plane height at centreline
+DIHEDRAL = 6.0 * D2R
+FILLET_W = 1.2
+TC_Y = (3.0, 20.0)
+TC = [0.150, 0.140, 0.113, 0.098, 0.092]
+TWIST = [4.2, 3.8, 1.6, -1.2, -2.0]
+WINGLET = None             # blended winglet (737): dict(r, theta, h, c_tip, sweep)
+
+
+def wing_le(y):
+    y = np.abs(np.asarray(y, dtype=np.float64))
+    le = WING_S_LE0 + np.minimum(y, Y_RAKE) * TAN(LE_SWEEP)
+    le = le + np.maximum(y - Y_RAKE, 0) * TAN(RAKE_LE_SWEEP)
+    return le
+
+
+def wing_te(y):
+    y = np.abs(np.asarray(y, dtype=np.float64))
+    te0 = WING_S_LE0 + WING_C0
+    te = te0 + np.minimum(y, Y_KINK) * TAN(TE_IN_SWEEP)
+    te = te + np.clip(y - Y_KINK, 0, Y_RAKE - Y_KINK) * TAN(TE_OUT_SWEEP)
+    te = te + np.maximum(y - Y_RAKE, 0) * TAN(RAKE_TE_SWEEP)
+    # soften the TE kink a little (yehudi fillet)
+    k = np.exp(-((y - Y_KINK) / FILLET_W) ** 2) * 0.10
+    return te + k
+
+
+def wing_chord(y):
+    return wing_te(y) - wing_le(y)
+
+
+def wing_z(y):
+    """Chord-plane height (static, 1g on ground) incl. slight upward curve."""
+    y = np.abs(np.asarray(y, dtype=np.float64))
+    return WING_Z0 + y * TAN(DIHEDRAL) + 0.00085 * y ** 2
+
+
+def wing_tc(y):
+    y = np.abs(np.asarray(y, dtype=np.float64))
+    return np.interp(y, [0, TC_Y[0], Y_KINK, TC_Y[1], Y_TIP], TC)
+
+
+def wing_twist(y):
+    y = np.abs(np.asarray(y, dtype=np.float64))
+    return np.interp(y, [0, TC_Y[0], Y_KINK, Y_RAKE, Y_TIP], TWIST) * D2R
+
+
+def wing_point(y, x, upper, side=1):
+    """3-D point (s, y, z) on the wing skin.
+
+    y  : spanwise distance (>=0), x : chord fraction, upper: bool, side +1 left / -1 right
+    """
+    y = np.asarray(y, dtype=np.float64)
+    x = np.asarray(x, dtype=np.float64)
+    c = wing_chord(y)
+    le = wing_le(y)
+    zu, zl = airfoil(x, wing_tc(y))
+    zc = np.where(upper, zu, zl)
+    tw = wing_twist(y)
+    # rotate about 40 % chord (nose-up twist positive)
+    dx = (x - 0.40) * c
+    dz = zc * c
+    ct, st = np.cos(tw), np.sin(tw)
+    s = le + 0.40 * c + dx * ct + dz * st
+    z = wing_z(y) - dx * st + dz * ct
+    return np.stack([s, side * y + 0 * s, z], axis=-1)
+
+
+def wing_area_mac():
+    ys = np.linspace(0, Y_TIP, 4001)
+    c = wing_chord(ys)
+    area = 2 * _trapz(c, ys)
+    mac = 2 * _trapz(c * c, ys) / area
+    y_mac = 2 * _trapz(c * ys, ys) / area
+    le_mac = float(wing_le(y_mac))
+    return area, mac, y_mac, le_mac
+
+
+# control-surface layout (spanwise y0..y1, chord fraction start)
+FLAP_IN = dict(y0=3.25, y1=9.30, x0=0.725)
+FLAPERON = dict(y0=9.95, y1=12.15, x0=0.745)
+FLAP_OUT = dict(y0=12.20, y1=21.85, x0=0.745)
+AILERON = dict(y0=21.95, y1=27.20, x0=0.760)
+SLAT = dict(y0=11.25, y1=27.20, x1=0.140)
+SPOILERS = [(4.05, 6.55), (6.60, 9.20), (12.35, 14.25), (14.30, 16.20), (16.25, 18.15),
+            (18.20, 20.05), (20.10, 21.75)]
+SPOILER_X = (0.585, 0.722)
+SLAT_SPLITS = [11.25, 13.9, 16.5, 19.1, 21.7, 24.4, 27.20]
+
+# ---------------------------------------------------------------------------
+# Engines (GE GEnx-1B)
+# ---------------------------------------------------------------------------
+ENG_Y = 9.85
+ENG_Z = -2.50
+FAN_R = 1.41               # 2.82 m fan
+NAC_OUTER = [(0.00, 1.515), (0.03, 1.585), (0.10, 1.640), (0.25, 1.690), (0.55, 1.735),
+             (1.00, 1.760), (1.60, 1.765), (2.40, 1.748), (3.20, 1.700), (3.90, 1.620),
+             (4.55, 1.505), (5.10, 1.385)]
+NAC_INNER = [(0.00, 1.515), (0.02, 1.480), (0.08, 1.450), (0.20, 1.428), (0.45, 1.418),
+             (0.80, 1.414), (1.15, 1.412)]
+FAN_A = 1.20               # fan axial position from highlight
+NOZZLE_A = 5.10            # fan nozzle exit (mean)
+CHEVRONS = 18
+CORE_A0, CORE_A1 = 5.10, 6.62
+PLUG_A1 = 7.72
+CORE_PROF = [(3.6, 0.98), (4.3, 1.02), (5.0, 0.98), (5.8, 0.86), (6.62, 0.67)]
+CORE_LIP = 6.62
+PLUG_PROF = [(6.10, 0.52), (6.6, 0.50), (7.0, 0.43), (7.4, 0.27), (7.72, 0.02)]
+
+ENG_FWD = 5.0              # inlet highlight ahead of the wing leading edge
+ENG_S_HL = float(WING_S_LE0 + ENG_Y * TAN(LE_SWEEP)) - ENG_FWD   # inlet highlight station
+ENG_KA, ENG_KR = 1.0, 1.0  # axial / radial scale of the (GEnx-sized) nacelle model
+FAN_BLADES = 18
+ENG_FLAT = 0.0             # flattened nacelle bottom (737 "hamster pouch")
+
+# ---------------------------------------------------------------------------
+# Empennage
+# ---------------------------------------------------------------------------
+HT_S_LE0 = 50.85
+HT_C0 = 6.30
+HT_SEMI = 9.72
+HT_LE_SWEEP = 37.5 * D2R
+HT_TIP_C = 1.80
+HT_Z0 = 0.95
+HT_DIHEDRAL = 7.0 * D2R
+ELEV = dict(y0=1.55, y1=9.35, x0=0.715)
+HT_PIVOT_S = 56.2
+
+VT_Z0 = 2.0                # root section (inside fuselage)
+VT_ZTIP = HEIGHT + GROUND_Z  # 11.77 -> 17.02 m above ground
+VT_S_LE0 = 49.25
+VT_C0 = 8.55
+VT_TIP_C = 3.15
+VT_LE_SWEEP = 42.0 * D2R
+RUDDER = dict(z0=3.05, z1=11.30, x0=0.695)
+VT_FIL = (1.55, 3.1)       # dorsal fillet height / length
+
+
+def ht_le(y):
+    return HT_S_LE0 + np.abs(y) * TAN(HT_LE_SWEEP)
+
+
+def ht_chord(y):
+    return HT_C0 + (HT_TIP_C - HT_C0) * np.clip(np.abs(y) / HT_SEMI, 0, 1)
+
+
+def ht_point(y, x, upper, side=1):
+    y = np.asarray(y, dtype=np.float64)
+    x = np.asarray(x, dtype=np.float64)
+    c = ht_chord(y)
+    zu, zl = airfoil(x, 0.105 - 0.02 * np.clip(y / HT_SEMI, 0, 1), kind="sym")
+    zc = np.where(upper, zu, zl)
+    s = ht_le(y) + x * c
+    z = HT_Z0 + y * TAN(HT_DIHEDRAL) + zc * c
+    return np.stack([s, side * y + 0 * s, z], axis=-1)
+
+
+def vt_le(z):
+    z = np.asarray(z, dtype=np.float64)
+    h = z - VT_Z0
+    le = VT_S_LE0 + h * TAN(VT_LE_SWEEP)
+    # dorsal fillet: LE pulled forward near the root
+    fil = np.clip(1.0 - h / VT_FIL[0], 0, 1) ** 2 * VT_FIL[1]
+    return le - fil
+
+
+def vt_te(z):
+    z = np.asarray(z, dtype=np.float64)
+    h = (z - VT_Z0) / (VT_ZTIP - VT_Z0)
+    te0 = VT_S_LE0 + VT_C0
+    te1 = VT_S_LE0 + (VT_ZTIP - VT_Z0) * TAN(VT_LE_SWEEP) + VT_TIP_C
+    return te0 + (te1 - te0) * h
+
+
+def vt_point(z, x, side):
+    """Fin skin point. side +1 left skin, -1 right skin."""
+    z = np.asarray(z, dtype=np.float64)
+    x = np.asarray(x, dtype=np.float64)
+    le = vt_le(z)
+    c = vt_te(z) - le
+    zu, _ = airfoil(x, 0.105, kind="sym")
+    # thickness based on the un-filleted chord so the dorsal fin stays slim
+    c_ref = vt_te(z) - (VT_S_LE0 + (z - VT_Z0) * TAN(VT_LE_SWEEP))
+    s = le + x * c
+    y = side * zu * c_ref
+    return np.stack([s, y, z + 0 * s], axis=-1)
+
+
+# ---------------------------------------------------------------------------
+# Landing gear
+# ---------------------------------------------------------------------------
+NOSE_TIRE_D, NOSE_TIRE_W = 1.02, 0.40
+MAIN_TIRE_D, MAIN_TIRE_W = 1.37, 0.53
+MAIN_AXLE_DS = 0.80        # half of bogie wheelbase
+MAIN_WHEEL_DY = 0.74       # half of tyre spacing on an axle
+NOSE_WHEEL_DY = 0.34
+MAIN_AXLES = (-MAIN_AXLE_DS, MAIN_AXLE_DS)
+
+
+# ---------------------------------------------------------------------------
+# Crew / lights
+# ---------------------------------------------------------------------------
+EYE = (4.15, 0.53, 1.08)   # captain eye point (s, y, z)
+EYE787 = EYE
+
+# ---------------------------------------------------------------------------
+# Fuselage openings / markings (787-9 values; overridden per type)
+# ---------------------------------------------------------------------------
+DOORS = [6.95, 17.55, 40.45, 53.85]
+DOOR_W, DOOR_Z0, DOOR_Z1 = 1.07, -0.93, 1.00
+DOOR_GAP = 0.95            # no windows closer than this to a door centre
+EXITS = []                 # over-wing emergency exits (s, width, z0, z1)
+WIN_Z, WIN_W, WIN_H, WIN_PITCH = 0.30, 0.27, 0.47, 0.965
+WIN_S = (8.35, 55.2)       # first window / last window limit
+CARGO = [(14.55, 2.69, -2.62, -0.98), (44.25, 2.69, -2.55, -0.95), (47.85, 0.95, -2.05, -0.95)]
+MODEL_LABEL, REG = "787-9", "JA787C"
+CK = (1.0, 0.0, 1.0, 1.0, 0.0)   # cockpit map from the 787 layout: (ks, ds, ky, kz, dz)
+HR = WR = 1.0              # fuselage height / width ratio to the 787-9
+SPEC = dict(S=377.0, b=60.12, c=7.71, OEW=128850, MTOW=254011, MLW=192777, MZFW=181437,
+            fuelCapacity=101100, thrustSL=329600, VMO=350, MMO=0.90)
+ENGINE_NAME = "GE GEnx-1B"
+
+_S787 = [0.0, 11.0, 44.5, 62.81]
+_SNEW = list(_S787)
+
+
+def SMAP(s787):
+    """Map a 787-9 fuselage station to this type (nose / cabin / tail cone piecewise)."""
+    return np.interp(s787, _S787, _SNEW)
+
+
+def SUNMAP(s):
+    return np.interp(s, _SNEW, _S787)
+
+
+def WY(y787):
+    """Map a 787-9 spanwise position (y) to this type's wing."""
+    r0, r1 = 2.9, 2.9 * WR
+    return r1 + (np.asarray(y787, dtype=np.float64) - r0) * (Y_TIP - r1) / (30.06 - r0)
+
+
+def ck(p):
+    """787 cockpit layout point (s, y, z) -> this type's flight deck."""
+    ks, ds, ky, kz, dz = CK
+    p = np.asarray(p, dtype=np.float64)
+    out = p.copy()
+    out[..., 0] = ds + ks * p[..., 0]
+    out[..., 1] = ky * p[..., 1]
+    out[..., 2] = dz + kz * p[..., 2]
+    return out
+
+
+TYPES = {
+    "b738": dict(
+        LENGTH=39.47, SPAN=35.79, HEIGHT=12.55, FUS_W=3.76, FUS_H=4.01, NL=7.0, T0=27.55,
+        GROUND_Z=-3.40, FLOOR_Z=-0.62, S_NOSE=4.4, WHEELBASE=15.60, TRACK=5.72,
+        WING_C0=7.0, Y_KINK=4.3, Y_TIP=16.95, LE=28.0, TE_IN=0.0, TE_OUT=14.5, WING_Z0=-1.35,
+        TC=[0.155, 0.145, 0.125, 0.105, 0.100], TWIST=[3.5, 3.2, 1.5, -1.0, -1.5],
+        WINGLET=dict(r=0.6, theta=72.0, h=2.49, c_tip=0.6, sweep=40.0),
+        ENG_Y=4.87, ENG_Z=-1.80, ENG_FWD=3.3, ENG_KA=0.59, ENG_KR=0.55, FAN_BLADES=24, ENG_FLAT=0.20,
+        # tail: fin tip trailing edge ~1 m ahead of the tail cone end, stabiliser tips at the APU
+        # exhaust (areas ~ 26 m^2 fin, ~33 m^2 stabiliser as published)
+        HT_S_LE0=33.6, HT_C0=3.7, HT_SEMI=7.17, HT_LE=33.0, HT_TIP_C=1.15, HT_Z0=0.45,
+        VT_Z0=1.3, VT_S_LE0=31.0, VT_C0=6.4, VT_TIP_C=2.0, VT_LE=35.0, VT_FIL=(1.5, 4.5),
+        NOSE_TIRE=(0.69, 0.20, 0.17), MAIN_TIRE=(1.13, 0.42, 0.43), MAIN_AXLE_DS=0.0,
+        DOORS=[4.55, 33.9], DOOR=(0.86, -0.57, 1.26), DOOR_GAP=0.62,
+        EXITS=[(15.9, 0.51, 0.06, 1.03), (16.8, 0.51, 0.06, 1.03)],
+        WIN=(0.55, 0.25, 0.36, 0.508), WIN_S=(6.1, 33.0),       # window centre ~1.17 m above the floor
+        CARGO=[(8.8, 1.22, -1.95, -1.05), (27.8, 1.22, -1.90, -1.05)],
+        LABEL="737-800", REG="JA738C", CK=(0.70, -0.505, 0.90, 0.912, -0.365),
+        SPEC=dict(S=124.6, b=35.79, c=3.96, OEW=41413, MTOW=79016, MLW=66361, MZFW=62732,
+                  fuelCapacity=20894, thrustSL=117000, VMO=340, MMO=0.82),
+        ENGINE="CFM International CFM56-7B26",
+    ),
+    "b763": dict(
+        LENGTH=54.94, SPAN=47.57, HEIGHT=15.85, FUS_W=5.03, FUS_H=5.41, NL=9.6, T0=38.74,
+        GROUND_Z=-4.75, FLOOR_Z=-0.95, S_NOSE=6.3, WHEELBASE=22.76, TRACK=9.30,
+        WING_C0=12.0, Y_KINK=7.6, Y_TIP=23.785, LE=34.0, TE_IN=0.0, TE_OUT=20.0, WING_Z0=-1.75,
+        TC=[0.150, 0.140, 0.115, 0.100, 0.095], TWIST=[4.0, 3.6, 1.6, -1.0, -1.8],
+        WINGLET=None,
+        ENG_Y=7.6, ENG_Z=-2.90, ENG_FWD=4.5, ENG_KA=0.75, ENG_KR=0.78, FAN_BLADES=38, ENG_FLAT=0.0,
+        HT_S_LE0=43.9, HT_C0=5.6, HT_SEMI=9.31, HT_LE=34.0, HT_TIP_C=1.7, HT_Z0=0.9,
+        VT_Z0=1.8, VT_S_LE0=41.3, VT_C0=8.2, VT_TIP_C=2.9, VT_LE=40.0, VT_FIL=(1.5, 2.8),
+        NOSE_TIRE=(0.94, 0.33, 0.28), MAIN_TIRE=(1.17, 0.44, 0.57), MAIN_AXLE_DS=0.71,
+        DOORS=[6.3, 17.2, 46.9], DOOR=(1.07, -0.88, 1.00), DOOR_GAP=0.85,
+        EXITS=[(24.0, 0.51, -0.30, 0.68)],
+        WIN=(0.30, 0.25, 0.38, 0.508), WIN_S=(8.0, 48.5),
+        CARGO=[(12.3, 3.40, -2.35, -0.95), (40.8, 1.78, -2.25, -0.95), (44.1, 0.97, -1.95, -1.0)],
+        LABEL="767-300ER", REG="JA763C", CK=(0.855, -0.06, 0.92, 0.906, 0.15),
+        SPEC=dict(S=283.3, b=47.57, c=6.99, OEW=90010, MTOW=186880, MLW=145150, MZFW=133810,
+                  fuelCapacity=73100, thrustSL=267000, VMO=360, MMO=0.86),
+        ENGINE="GE CF6-80C2B6",
+    ),
+    # ---- original designs (Micomsoft Aerospace) -----------------------------------------
+    # MA-300 "Tsubame": a next-generation single-aisle airliner -- a slender 4.1 m fuselage
+    # with the 787-style smooth nose, a very high aspect ratio wing with raked tips, and
+    # geared turbofans with big, slow fans (18 wide-chord blades) hung close under the wing
+    "ma3": dict(
+        LENGTH=44.20, SPAN=46.00, HEIGHT=13.20, FUS_W=4.10, FUS_H=4.30, NL=8.6, T0=31.2,
+        GROUND_Z=-3.62, FLOOR_Z=-0.70, S_NOSE=5.0, WHEELBASE=17.60, TRACK=6.60,
+        WING_C0=7.4, Y_KINK=5.4, Y_TIP=23.0, Y_RAKE=20.4, LE=27.0, TE_IN=0.0, TE_OUT=15.0, WING_Z0=-1.45,
+        TC=[0.150, 0.135, 0.110, 0.095, 0.088], TWIST=[3.8, 3.4, 1.5, -1.2, -1.8],
+        WINGLET=None,
+        ENG_Y=5.6, ENG_Z=-1.80, ENG_FWD=3.0, ENG_KA=0.66, ENG_KR=0.74, FAN_BLADES=18, ENG_FLAT=0.0,
+        HT_S_LE0=37.4, HT_C0=4.0, HT_SEMI=7.6, HT_LE=33.0, HT_TIP_C=1.2, HT_Z0=0.50,
+        VT_Z0=1.40, VT_S_LE0=34.2, VT_C0=6.8, VT_TIP_C=2.2, VT_LE=38.0, VT_FIL=(1.4, 3.6),
+        NOSE_TIRE=(0.76, 0.24, 0.20), MAIN_TIRE=(1.17, 0.43, 0.45), MAIN_AXLE_DS=0.0,
+        DOORS=[5.6, 39.2], DOOR=(0.86, -0.64, 1.28), DOOR_GAP=0.62,
+        EXITS=[(19.0, 0.51, 0.0, 0.98), (19.9, 0.51, 0.0, 0.98)],
+        WIN=(0.47, 0.28, 0.46, 0.52), WIN_S=(7.0, 37.6),
+        CARGO=[(9.6, 1.22, -2.10, -1.12), (31.0, 1.22, -2.05, -1.12)],
+        LABEL="MA-300", REG="JA300M", CK=(0.80, 0.10, 0.90, 0.90, -0.30),
+        SPEC=dict(S=150.4, b=46.0, c=4.51, OEW=45800, MTOW=86000, MLW=72000, MZFW=68000,
+                  fuelCapacity=24000, thrustSL=128000, VMO=340, MMO=0.82),
+        ENGINE="Micomsoft MX-1G geared turbofan", CHEVRONS=0,
+    ),
+    # MA-700 "Hayabusa": a high-speed long-range twin -- a long, sleek nose, a 39 deg wing
+    # with sharply raked tips for Mach 0.90 cruise, chevron-nozzle engines
+    "ma7": dict(
+        LENGTH=68.60, SPAN=64.40, HEIGHT=17.60, FUS_W=5.85, FUS_H=6.05, NL=12.5, T0=48.5,
+        GROUND_Z=-5.35, FLOOR_Z=-1.00, S_NOSE=8.4, WHEELBASE=28.6, TRACK=10.2,
+        WING_C0=14.7, Y_KINK=10.6, Y_TIP=32.2, Y_RAKE=28.2, LE=39.0, TE_IN=8.0, TE_OUT=27.0, WING_Z0=-1.85,
+        TC=[0.140, 0.128, 0.105, 0.090, 0.085], TWIST=[4.0, 3.6, 1.4, -1.4, -2.2],
+        WINGLET=None,
+        ENG_Y=10.4, ENG_Z=-2.60, ENG_FWD=5.4, ENG_KA=1.06, ENG_KR=1.04, FAN_BLADES=16, ENG_FLAT=0.0,
+        HT_S_LE0=55.6, HT_C0=6.6, HT_SEMI=10.6, HT_LE=42.0, HT_TIP_C=1.8, HT_Z0=1.0,
+        VT_Z0=2.0, VT_S_LE0=53.6, VT_C0=9.0, VT_TIP_C=3.1, VT_LE=46.0, VT_FIL=(1.6, 3.4),
+        NOSE_TIRE=(1.07, 0.42, 0.36), MAIN_TIRE=(1.40, 0.54, 0.76), MAIN_AXLE_DS=1.45, AXLES=3,
+        DOORS=[7.9, 19.6, 44.8, 59.8], DOOR=(1.07, -0.93, 1.00), DOOR_GAP=0.95,
+        EXITS=[],
+        WIN=(0.30, 0.29, 0.50, 0.965), WIN_S=(9.3, 60.6),
+        CARGO=[(16.2, 2.69, -2.65, -1.0), (49.0, 2.69, -2.60, -0.96), (52.8, 0.95, -2.10, -0.96)],
+        LABEL="MA-700", REG="JA700M", CK=(1.136, 0.0, 1.01, 1.01, 0.0),
+        SPEC=dict(S=417.3, b=64.4, c=8.85, OEW=135000, MTOW=285000, MLW=205000, MZFW=192000,
+                  fuelCapacity=118000, thrustSL=380000, VMO=360, MMO=0.93),
+        ENGINE="Micomsoft MX-9 high-bypass turbofan", CHEVRONS=20,
+    ),
+    # MA-900 "Otori": a super-widebody -- a 7.05 m fuselage (3-4-3 at 20 in seats), five door
+    # pairs, a 75 m raked wing carrying four small, quiet high-bypass engines (2.5 m fans)
+    "ma9": dict(
+        LENGTH=76.40, SPAN=74.80, HEIGHT=20.40, FUS_W=7.05, FUS_H=7.45, NL=13.4, T0=54.0,
+        GROUND_Z=-6.30, FLOOR_Z=-1.25, S_NOSE=9.6, WHEELBASE=31.0, TRACK=12.4,
+        WING_C0=15.6, Y_KINK=12.4, Y_TIP=37.4, Y_RAKE=33.0, LE=33.5, TE_IN=6.0, TE_OUT=24.0, WING_Z0=-2.40,
+        TC=[0.150, 0.138, 0.110, 0.096, 0.090], TWIST=[4.2, 3.8, 1.6, -1.2, -2.0],
+        WINGLET=None,
+        ENG_Y=11.4, ENG_Z=-3.05, ENG_FWD=5.4, ENG_KA=0.86, ENG_KR=0.88, FAN_BLADES=18, ENG_FLAT=0.0,
+        ENG2=dict(Y=21.6, Z=-1.62, FWD=4.6),
+        HT_S_LE0=61.8, HT_C0=8.0, HT_SEMI=12.4, HT_LE=38.0, HT_TIP_C=2.3, HT_Z0=1.25,
+        VT_Z0=2.5, VT_S_LE0=59.8, VT_C0=10.6, VT_TIP_C=3.9, VT_LE=43.0, VT_FIL=(2.0, 4.2),
+        NOSE_TIRE=(1.27, 0.46, 0.42), MAIN_TIRE=(1.52, 0.57, 0.82), MAIN_AXLE_DS=1.55, AXLES=3,
+        DOORS=[8.4, 21.8, 37.4, 54.6, 67.6], DOOR=(1.07, -1.18, 0.75), DOOR_GAP=0.95,
+        EXITS=[],
+        WIN=(0.05, 0.30, 0.52, 0.965), WIN_S=(9.8, 68.4),
+        CARGO=[(18.2, 2.90, -3.25, -1.25), (56.6, 2.90, -3.15, -1.20), (61.0, 1.00, -2.60, -1.20)],
+        LABEL="MA-900", REG="JA900M", CK=(1.218, 0.0, 1.10, 1.10, 0.10),
+        SPEC=dict(S=589.8, b=74.8, c=9.53, OEW=175000, MTOW=362000, MLW=262000, MZFW=246000,
+                  fuelCapacity=150000, thrustSL=520000, VMO=355, MMO=0.88),
+        ENGINE="Micomsoft MX-6 high-bypass turbofan", CHEVRONS=0,
+    ),
+    # ---- Boeing 747-400: the upper-deck hump, four CF6-80C2 under a 64 m wing with canted
+    # winglets, wing and body gear (16 main wheels).  thrustSL is per side (two engines).
+    "b744": dict(
+        LENGTH=70.66, SPAN=64.44, HEIGHT=19.41, FUS_W=6.50, FUS_H=6.90, NL=12.6, T0=50.5,
+        GROUND_Z=-5.55, FLOOR_Z=-0.90, S_NOSE=7.6, WHEELBASE=25.6, TRACK=11.0,
+        WING_C0=16.78, Y_KINK=12.0, Y_TIP=31.2, LE=42.4, TE_IN=18.7, TE_OUT=30.8, WING_Z0=-2.35,
+        TC=[0.134, 0.122, 0.098, 0.085, 0.080], TWIST=[3.8, 3.4, 1.4, -1.2, -1.8],
+        WINGLET=dict(r=0.35, theta=61.0, h=1.80, c_tip=1.0, sweep=55.0),
+        ENG_Y=11.9, ENG_Z=-2.80, ENG_FWD=4.7, ENG_KA=0.82, ENG_KR=0.84, FAN_BLADES=38, ENG_FLAT=0.0,
+        ENG2=dict(Y=21.3, Z=-1.45, FWD=4.2),
+        HT_S_LE0=58.6, HT_C0=7.6, HT_SEMI=11.1, HT_LE=40.0, HT_TIP_C=2.4, HT_Z0=1.5,
+        VT_Z0=2.4, VT_S_LE0=54.0, VT_C0=11.0, VT_TIP_C=3.6, VT_LE=47.0, VT_FIL=(1.8, 3.2),
+        NOSE_TIRE=(1.24, 0.46, 0.36), MAIN_TIRE=(1.25, 0.47, 0.56), MAIN_AXLE_DS=0.74,
+        BODY_GEAR=dict(y=1.95, ds=3.4),
+        DOORS=[9.5, 19.3, 31.9, 42.4, 57.2], DOOR=(1.07, -0.86, 1.07), DOOR_GAP=0.95,
+        EXITS=[(15.65, 1.0, 2.20, 4.10)],       # upper-deck door
+        WIN=(0.51, 0.24, 0.40, 0.508), WIN_S=(1.2, 56.1), WIN2=(3.04, [(9.8, 14.75), (16.6, 22.05)]),
+        # window runs on the main deck (drawing): gaps at the doors, galleys and the wing box
+        WIN_RUNS=[(1.2, 8.15), (10.9, 10.95), (13.9, 17.65), (20.9, 26.35), (27.4, 27.45), (28.4, 28.45), (29.4, 29.95),
+                  (33.6, 40.55), (43.3, 46.15), (49.1, 56.05)],
+        HUMP=dict(h=1.06, a=3.5, b=8.0, c=23.0, d=30.0, narrow=0.30),
+        TAIL=dict(top=([58.0, 62.0, 66.0, 68.5, 69.6, 70.3, 70.66], [3.45, 3.44, 3.42, 3.30, 3.05, 2.75, 2.35]),
+                  bot=([44.0, 47.9, 52.0, 56.0, 60.0, 64.0, 67.0, 69.2, 70.2, 70.66],
+                       [-3.45, -3.05, -2.30, -1.53, -0.77, 0.0, 0.60, 1.10, 1.70, 2.30]),
+                  hw=([52.0, 54.0, 56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 69.5, 70.66],
+                      [3.25, 3.12, 2.84, 2.44, 2.03, 1.55, 1.14, 0.75, 0.42, 0.25, 0.12]),
+                  zw=([50.0, 56.0, 62.0, 66.0, 69.0, 70.66], [0.0, 0.0, 1.30, 1.95, 2.35, 2.33])),
+        CARGO=[(13.6, 2.64, -3.05, -0.95), (46.7, 2.64, -2.95, -0.95), (50.6, 1.12, -2.4, -1.0)],
+        LABEL="747-400", REG="JA744C", CK=(1.12, 1.6, 1.0, 1.04, 2.21),
+        SPEC=dict(S=506.6, b=64.44, c=11.2, OEW=178756, MTOW=396894, MLW=285763, MZFW=246075,
+                  fuelCapacity=173000, thrustSL=552000, VMO=365, MMO=0.92),
+        ENGINE="GE CF6-80C2B5F", CHEVRONS=0,
+    ),
+    # ---- Micomsoft MA-W8 "Ootaka": the A340-600 fuselage and wing (75.3 m, 5.64 m body, four door
+    # pairs incl. the over-wing door) with EIGHT small geared turbofans in four B-52-style twin
+    # pods.  thrustSL is per side (four engines).
+    "maw": dict(
+        LENGTH=75.30, SPAN=63.45, HEIGHT=17.22, FUS_W=5.64, FUS_H=5.64, NL=7.5, T0=55.0,
+        GROUND_Z=-5.40, FLOOR_Z=-0.45, S_NOSE=7.0, WHEELBASE=32.84, TRACK=10.69,
+        WING_C0=13.3, Y_KINK=9.0, Y_TIP=31.24, LE=31.8, TE_IN=0.0, TE_OUT=21.4, WING_Z0=-1.75,
+        TC=[0.150, 0.135, 0.110, 0.100, 0.095], TWIST=[4.0, 3.5, 1.5, -1.0, -1.8],
+        WINGLET=dict(r=0.25, theta=78.0, h=2.70, c_tip=0.70, sweep=45.0),
+        ENG_Y=8.45, ENG_Z=-2.55, ENG_FWD=3.0, ENG_KA=0.62, ENG_KR=0.57, FAN_BLADES=18, ENG_FLAT=0.0,
+        ENG2=[dict(Y=10.75, Z=-2.48, FWD=3.0), dict(Y=19.45, Z=-1.95, FWD=2.7), dict(Y=21.75, Z=-1.88, FWD=2.7)],
+        HT_S_LE0=66.6, HT_C0=7.6, HT_SEMI=10.75, HT_LE=31.0, HT_TIP_C=2.4, HT_Z0=1.4,
+        VT_Z0=2.0, VT_S_LE0=63.2, VT_C0=10.0, VT_TIP_C=3.4, VT_LE=42.0, VT_FIL=(1.5, 3.0),
+        NOSE_TIRE=(1.07, 0.39, 0.33), MAIN_TIRE=(1.22, 0.46, 0.56), MAIN_AXLE_DS=2.06, AXLES=4,
+        DOORS=[5.9, 24.7, 47.5, 62.5], DOOR=(1.07, -0.40, 1.60), DOOR_GAP=0.90,
+        EXITS=[],
+        WIN=(0.85, 0.24, 0.38, 0.533), WIN_S=(7.2, 61.3),
+        WIN_RUNS=[(7.2, 22.0), (26.0, 29.1), (29.9, 44.9), (48.6, 61.2)],
+        TAIL=dict(top=([56.0, 62.0, 68.0, 71.0, 73.0, 74.0, 75.0, 75.30], [2.82, 2.82, 2.82, 2.80, 2.70, 2.56, 2.40, 2.18]),
+                  bot=([56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 70.0, 72.0, 73.0, 74.0, 75.30],
+                       [-2.82, -2.77, -2.52, -2.11, -1.59, -0.90, -0.22, 0.52, 1.14, 1.40, 1.71, 2.15]),
+                  hw=([55.0, 56.0, 58.0, 60.0, 62.0, 64.0, 66.0, 68.0, 70.0, 72.0, 74.0, 75.30],
+                      [2.82, 2.77, 2.61, 2.46, 2.13, 1.81, 1.55, 1.22, 0.91, 0.60, 0.37, 0.12]),
+                  zw=([56.0, 60.0, 64.0, 68.0, 72.0, 75.30], [0.0, 0.05, 0.35, 0.95, 1.55, 2.17])),
+        CARGO=[(9.5, 2.70, -2.45, -0.40), (56.1, 2.70, -2.55, -0.40), (59.45, 1.00, -2.00, -0.60)],
+        LABEL="MA-W8", REG="JA800M", CK=(1.15, -0.6, 0.92, 1.0, 0.0),
+        SPEC=dict(S=439.4, b=63.45, c=7.26, OEW=177000, MTOW=380000, MLW=265000, MZFW=251000,
+                  fuelCapacity=155000, thrustSL=520000, VMO=330, MMO=0.86, rollK=1.3),   # (ailerons + six spoilers a side)
+        ENGINE="Micomsoft MX-2 high-bypass turbofan", CHEVRONS=0,
+    ),
+    # ---- ATR 72-600: high wing, T-tail, two PW127M turboprops with six-blade propellers, main
+    # gear in fuselage sponsons, 2-2 cabin.  (thrustSL: equivalent static thrust per engine)
+    "at76": dict(
+        LENGTH=27.17, SPAN=27.05, HEIGHT=7.65, FUS_W=2.77, FUS_H=2.90, NL=4.9, T0=19.2,
+        GROUND_Z=-2.42, FLOOR_Z=-0.56, S_NOSE=2.55, WHEELBASE=10.77, TRACK=4.10,
+        WING_C0=2.84, Y_KINK=4.1, Y_TIP=13.52, LE=2.5, TE_IN=0.0, TE_OUT=-5.0, WING_Z0=1.58,
+        TC=[0.180, 0.175, 0.160, 0.135, 0.130], TWIST=[2.0, 2.0, 1.0, 0.0, -1.0], DIHEDRAL=1.5,
+        WINGLET=None, BUMP_D=0.0, WING_ROOT_Y=0.3, DORSAL=dict(h=0.08, n=6.0),
+        ENG_Y=4.10, ENG_Z=1.12, ENG_FWD=2.65, ENG_KA=0.6, ENG_KR=1.40, FAN_BLADES=6, ENG_FLAT=0.0,
+        PROP=dict(R=1.98, blades=6, L=6.9, Rn=0.58),
+        HT_S_LE0=24.25, HT_C0=1.95, HT_SEMI=3.65, HT_LE=9.0, HT_TIP_C=1.35, HT_Z0=4.95, HT_DIH=0.0,
+        VT_Z0=1.25, VT_S_LE0=20.6, VT_C0=4.4, VT_TIP_C=2.35, VT_LE=34.0, VT_FIL=(0.9, 3.6),
+        NOSE_TIRE=(0.45, 0.16, 0.16), MAIN_TIRE=(0.84, 0.29, 0.26), MAIN_AXLE_DS=0.0,
+        SPONSON=dict(s0=10.6, s1=16.4, y=1.38, z=-1.02, ry=0.62, rz=0.58),
+        DOORS=[4.15, 20.7], DOOR=(0.72, -0.50, 1.16), DOOR_GAP=0.5,
+        EXITS=[],
+        WIN=(0.36, 0.22, 0.34, 0.762), WIN_S=(5.4, 19.8),
+        CARGO=[],
+        LABEL="ATR 72-600", REG="JA72AT", CK=(0.56, 0.05, 0.64, 0.66, -0.22),
+        SPEC=dict(S=61.2, b=27.05, c=2.35, OEW=13500, MTOW=23000, MLW=22350, MZFW=21000,
+                  fuelCapacity=5000, thrustSL=42000, VMO=250, MMO=0.55),
+        ENGINE="Pratt & Whitney Canada PW127M", CHEVRONS=0,
+    ),
+}
+
+# 737-800 nose, measured from side-on photos (KLM PH-BXC, Norwegian LN-NGK, GOL PR-GGP,
+# Southwest N8301J; Wikimedia Commons): the pointed Section 41 -- the tip ~0.5 m below the
+# centre line, the crown sloping down over ~7.5 m ahead of the cabin (the cockpit windows sit
+# just under it as a narrow band), a straight chin.  Type coordinates: top / bottom / half width / centre
+NOSE_B738 = dict(
+    top=([0, .04, .2, .5, 1.0, 1.22, 1.9, 2.6, 3.26, 4.0, 4.6, 5.3, 6.0, 7.0],
+         [-.52, -.42, -.28, -.09, .16, .28, .74, 1.04, 1.29, 1.50, 1.64, 1.78, 1.88, 2.0]),
+    bot=([0, .04, .2, .5, 1.0, 1.6, 2.6, 3.6, 4.6, 6.0, 7.0],
+         [-.52, -.64, -.80, -1.01, -1.24, -1.44, -1.67, -1.83, -1.94, -2.0, -2.005]),
+    hw=([0, .04, .2, .5, 1.0, 1.6, 2.6, 3.6, 4.6, 6.0, 7.0],
+        [0, .12, .27, .47, .74, 1.00, 1.36, 1.60, 1.75, 1.86, 1.88]),
+    zw=([0, 1.0, 2.6, 4.6, 7.0], [-.52, -.50, -.32, -.14, 0]),
+)
+# 767-300ER nose, measured from photos (Qantas VH-OGN close-up, Hawaiian N592HA, Australian
+# VH-OGL, side-on JAL / ANA shots): a long, gently tapering Section 41 -- the radome tip
+# ~0.45 m below the centre line, the windshield starting ~2 m from the tip, the No. 3 windows
+# ending only ~1.3 m ahead of door 1L, the crown reaching full height at ~8 m
+NOSE_B763 = dict(
+    top=([0, .07, .27, .68, 1.26, 1.76, 2.7, 4.0, 5.5, 6.8, 7.8, 8.7, 9.6],
+         [-.45, -.22, .02, .34, .72, 1.02, 1.52, 1.98, 2.36, 2.56, 2.65, 2.70, 2.705]),
+    bot=([0, .07, .27, .68, 1.26, 2.7, 4.2, 6.0, 7.6, 8.6, 9.6],
+         [-.45, -.66, -.88, -1.12, -1.33, -1.76, -2.08, -2.40, -2.61, -2.69, -2.705]),
+    hw=([0, .07, .27, .68, 1.26, 2.7, 4.2, 6.0, 7.6, 8.6, 9.6],
+        [0, .26, .46, .69, .93, 1.52, 1.88, 2.24, 2.45, 2.51, 2.515]),
+    zw=([0, 1.3, 3.3, 5.3, 9.6], [-.45, -.36, -.16, -.03, 0]),
+)
+# 747-400: measured from the Boeing 747 family side / top drawing (Wikimedia Commons,
+# "Boeing 747 family v1.0.png") scaled to the 70.66 m length; the crown here is the main-deck
+# nose, the upper deck is added by HUMP (total crown 4.51 m above the axis from s = 8 m)
+NOSE_B744 = dict(
+    top=([0, 0.2, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9.5, 11], [0.05, 0.59, 0.84, 1.24, 1.48, 1.73, 2.22, 2.674, 3.175, 3.45, 3.45, 3.45, 3.45, 3.45]),
+    bot=([0, .2, .5, 1, 1.5, 2, 3, 4, 5, 6, 7.5, 9, 11],
+         [.05, -.47, -.71, -1.13, -1.37, -1.62, -2.11, -2.36, -2.68, -2.85, -3.07, -3.25, -3.40]),
+    hw=([0, .2, .5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9.5, 11],
+        [0, .49, .73, 1.06, 1.25, 1.46, 1.83, 2.15, 2.44, 2.68, 2.88, 3.04, 3.22, 3.25]),
+    zw=([0, 2, 4, 6, 11], [.05, .03, .01, 0, 0]),
+)
+# MA-W8: the A340-600 fuselage, measured from the Airbus A340 family drawing (Wikimedia Commons,
+# "Airbus A340 family 2 v1.0.png", scaled to 75.30 m; the drawn nose-down attitude removed)
+NOSE_MAW = dict(
+    top=([0, .1, .3, .6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8.5, 11],
+         [-.35, -.13, .14, .36, .53, .85, 1.34, 1.62, 1.89, 2.11, 2.27, 2.43, 2.54, 2.65, 2.72, 2.79, 2.82, 2.82]),
+    bot=([0, .1, .3, .6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 8, 11],
+         [-.35, -.56, -.89, -1.10, -1.38, -1.65, -1.88, -2.04, -2.21, -2.33, -2.45, -2.56, -2.68, -2.73, -2.77, -2.81, -2.82]),
+    hw=([0, .2, .5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 10, 11],
+        [0, .37, .58, .85, 1.12, 1.33, 1.71, 2.02, 2.24, 2.46, 2.61, 2.72, 2.82, 2.82]),
+    zw=([0, 3, 6, 11], [-.35, -.15, -.03, 0]),
+)
+NOSE = {"b738": NOSE_B738, "b763": NOSE_B763, "b744": NOSE_B744, "maw": NOSE_MAW}
+
+# nacelle outlines per type in the 787 (GEnx) units the engine is modelled in, scaled by
+# (ENG_KA, ENG_KR): outer cowl, fan nozzle exit, core cowl, core nozzle, plug
+NACELLES = {
+    # CFM56-7B: short, barrel-like fan cowl, a thick lip, the fan nozzle ~2 fan diameters
+    # behind the highlight; short core cowl and plug (separate flow)
+    "b738": dict(
+        outer=[(0.00, 1.500), (0.03, 1.600), (0.10, 1.680), (0.25, 1.745), (0.55, 1.795), (1.00, 1.820),
+               (1.60, 1.825), (2.40, 1.810), (3.10, 1.760), (3.70, 1.660), (4.20, 1.540)],
+        # Qantas VH-XZP / VH-VZY photos: a short silver core cowl and a long, sharply pointed
+        # exhaust cone well out of the core nozzle
+        nozzle=4.20, core=[(3.4, 1.00), (4.0, 1.04), (4.6, 1.00), (5.3, 0.88), (5.95, 0.70)],
+        core_lip=5.95, plug=[(5.45, 0.56), (5.9, 0.55), (6.4, 0.44), (7.0, 0.24), (7.55, 0.02)]),
+    # CF6-80C2B6: the fan cowl and reverser end well ahead of the turbine -- a long exposed
+    # core cowl, a large core nozzle and exhaust plug
+    "b763": dict(
+        outer=[(0.00, 1.500), (0.03, 1.605), (0.10, 1.680), (0.25, 1.740), (0.55, 1.780), (1.00, 1.800),
+               (1.80, 1.805), (2.60, 1.795), (3.30, 1.760), (3.90, 1.680), (4.40, 1.570)],
+        # Delta N183DN / SAS 767 photos: a long barrel fan cowl, then a nearly cylindrical core
+        # cowl ~0.45 of its length with a big core nozzle; the plug barely shows
+        nozzle=4.40, core=[(3.6, 1.06), (4.3, 1.09), (5.0, 1.07), (5.7, 1.02), (6.35, 0.96)],
+        core_lip=6.35, plug=[(5.95, 0.72), (6.4, 0.70), (6.75, 0.56), (7.05, 0.30), (7.25, 0.02)]),
+    # MX-1G geared turbofan: a short, fat fan cowl (slim lip), short core with a pointed plug
+    "ma3": dict(
+        outer=[(0.00, 1.520), (0.03, 1.600), (0.10, 1.665), (0.25, 1.720), (0.55, 1.760), (1.00, 1.780),
+               (1.80, 1.780), (2.60, 1.740), (3.20, 1.660), (3.70, 1.520)],
+        nozzle=3.70, core=[(3.0, 1.00), (3.6, 1.03), (4.2, 0.99), (4.9, 0.86), (5.5, 0.68)],
+        core_lip=5.5, plug=[(5.0, 0.54), (5.5, 0.52), (6.0, 0.42), (6.5, 0.24), (6.95, 0.02)]),
+    # MX-9 / MX-12: GEnx-like long fan cowls (the 787's own outlines)
+    "ma7": dict(outer=NAC_OUTER, nozzle=NOZZLE_A, core=CORE_PROF, core_lip=CORE_LIP, plug=PLUG_PROF),
+    "at76": dict(outer=NAC_OUTER, nozzle=NOZZLE_A, core=CORE_PROF, core_lip=CORE_LIP, plug=PLUG_PROF),   # (unused: propellers)
+    "ma9": dict(
+        outer=[(0.00, 1.520), (0.03, 1.595), (0.10, 1.650), (0.25, 1.700), (0.55, 1.742), (1.00, 1.765),
+               (1.70, 1.770), (2.50, 1.752), (3.30, 1.705), (4.00, 1.625), (4.60, 1.515), (5.00, 1.420)],
+        nozzle=5.00, core=[(3.5, 0.96), (4.2, 1.00), (4.9, 0.96), (5.7, 0.84), (6.5, 0.66)],
+        core_lip=6.5, plug=[(6.0, 0.50), (6.5, 0.48), (6.9, 0.41), (7.3, 0.25), (7.6, 0.02)]),
+}
+NACELLES["b744"] = NACELLES["b763"]
+NACELLES["maw"] = NACELLES["ma3"]      # eight small geared fans
+WS_ZONES = {"b738": ((1.3, 1.6, 2.45, 3.0), 1.62), "b763": ((1.54, 1.79, 2.39, 3.04), 1.72)}
+# side windows (No. 2 / No. 3) length scale: the 767's window band is ~2.4 m long in photos
+
+
+def apply_type(t):
+    g = globals()
+    T = TYPES[t]
+    for k in ("LENGTH", "SPAN", "HEIGHT", "FUS_W", "FUS_H", "GROUND_Z", "FLOOR_Z", "WHEELBASE", "TRACK",
+              "WING_C0", "Y_KINK", "Y_TIP", "WING_Z0", "TC", "TWIST", "WINGLET", "ENG_Y", "ENG_Z", "ENG_FWD",
+              "ENG_KA", "ENG_KR", "FAN_BLADES", "ENG_FLAT", "HT_S_LE0", "HT_C0", "HT_SEMI", "HT_TIP_C",
+              "HT_Z0", "VT_Z0", "VT_S_LE0", "VT_C0", "VT_TIP_C", "VT_FIL", "MAIN_AXLE_DS", "DOORS",
+              "DOOR_GAP", "EXITS", "WIN_S", "CARGO", "REG", "CK", "SPEC"):
+        g[k] = T[k]
+    g["MODEL_LABEL"], g["ENGINE_NAME"] = T["LABEL"], T["ENGINE"]
+    g["R_W"] = T["FUS_W"] / 2
+    g["H_T"] = g["H_B"] = T["FUS_H"] / 2
+    g["HR"], g["WR"] = T["FUS_H"] / 5.97, T["FUS_W"] / 5.77
+    g["_SNEW"] = [0.0, T["NL"], T["T0"], T["LENGTH"]]
+    # --- fuselage: 787 tables mapped (nose / tail), 737 nose explicit --------------
+    def table(kn, vals, scale, key):
+        kn = np.asarray(kn, dtype=np.float64)
+        vals = np.asarray(vals, dtype=np.float64) * scale
+        if t in NOSE:
+            keep = kn > 11.0
+            ns, nv = NOSE[t][key]
+            s = np.r_[ns, SMAP(kn[keep])]
+            v = np.r_[nv, vals[keep]]
+        else:
+            s, v = SMAP(kn), vals
+        s[-1] = T["LENGTH"]
+        return PchipInterpolator(s, v)
+    g["_top"] = table(_top.x, _top(_top.x), HR, "top")
+    g["_bot"] = table(_bot.x, _bot(_bot.x), HR, "bot")
+    g["_hw"] = table(_hw.x, _hw(_hw.x), WR, "hw")
+    g["_zw"] = table(_zw.x, _zw(_zw.x), HR, "zw")
+    # measured tail cone (747: the upswept tail keeps the crown almost to the end)
+    for key, (ts, tv) in T.get("TAIL", {}).items():
+        f = g["_" + key]
+        keep = f.x < ts[0] - 1.0
+        g["_" + key] = PchipInterpolator(np.r_[f.x[keep], ts], np.r_[f(f.x[keep]), tv])
+    # --- wing -----------------------------------------------------------------
+    g["LE_SWEEP"] = T["LE"] * D2R
+    g["TE_IN_SWEEP"] = T["TE_IN"] * D2R
+    g["TE_OUT_SWEEP"] = T["TE_OUT"] * D2R
+    g["Y_RAKE"] = T.get("Y_RAKE", T["Y_TIP"])
+    g["FILLET_W"] = 1.2 * T["Y_TIP"] / 30.06
+    g["TC_Y"] = (0.1 * T["Y_TIP"], 0.665 * T["Y_TIP"])
+    g["S_MAIN"] = T["S_NOSE"] + T["WHEELBASE"]
+    g["S_NOSE"] = T["S_NOSE"]
+    g["Y_MAIN"] = T["TRACK"] / 2
+    g["WING_S_LE0"] = 0.0
+    area, mac, ymac, lemac = wing_area_mac()
+    g["S_CG"] = g["S_MAIN"] - 1.6
+    g["WING_S_LE0"] = g["S_CG"] - (lemac + 0.25 * mac)
+    # wing-to-body fairing follows the wing root
+    le_r, te_r = float(wing_le(2.9 * WR)), float(wing_te(2.9 * WR))
+    k = lambda s: le_r + (s - 24.21) * (te_r - le_r) / (35.26 - 24.21)  # noqa: E731
+    g["BUMP"] = tuple(k(s) for s in BUMP)
+    g["BUMP_W"], g["BUMP_D"] = 0.105, 0.30 * HR
+    # control surfaces: spanwise positions mapped from the 787 layout
+    for name in ("FLAP_IN", "FLAPERON", "FLAP_OUT", "AILERON", "SLAT"):
+        d = dict(g[name])
+        d["y0"], d["y1"] = float(WY(d["y0"])), float(WY(d["y1"]))
+        g[name] = d
+    g["SPOILERS"] = [(float(WY(a)), float(WY(b))) for a, b in SPOILERS]
+    g["SLAT_SPLITS"] = [float(WY(v)) for v in SLAT_SPLITS]
+    # --- windshield, engines -----------------------------------------------------
+    if t in WS_ZONES:
+        g["WS_ZONE"], g["WS_N"] = WS_ZONES[t]
+    g["FAN_R"] = 1.41 * T["ENG_KR"]
+    g["CHEVRONS"] = T.get("CHEVRONS", 0)
+    NA = NACELLES[t]
+    g["NAC_OUTER"] = NA["outer"]
+    g["NOZZLE_A"] = NA["nozzle"]
+    g["CORE_PROF"], g["CORE_LIP"], g["PLUG_PROF"] = NA["core"], NA["core_lip"], NA["plug"]
+    g["ENG_S_HL"] = float(wing_le(T["ENG_Y"])) - T["ENG_FWD"]
+    # --- empennage ---------------------------------------------------------------
+    g["HT_LE_SWEEP"] = T["HT_LE"] * D2R
+    g["HT_PIVOT_S"] = T["HT_S_LE0"] + 0.85 * T["HT_C0"]
+    ks = T["HT_SEMI"] / 9.72
+    g["ELEV"] = dict(y0=1.55 * WR, y1=9.35 * ks, x0=0.715)
+    g["VT_ZTIP"] = T["HEIGHT"] + T["GROUND_Z"]
+    g["VT_LE_SWEEP"] = T["VT_LE"] * D2R
+    fr = lambda z: T["VT_Z0"] + (z - 2.0) / 9.77 * (g["VT_ZTIP"] - T["VT_Z0"])  # noqa
+    g["RUDDER"] = dict(z0=fr(3.05), z1=fr(11.30), x0=0.695)
+    # --- gear ----------------------------------------------------------------------
+    g["NOSE_TIRE_D"], g["NOSE_TIRE_W"], g["NOSE_WHEEL_DY"] = T["NOSE_TIRE"]
+    g["MAIN_TIRE_D"], g["MAIN_TIRE_W"], g["MAIN_WHEEL_DY"] = T["MAIN_TIRE"]
+    ds = T["MAIN_AXLE_DS"]
+    # three-axle bogies (6 wheels per leg) on the heaviest types, like the 777
+    nax = T.get("AXLES", 2 if ds > 0 else 1)
+    # four-axle bogies (8 wheels per leg) on the MA-W8; ds is then half the outer-axle spacing
+    g["MAIN_AXLES"] = tuple(float(v) for v in np.linspace(-ds, ds, nax)) if nax > 1 else (0.0,)
+    # --- openings --------------------------------------------------------------------
+    g["DOOR_W"], g["DOOR_Z0"], g["DOOR_Z1"] = T["DOOR"]
+    g["WIN_Z"], g["WIN_W"], g["WIN_H"], g["WIN_PITCH"] = T["WIN"]
+    g["EYE"] = tuple(float(v) for v in ck(EYE))
+    # --- optional features ---------------------------------------------------------
+    for k in ("HUMP", "ENG2", "PROP", "BODY_GEAR", "WIN2", "SPONSON", "WIN_RUNS"):
+        g[k] = T.get(k)
+    g["WING_ROOT_Y"] = T.get("WING_ROOT_Y", 1.2)
+    if T.get("DORSAL"):
+        le_d, te_d = float(wing_le(g["WING_ROOT_Y"])), float(wing_te(g["WING_ROOT_Y"]))
+        g["DORSAL"] = dict(T["DORSAL"], st=(le_d - 1.6, le_d + 0.2, te_d - 0.3, te_d + 2.2))
+    if "HT_DIH" in T:
+        g["HT_DIHEDRAL"] = T["HT_DIH"] * D2R
+    if "DIHEDRAL" in T:
+        g["DIHEDRAL"] = T["DIHEDRAL"] * D2R
+    if "BUMP_D" in T:
+        g["BUMP_D"] = T["BUMP_D"]
+
+
+def engine_set():
+    """engine stations of one side: the inboard (or only) engine, then ENG2"""
+    out = [dict(Y=ENG_Y, Z=ENG_Z, S=ENG_S_HL, KA=ENG_KA, KR=ENG_KR)]
+    for E in (ENG2 if isinstance(ENG2, list) else [ENG2] if ENG2 else []):
+        out.append(dict(Y=E["Y"], Z=E["Z"], S=float(wing_le(E["Y"])) - E["FWD"], KA=E.get("KA", ENG_KA), KR=E.get("KR", ENG_KR)))
+    return out
+
+
+@contextmanager
+def engine_at(e):
+    """build one engine: the engine globals are set to that station for the duration"""
+    g = globals()
+    keep = {k: g[k] for k in ("ENG_Y", "ENG_Z", "ENG_S_HL", "ENG_KA", "ENG_KR", "FAN_R")}
+    g.update(ENG_Y=e["Y"], ENG_Z=e["Z"], ENG_S_HL=e["S"], ENG_KA=e["KA"], ENG_KR=e["KR"], FAN_R=1.41 * e["KR"])
+    try:
+        yield
+    finally:
+        g.update(keep)
+
+
+if TYPE != "b789":
+    apply_type(TYPE)
+
+
+# ---------------------------------------------------------------------------
+# Blended winglet (737): a lifting surface swept up from the wing tip
+# ---------------------------------------------------------------------------
+def winglet_frame(u):
+    """Path of the winglet quarter... u 0..1 along the span of the winglet.
+
+    Returns (y, z offset from the tip chord plane, local dihedral angle, arc length fraction)."""
+    W = WINGLET
+    r, th, h = W["r"], W["theta"] * D2R, W["h"]
+    L_arc = r * th
+    L_str = max(h - r * (1 - math.cos(th)), 0.0) / math.sin(th)
+    Ltot = L_arc + L_str
+    d = np.asarray(u, dtype=np.float64) * Ltot
+    a = np.minimum(d, L_arc) / r
+    y = r * np.sin(a) + np.maximum(d - L_arc, 0) * math.cos(th)
+    z = r * (1 - np.cos(a)) + np.maximum(d - L_arc, 0) * math.sin(th)
+    return y, z, a, d, Ltot
+
+
+def winglet_point(u, x, upper, side=1):
+    W = WINGLET
+    y0 = Y_TIP
+    c0 = float(wing_chord(y0))
+    le0 = float(wing_le(y0))
+    yy, zz, a, d, Ltot = winglet_frame(u)
+    t = np.clip(d / Ltot, 0.0, 1.0)
+    c = c0 + (W["c_tip"] - c0) * t ** 0.8
+    le = le0 + d * math.tan(W["sweep"] * D2R) * t ** 0.35 + (c0 - c) * 0.15
+    zu, zl = airfoil(x, 0.092 - 0.012 * t)
+    zc = np.where(upper, zu, zl) * c
+    tw = float(wing_twist(y0))
+    s = le + x * c + zc * math.sin(tw)
+    # thickness acts along the local normal of the (y, z) path: (-sin a, cos a)
+    ydir = -np.sin(a + DIHEDRAL)
+    zdir = np.cos(a + DIHEDRAL)
+    base_z = float(wing_z(y0))
+    # the path is laid out in the dihedral plane of the tip
+    py = y0 + yy * math.cos(DIHEDRAL) - zz * math.sin(DIHEDRAL)
+    pz = base_z + yy * math.sin(DIHEDRAL) + zz * math.cos(DIHEDRAL) - x * c * math.sin(tw) * 0
+    Y = py + zc * ydir
+    Z = pz + zc * zdir
+    return np.stack([s, side * Y + 0 * s, Z + 0 * s], axis=-1)
+
+
+def span_total():
+    if WINGLET is None:
+        return 2 * Y_TIP
+    y, z, a, d, L = winglet_frame(1.0)
+    return 2 * float(Y_TIP + y * math.cos(DIHEDRAL) - z * math.sin(DIHEDRAL))
+
+
+def to_blender(p):
+    """Design (s, y, z) -> Blender (X fwd, Y left, Z up) with CG at origin."""
+    p = np.asarray(p, dtype=np.float64)
+    out = p.copy()
+    out[..., 0] = S_CG - p[..., 0]
+    return out
+
+
+def vec_to_blender(n):
+    n = np.asarray(n, dtype=np.float64).copy()
+    n[..., 0] = -n[..., 0]
+    return n
+
+
+class ScaledTB:
+    """Design -> Blender transform that scales geometry modelled at 787 size about a centre.
+
+    k = (axial, lateral, vertical) scale; flat > 0 flattens the lower outer cowl (radius > 1.47,
+    787 units) like the CFM56-7 nacelle on the 737."""
+
+    def __init__(self, center, k, flat=0.0):
+        self.c = np.asarray(center, dtype=np.float64)
+        self.k = np.asarray(k, dtype=np.float64)
+        self.flat = flat
+
+    def __call__(self, p):
+        d = np.asarray(p, dtype=np.float64) - self.c
+        if self.flat:
+            # CFM56-7 "hamster pouch": the gearbox sits at the sides, so the lower cowl and the
+            # inlet lip are flat and the lower sides bulge.  Outer cowl (r > 1.5) everywhere;
+            # the inlet (r 1.38 .. 1.5) near the highlight, back to round at the fan face
+            d = d.copy()
+            r = np.hypot(d[..., 1], d[..., 2])
+            a = d[..., 0]
+            w = np.where(r >= 1.5, 1.0, np.clip((r - 1.38) / 0.12, 0, 1) * np.clip(1.0 - a / 1.1, 0, 1))
+            w = w * np.clip((5.2 - a) / 1.0, 0, 1)
+            down = np.clip(-d[..., 2] / np.maximum(r, 1e-9), 0, 1)
+            lim = r * (1.0 - self.flat)             # flat floor at this depth below the axis
+            zc = -d[..., 2]
+            k = np.maximum(0.06 * r, 1e-6)
+            zs = -k * np.logaddexp(-zc / k, -lim / k)          # smooth min(zc, lim)
+            zs = np.minimum(zs, zc)
+            d[..., 2] = np.where(zc > 0, -(zc + (zs - zc) * w), d[..., 2])
+            d[..., 1] *= 1.0 + 0.10 * self.flat / 0.16 * w * np.sin(np.pi * down) ** 2
+        return to_blender(self.c + d * self.k)
+
+    def normal(self, N):
+        return vec_to_blender(np.asarray(N) / self.k)
+
+
+def inner_limit(p, margin=0.035):
+    """pull points (s, y, z) that would poke through the fuselage skin back inside it"""
+    p = np.asarray(p, dtype=np.float64).copy()
+    flat = p.reshape(-1, 3)
+    phi = np.linspace(0.0, 2 * math.pi, 721)
+    half = len(phi) // 2
+    keys = np.round(flat[:, 0] / 0.04).astype(np.int64)
+    for k in np.unique(keys):
+        m = keys == k
+        s = float(k) * 0.04
+        if s <= 0.05 or s > LENGTH * 0.25:
+            continue
+        y, z = fus_section(s, phi)
+        yl, zl = np.abs(y[:half + 1]), z[:half + 1]          # bottom -> right side -> top
+        o = np.argsort(zl)
+        flat[m, 2] = np.clip(flat[m, 2], zl.min() + margin, zl.max() - margin)   # under the crown
+        w = np.interp(flat[m, 2], zl[o], yl[o], left=0.0, right=0.0)
+        lim = np.maximum(w - margin, 0.0)
+        yy = flat[m, 1]
+        flat[m, 1] = np.sign(yy) * np.minimum(np.abs(yy), lim)
+    return flat.reshape(p.shape)
+
+
+class CockpitTB:
+    """787 flight-deck layout coordinates -> this type's flight deck (Blender frame)."""
+
+    def __call__(self, p):
+        q = ck(p)
+        if TYPE != "b789":
+            q = inner_limit(q)
+        return to_blender(q)
+
+    def normal(self, N):
+        ks, ds, ky, kz, dz = CK
+        return vec_to_blender(np.asarray(N) / np.array([ks, ky, kz]))
+
+
+def ck_inv(p):
+    ks, ds, ky, kz, dz = CK
+    p = np.asarray(p, dtype=np.float64)
+    out = p.copy()
+    out[..., 0] = (p[..., 0] - ds) / ks
+    out[..., 1] = p[..., 1] / ky
+    out[..., 2] = (p[..., 2] - dz) / kz
+    return out
+
+
+def to_three(p):
+    """Design -> three.js aircraft frame (x fwd, y up, z right)."""
+    s, y, z = p
+    return [S_CG - s, z, -y]
+
+
+if __name__ == "__main__":
+    a, mac, ymac, lemac = wing_area_mac()
+    print("wing area %.1f m2  MAC %.2f m at y=%.2f  LE(MAC) s=%.2f" % (a, mac, ymac, lemac))
+    print("CG at 25%% MAC -> s=%.2f" % (lemac + 0.25 * mac))
+    print("span", 2 * Y_TIP, "tip chord", wing_chord(Y_TIP))
+    for yy in (0, 2.9, Y_KINK, Y_RAKE, Y_TIP):
+        print("y=%.2f  le=%.2f te=%.2f c=%.2f z=%.2f" % (yy, wing_le(yy), wing_te(yy), wing_chord(yy), wing_z(yy)))
+    zu, zl = airfoil(np.linspace(0, 1, 201), 0.12)
+    print("t/c check", (zu - zl).max())
+    print("HT area", 2 * _trapz(ht_chord(np.linspace(0, HT_SEMI, 100)), np.linspace(0, HT_SEMI, 100)))
+    zz = np.linspace(2.9, VT_ZTIP, 100)
+    print("VT exposed area", _trapz(vt_te(zz) - vt_le(zz), zz))
+    print("nose gear s", S_NOSE, "main", S_MAIN, "CG", S_CG, "wing LE0", WING_S_LE0)
+    print("span (incl. winglets)", span_total(), "engine HL", ENG_S_HL, "fan R", FAN_R)
+    print("eye", EYE)
