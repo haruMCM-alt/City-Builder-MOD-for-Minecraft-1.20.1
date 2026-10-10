@@ -99,6 +99,7 @@ function buildNoise() {
   return { shape: tex3(shape, N), detail: tex3(detail, D) };
 }
 
+const SH_SPAN = 50000;
 // ------------------------------------------------------------------ pass
 const VERT = /* glsl */`varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 const FRAG = /* glsl */`
@@ -111,7 +112,20 @@ uniform vec3 uCam, uSunDir, uSunCol, uAmbTop, uAmbBot, uHaze;
 uniform float uBase, uTop, uCover, uDensity, uFar, uTime, uVis, uSteps;
 uniform vec2 uRes;
 uniform vec2 uWind;
+uniform sampler2D tSky;
+uniform float uR, uK, uSkyOn;
 varying vec2 vUv;
+const float PI_C = 3.14159265, RG_C = 6360.0;
+// sky-view LUT lookup (atmo.js parameterisation): distant clouds fade into the real sky colour
+vec2 skyUV(float r, vec3 dir, vec3 sun) {
+  float hz = PI_C - asin(clamp(RG_C / r, 0.0, 1.0));
+  float zen = acos(clamp(dir.y, -1.0, 1.0));
+  float v;
+  if (zen < hz) { float c = 1.0 - sqrt(max(1.0 - zen / hz, 0.0)); v = 0.5 * c; }
+  else { float c = sqrt(clamp((zen - hz) / (PI_C - hz), 0.0, 1.0)); v = 0.5 + 0.5 * c; }
+  vec2 a = normalize(dir.xz + vec2(1e-7, 0.0)), s = normalize(sun.xz + vec2(1e-7, 0.0));
+  return vec2(sqrt(acos(clamp(dot(a, s), -1.0, 1.0)) / PI_C), v);
+}
 
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float remap(float v, float a, float b, float c, float d) { return c + (v - a) / (b - a) * (d - c); }
@@ -229,18 +243,45 @@ void main() {
   // aerial perspective: fade distant clouds into the haze colour
   float dist = firstHit < 0.0 ? t1 : firstHit;
   float haze = 1.0 - exp(-dist / uVis);
-  L = mix(L, uHaze * (1.0 - T), haze);
-  if (deck) { L += T * uHaze; T = 0.0; }
+  vec3 hz = uHaze;
+  if (uSkyOn > 0.5) hz = mix(uHaze, texture2D(tSky, skyUV(uR, normalize(vec3(dir.x, max(dir.y, 0.0), dir.z)), uSunDir)).rgb * uK, uSkyOn - 0.5);
+  L = mix(L, hz * (1.0 - T), haze);
+  if (deck) { L += T * hz; T = 0.0; }
   gl_FragColor = vec4(L, T);
+}`;
+
+// cloud shadows: a top-down transmittance map around the camera (sun through the layer)
+const SHADOW = /* glsl */`
+precision highp float;
+precision highp sampler3D;
+uniform sampler3D uShape, uDetail;
+uniform vec3 uSunDir;
+uniform float uBase, uTop, uCover, uDensity, uTime;
+uniform vec2 uWind, uShC;
+varying vec2 vUv;
+float remap(float v, float a, float b, float c, float d) { return c + (v - a) / (b - a) * (d - c); }
+float heightFrac(float y) { return clamp((y - uBase) / max(uTop - uBase, 1.0), 0.0, 1.0); }
+DENSITY
+void main() {
+  vec2 xz = uShC + (vUv - 0.5) * ${SH_SPAN.toFixed(1)};
+  vec3 p = vec3(xz.x, uBase, xz.y);
+  vec3 sd = normalize(vec3(uSunDir.x, max(uSunDir.y, 0.08), uSunDir.z));
+  float L = (uTop - uBase) / sd.y;
+  float od = 0.0;
+  for (int i = 0; i < 8; i++) {
+    float t = (float(i) + 0.5) / 8.0 * L;
+    od += density(p + sd * t, true) * L / 8.0;
+  }
+  gl_FragColor = vec4(exp(-od * 0.6), 0.0, 0.0, 1.0);
 }`;
 
 // full-resolution composite of the half-resolution cloud buffer
 const COMP = /* glsl */`
-uniform sampler2D tDiffuse, tDepth, tCloud;
-uniform vec2 uTexel;
+uniform sampler2D tDiffuse, tDepth, tCloud, tShadow;
+uniform vec2 uTexel, uShC;
 uniform mat4 uProjInv, uCamWorld;
-uniform vec3 uCam;
-uniform float uBase, uTop, uFar;
+uniform vec3 uCam, uSunDir;
+uniform float uBase, uTop, uFar, uShK;
 varying vec2 vUv;
 void main() {
   vec4 scene = texture2D(tDiffuse, vUv);
@@ -258,6 +299,18 @@ void main() {
   if (uCam.y < uBase) t0 = dir.y > 1e-5 ? (uBase - uCam.y) / dir.y : 1e9;
   else if (uCam.y > uTop) t0 = dir.y < -1e-5 ? (uTop - uCam.y) / dir.y : 1e9;
   if (sceneT < t0) c = vec4(0.0, 0.0, 0.0, 1.0);
+  // cloud shadow on everything below the layer (the sunlit share of the light)
+  if (uShK > 0.0 && sceneT < 1e8) {
+    vec3 p = uCam + dir * sceneT;
+    if (p.y < uBase) {
+      vec3 sd = normalize(vec3(uSunDir.x, max(uSunDir.y, 0.08), uSunDir.z));
+      vec2 q = p.xz + sd.xz * ((uBase - p.y) / sd.y);
+      vec2 uv = (q - uShC) / ${SH_SPAN.toFixed(1)} + 0.5;
+      float edge = smoothstep(0.5, 0.42, max(abs(uv.x - 0.5), abs(uv.y - 0.5)));
+      float sh = texture2D(tShadow, uv).r;
+      scene.rgb *= mix(1.0, sh, uShK * edge);
+    }
+  }
   gl_FragColor = vec4(scene.rgb * c.a + c.rgb, scene.a);
 }`;
 
@@ -275,12 +328,18 @@ export class CloudPass extends Pass {
       uHaze: { value: new THREE.Color(0.7, 0.8, 0.9) },
       uBase: { value: 1200 }, uTop: { value: 2400 }, uCover: { value: 0.4 }, uDensity: { value: 0.03 },
       uFar: { value: 250000 }, uTime: { value: 0 }, uVis: { value: 30000 }, uSteps: { value: 64 }, uWind: { value: new THREE.Vector2(6, 2) },
+      tSky: { value: null }, uR: { value: 6360.05 }, uK: { value: 1 }, uSkyOn: { value: 0 }, uShC: { value: new THREE.Vector2() },
     };
     this.material = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: VERT, fragmentShader: FRAG, depthTest: false, depthWrite: false });
     this.quad = new FullScreenQuad(this.material);
     this.rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
+    this.shRT = new THREE.WebGLRenderTarget(256, 256, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+    const dens = FRAG.slice(FRAG.indexOf('float density(vec3 p, bool cheap)'), FRAG.indexOf('float lightMarch'));
+    this.shQuad = new FullScreenQuad(new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: VERT, fragmentShader: SHADOW.replace('DENSITY', dens),
+      depthTest: false, depthWrite: false }));
     this.compU = {
       tDiffuse: { value: null }, tDepth: { value: null }, tCloud: { value: this.rt.texture }, uTexel: { value: new THREE.Vector2() },
+      tShadow: { value: this.shRT.texture }, uShC: this.uniforms.uShC, uSunDir: this.uniforms.uSunDir, uShK: { value: 0 },
       uProjInv: this.uniforms.uProjInv, uCamWorld: this.uniforms.uCamWorld, uCam: this.uniforms.uCam,
       uBase: this.uniforms.uBase, uTop: this.uniforms.uTop, uFar: this.uniforms.uFar,
     };
@@ -311,12 +370,29 @@ export class CloudPass extends Pass {
     u.uVis.value = s.vis;
     u.uDensity.value = s.density;
     u.uSteps.value = s.steps;
+    // cloud shadows: strength with the sun's share of the light (none at night / in a deck)
+    const sk = (s.shadow ?? 0.7) * THREE.MathUtils.smoothstep(s.sunDir.y, 0.03, 0.15);
+    this.compU.uShK.value = sk;
+    const step = 400;
+    u.uShC.value.set(Math.round(cam.position.x / step) * step, Math.round(cam.position.z / step) * step);
+    this._shadowOn = sk > 0.01 && s.cover > 0.02;
+  }
+
+  // the physical sky (atmo.js) for the haze of distant clouds
+  setAtmosphere(atmo) {
+    const u = this.uniforms;
+    u.tSky.value = atmo.u.tSky.value;
+    u.uR = atmo.u.uR; u.uK = atmo.u.uK;
+    u.uSkyOn.value = 1.5;
+    this.material.uniforms = u;
   }
 
   render(renderer, writeBuffer, readBuffer) {
     // scene depth: shared by the pass chain when effects before this one swapped the buffers
     const depth = this.shared?.depth || readBuffer.depthTexture;
     this.uniforms.tDepth.value = depth;
+    if (this._shadowOn) { renderer.setRenderTarget(this.shRT); this.shQuad.render(renderer); }
+    else this.compU.uShK.value = 0;
     renderer.setRenderTarget(this.rt);
     this.quad.render(renderer);
     this.compU.tDiffuse.value = readBuffer.texture;
@@ -325,5 +401,5 @@ export class CloudPass extends Pass {
     this.comp.render(renderer);
   }
 
-  dispose() { this.material.dispose(); this.quad.dispose(); this.comp.dispose(); this.rt.dispose(); }
+  dispose() { this.material.dispose(); this.quad.dispose(); this.comp.dispose(); this.rt.dispose(); this.shRT.dispose(); }
 }

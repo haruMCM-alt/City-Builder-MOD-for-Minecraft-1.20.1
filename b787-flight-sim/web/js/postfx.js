@@ -12,6 +12,7 @@ import { CloudPass } from './clouds.js';
 import { DepthGrabPass, SSAOPass, GodRayPass, FlarePass } from './ultrafx.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
 import { FrameGen } from './framegen.js';
+import { AerialPass } from './atmo.js';
 
 // frame generation: keeps a copy of the scene depth before the later passes reuse the targets
 class FGDepthPass extends Pass {
@@ -225,6 +226,15 @@ export class PostFX {
     this.rays.setSize(s.x, s.y);
     this.flare.setSize(s.x, s.y);
     this.fg?.setSize(s.x, s.y);
+  }
+
+  // aerial perspective (physical atmosphere) between the AO and the volumetric clouds
+  setAtmosphere(atmo) {
+    if (this.aerial) return;
+    this.aerial = new AerialPass(atmo, this.camera, this.shared);
+    const i = this.composer.passes.indexOf(this.clouds);
+    this.composer.insertPass(this.aerial, i);
+    this.clouds.setAtmosphere(atmo);
   }
 
   // frame generation on / off (the warp needs the scene depth and an object-ID pass)

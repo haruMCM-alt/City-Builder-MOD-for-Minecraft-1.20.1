@@ -290,6 +290,7 @@ class App {
 
     // aircraft (the selected type; the others are loaded when picked in the menu)
     this.post = new PostFX(renderer, this.scene, this.camera);
+    if (this.world?.atmo) this.post.setAtmosphere(this.world.atmo);
     this.fx = new FX(this.scene);
     this.liveryAssets = () => (this.meta.livery ? liveryAssets(this.livery, this.meta.livery, true) : null);
     this.rain = new Rain(this.scene);
@@ -1741,6 +1742,7 @@ class App {
       inside: cockpit || ['cabin', 'walk', 'wing', 'ife'].includes(this.rig.view), night: this.world.night });
     this.dynamicResolution(dt);
     const hdr = !!this.post && this.quality !== 'low';
+    this.world.aerial = hdr && !!this.post.aerial;
     HDR.uLin.value = hdr ? 1 : 0;
     // clouds / smoke: lit like white surfaces; point lights: bright enough to bloom at night
     HDR.uGain.value = (this.world.sun.intensity / (LIGHT.dayK || 1) * 0.85 + 0.45) / (this.world.expK || 1);

@@ -10,6 +10,7 @@ import { GROUND_GLSL } from './ground.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
 import { clamp, smoothstep, lerp, mulberry32, DEG, northAt, freezeStatic } from './util.js';
 import { GEO } from './geo_data.js';
+import { Atmosphere, mieFromVisibility, transmittanceCPU } from './atmo.js';
 
 const LIGHT_KIND = { steady: 0, directional: 1, papi: 2, sequenced: 3, blink: 4, night: 5 };
 const NIGHT_ONLY = { has: (n) => /^(a\d+_)?(street|landmark|bridge|apron_flood)$/.test(n) };
@@ -357,6 +358,13 @@ export class World {
     su.mieCoefficient.value = 0.003;
     su.mieDirectionalG.value = 0.82;
     scene.add(this.sky);
+    // physically based sky (atmo.js): replaces the analytic Preetham sky; the same LUTs drive
+    // the aerial perspective pass over the scene
+    this.atmo = new Atmosphere(renderer);
+    this.presetSkyMat = this.sky.material;
+    this.sky.material = this.atmo.skyMaterial;
+    this.sky.scale.setScalar(200000);      // inside the far plane: the depth stays "sky" (1.0)
+    this.skyK = 22;
     // environment scene for PMREM (sky + dark ground)
     this.envScene = new THREE.Scene();
     this.envSky = new Sky();
@@ -410,6 +418,90 @@ export class World {
 
     this._buildTerrain();
     this._buildWater();
+    this._buildFarRing();
+  }
+
+  // ---------------------------------------------------------------------- far ring
+  // land and sea from the edge of the terrain grid (70 km) out past the horizon (~450 km),
+  // on the curved Earth (terrain and water bend the same way beyond 15 km): from cruise
+  // altitude the coastlines continue into the haze and the horizon sits where the
+  // atmosphere puts it, instead of the edge of a square world
+  _buildFarRing() {
+    if (!this._bakeOK) return;
+    const NA = 160, NR = 40, R0 = 52000, R1 = 460000;
+    const pos = new Float32Array((NA + 1) * (NR + 1) * 3), ga = new Float32Array((NA + 1) * (NR + 1) * 2);
+    for (let j = 0, k = 0; j <= NR; j++) for (let i = 0; i <= NA; i++, k++) {
+      const r = R0 * Math.pow(R1 / R0, j / NR), a = i / NA * Math.PI * 2;
+      pos[k * 3] = Math.cos(a) * r; pos[k * 3 + 2] = Math.sin(a) * r;
+      ga[k * 2] = i; ga[k * 2 + 1] = j;
+    }
+    const idx = [];
+    for (let j = 0; j < NR; j++) for (let i = 0; i < NA; i++) {
+      const a0 = j * (NA + 1) + i, b0 = a0 + 1, c0 = a0 + NA + 1, d0 = c0 + 1;
+      idx.push(a0, c0, b0, b0, c0, d0);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('aGrid', new THREE.BufferAttribute(ga, 2));
+    g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(pos.length), 3));
+    g.setIndex(idx);
+    this.ringRT = new THREE.WebGLRenderTarget(NA + 1, NR + 1, { type: THREE.FloatType, format: THREE.RGBAFormat,
+      minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false, generateMipmaps: false });
+    this.ringU = { uRingC: { value: new THREE.Vector2() }, uRingH: { value: this.ringRT.texture }, uTerrC: { value: new THREE.Vector2() } };
+    this.ringBake = new FullScreenQuad(new THREE.ShaderMaterial({
+      uniforms: this.ringU, depthTest: false, depthWrite: false,
+      vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `precision highp float;
+uniform vec2 uRingC;
+${TERRAIN_GLSL}
+void main() {
+  vec2 ij = floor(gl_FragCoord.xy);
+  float r = ${R0.toFixed(1)} * pow(${(R1 / R0).toFixed(4)}, ij.y / ${NR.toFixed(1)}), a = ij.x / ${NA.toFixed(1)} * 6.2831853;
+  vec2 p = vec2(cos(a), sin(a)) * r;
+  // a few samples across the cell: the coast of a 3 km cell, not of one point
+  float e = r * 0.02;
+  float h = terrainHeight(p + uRingC), hx = terrainHeight(p + uRingC + vec2(e, 0.0)), hz = terrainHeight(p + uRingC + vec2(0.0, e));
+  float land = (step(0.5, h) + step(0.5, hx) + step(0.5, hz)) / 3.0;
+  vec3 n = normalize(vec3(h - hx, e, h - hz));
+  gl_FragColor = vec4(max(h, 0.0), n.x, n.z, land);
+}`,
+    }));
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, envMapIntensity: 0.6 });
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, this.ringU);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+uniform sampler2D uRingH; attribute vec2 aGrid;
+varying vec4 vRing; varying vec2 vRingW;
+float curveDrop(float d) { float e = max(d - 15000.0, 0.0); return e * e / 12742000.0; }`)
+        .replace('#include <beginnormal_vertex>', `vec4 rh = texelFetch(uRingH, ivec2(aGrid + 0.5), 0);
+vRing = rh;
+vec3 objectNormal = vec3(rh.y, sqrt(max(1.0 - rh.y * rh.y - rh.z * rh.z, 0.0)), rh.z);`)
+        .replace('#include <begin_vertex>', `vec3 transformed = vec3(position.x, rh.x * rh.w - curveDrop(length(position.xz)) - 2.0, position.z);
+vRingW = (modelMatrix * vec4(position, 1.0)).xz;`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+uniform vec2 uTerrC;
+varying vec4 vRing; varying vec2 vRingW;`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+// inside the terrain grid: the terrain and the water are drawn there
+vec2 dq = abs(vRingW - uTerrC);
+if (max(dq.x, dq.y) < 69900.0) discard;
+float hR = vRing.x, landR = smoothstep(0.2, 0.8, vRing.w);
+// lowland green / forest / bare rock / snow, the sea dark blue
+vec3 landC = mix(vec3(0.075, 0.095, 0.05), vec3(0.05, 0.07, 0.04), smoothstep(80.0, 600.0, hR));
+landC = mix(landC, vec3(0.11, 0.1, 0.09), smoothstep(1400.0, 2400.0, hR));
+landC = mix(landC, vec3(0.75, 0.77, 0.8), smoothstep(2500.0, 3100.0, hR));
+diffuseColor.rgb = mix(vec3(0.012, 0.04, 0.06), landC, landR);`)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+roughnessFactor = mix(0.22, 0.95, landR);`);
+    };
+    mat.customProgramCacheKey = () => 'farring';
+    this.farRing = new THREE.Mesh(g, mat);
+    this.farRing.frustumCulled = false;
+    this.farRing.renderOrder = -1;
+    this.scene.add(this.farRing);
+    this._ringAt = null;
   }
 
   // ---------------------------------------------------------------------- terrain
@@ -522,7 +614,8 @@ vec3 objectNormal = normalize(vec3(h0 - hx, e, h0 - hz));
 vSlope = 1.0 - objectNormal.y;
 vNW = objectNormal;
 vTW = vec3(wxz.x, h0, wxz.y);`)
-        .replace('#include <begin_vertex>', 'vec3 transformed = vec3(position.x, h0, position.z);');
+        .replace('#include <begin_vertex>', 'vec3 transformed = vec3(position.x, h0 - curveDrop(length(position.xz)), position.z);')
+        .replace('void main() {', 'float curveDrop(float d) { float e = max(d - 15000.0, 0.0); return e * e / 12742000.0; }\nvoid main() {');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
 uniform sampler2D uDetail;
@@ -771,9 +864,12 @@ uniform float uWaterLevel;
 ${TERRAIN_GLSL}`)
         .replace('#include <begin_vertex>', this._bakeOK ? `#include <begin_vertex>
 vWW = (modelMatrix * vec4(transformed, 1.0)).xyz;
-vWDepth = uWaterLevel - texelFetch(uWaterH, ivec2(aGrid + 0.5), 0).x;` : `#include <begin_vertex>
+vWDepth = uWaterLevel - texelFetch(uWaterH, ivec2(aGrid + 0.5), 0).x;
+transformed.y -= curveDrop(length(transformed.xz));` : `#include <begin_vertex>
 vWW = (modelMatrix * vec4(transformed, 1.0)).xyz;
-vWDepth = uWaterLevel - terrainHeight(vWW.xz);`);
+vWDepth = uWaterLevel - terrainHeight(vWW.xz);
+transformed.y -= curveDrop(length(transformed.xz));`)
+        .replace('void main() {', 'float curveDrop(float d) { float e = max(d - 15000.0, 0.0); return e * e / 12742000.0; }\nvoid main() {');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
 varying vec3 vWW; varying float vWDepth;
@@ -1213,6 +1309,7 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     v.enabled = true;
     v.base = W.base; v.top = W.top + (W.overcast > 0.5 ? 0 : 900);
     v.cover = Math.min(1, W.cover * 0.95 + 0.05);
+    v.shadow = 0.75 * (1 - W.overcast);   // cloud shadows (the deck's shade is in the sun intensity already)
     v.sunDir.copy(this.sunDir || new THREE.Vector3(0, 1, 0));
     // the sky fill on the clouds is not reduced with the ground fill (compensated for the
     // lower exposure)
@@ -1385,17 +1482,21 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     this.night = 1 - smoothstep(-4, 6, elDeg);
     const golden = smoothstep(25, 2, elDeg) * day;
     // sky
-    const su = this.sky.material.uniforms;
-    su.sunPosition.value.copy(sd.v);
-    su.turbidity.value = 1.9 + 7 * W.overcast + golden * 2;
-    su.rayleigh.value = 0.95 + golden * 1.4 + (1 - day) * 1.5;
-    // the sky shader's own flat cloud layer (three's default coverage 0.4 drew it in every
-    // weather, a second, painted-looking layer): only as the low-quality stand-in for the
-    // volumetric clouds, and then following the weather
-    if (su.cloudCoverage) { su.cloudCoverage.value = this._volOn ? 0 : W.cover * 0.7; su.cloudDensity.value = this._volOn ? 0 : 0.4; }
-    // sun light
-    const sunCol = (this._sunColT || (this._sunColT = new THREE.Color())).setRGB(1, lerp(0.96, 0.62, golden), lerp(0.92, 0.38, golden));
+    // haze from the visibility; under an overcast the cloud deck takes over
+    this.sky.position.copy(camera.position);
+    const mie = mieFromVisibility(W.vis * 1.8);
+    this.mie = mie;
+    this.atmo.update(camera.position.y, sd.v, mie);
+    this.atmo.u.uK.value = this.skyK * (1 - 0.45 * W.overcast);
+    // sun light: the colour and strength of the sunlight after its path through the same
+    // atmosphere (relative to the sun overhead) - white at noon, gold, then red at sunset
+    const hk = clamp(camera.position.y / 1000, 0, 12) * 0.6;
+    const tS = transmittanceCPU(hk, Math.max(sd.el, 0.2 * DEG), mie), t0 = this._t0 && this._t0m === mie ? this._t0 : (this._t0m = mie, this._t0 = transmittanceCPU(0, Math.PI / 2, mie));
+    const rel = [Math.min(1, tS[0] / t0[0]), Math.min(1, tS[1] / t0[1]), Math.min(1, tS[2] / t0[2])];
+    const mx = Math.max(rel[0], rel[1], rel[2], 1e-4);
+    const sunCol = (this._sunColT || (this._sunColT = new THREE.Color())).setRGB(rel[0] / mx, 0.98 * rel[1] / mx, 0.95 * rel[2] / mx);
     this.sun.color.copy(sunCol);
+    this.sunLum = 0.2126 * rel[0] + 0.7152 * rel[1] + 0.0722 * rel[2];
     // clear-sky balance only while the sun is up and not hidden by an overcast
     const kSun = lerp(1, LIGHT.SUN_K, day * (1 - W.overcast));
     LIGHT.dayK = kSun;
@@ -1404,7 +1505,7 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     // evening light is weaker as well as redder, so sunlit clouds keep their colour
     const elC = Math.max(elDeg, 0.3);
     const am = 1 / (Math.sin(elC * DEG) + 0.50572 * Math.pow(elC + 6.07995, -1.6364));
-    const tSun = Math.pow(0.7, Math.pow(am, 0.678)) / 0.7;
+    const tSun = Math.max(Math.min(this.sunLum, 1.15), 0.6 * Math.pow(0.7, Math.pow(am, 0.678)) / 0.7);
     this.sunT = tSun;
     this.sun.intensity = 3.4 * day * (1 - 0.7 * W.overcast) * kSun * tSun;
     const f = this._shadowFocus(camera, focus || camera.position, sd.v);
@@ -1429,7 +1530,10 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     const cy = camera.position.y;
     if (W.overcast > 0.5 && cy > W.base && cy < W.base + 420) density = 1 / 180;   // inside the deck
     this.scene.fog.color.copy(horizon);
-    this.scene.fog.density = density * 1.3;
+    // with the aerial perspective pass the clear-air haze is physical; the fog is left for
+    // low visibility (mist, rain, the cloud deck)
+    const fk = this.aerial ? smoothstep(18000, 6000, W.vis) : 1;
+    this.scene.fog.density = density === 1 / 180 ? density * 1.3 : density * 1.3 * fk;
     // ground bounce in the sky light: sunlit concrete and grass reflect 15-30 % of the sun, a
     // warm grey fill that keeps shadows from turning pure sky-blue
     const gb = day * (0.25 + 0.75 * (this.sunT ?? 1)) * (1 - 0.6 * W.overcast);
@@ -1437,16 +1541,15 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     this.envDome.material.opacity = 0.92 * W.overcast;
     this.envDome.material.color.setRGB(0.55 * day + 0.02, 0.57 * day + 0.02, 0.6 * day + 0.025);
     // env map (re-render when the sun moved)
-    const key = Math.round(elDeg * 2) + ':' + Math.round(sd.az / DEG / 4) + ':' + this.weatherName;
+    const key = Math.round(elDeg * 2) + ':' + Math.round(sd.az / DEG / 4) + ':' + this.weatherName + ':' + Math.round(Math.log2(1 + camera.position.y / 500));
     if (key !== this._envKey) {
       this._envKey = key;
       if (this.envRT) this.envRT.dispose();
       // the sun is the DirectionalLight (with shadows): keep its disc out of the sky light, or
       // it leaks into every shadow as "ambient" and flattens the whole image
-      const su2 = this.sky.material.uniforms;
-      if (su2.showSunDisc) su2.showSunDisc.value = 0;
+      this.atmo.u.uDisc.value = 0;
       this.envRT = this.pmrem.fromScene(this.envScene, 0.02);
-      if (su2.showSunDisc) su2.showSunDisc.value = 1;
+      this.atmo.u.uDisc.value = 1;
       this.scene.environment = this.envRT.texture;
       this.scene.environmentIntensity = lerp(0.12, 1.0, day) * (1 - 0.3 * W.overcast);
     }
@@ -1473,6 +1576,19 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
       this.renderer.setRenderTarget(prev);
     }
     this.water.position.x = cx; this.water.position.z = cz;
+    if (this.farRing) {
+      const rs = 2000, rx = Math.round(camera.position.x / rs) * rs, rz = Math.round(camera.position.z / rs) * rs;
+      this.farRing.position.set(rx, 0, rz);
+      this.ringU.uTerrC.value.set(cx, cz);
+      if (!this._ringAt || this._ringAt.x !== rx || this._ringAt.y !== rz) {
+        this._ringAt = (this._ringAt || new THREE.Vector2()).set(rx, rz);
+        this.ringU.uRingC.value.set(rx, rz);
+        const prev = this.renderer.getRenderTarget();
+        this.renderer.setRenderTarget(this.ringRT);
+        this.ringBake.render(this.renderer);
+        this.renderer.setRenderTarget(prev);
+      }
+    }
     this.waterNormal.offset.set(cx / 55 + this.time * 0.012, -cz / 55 + this.time * 0.007);
     this.waterMat.color.setRGB(0.35 + 0.65 * day, 0.35 + 0.65 * day, 0.4 + 0.6 * day);   // tints the shader's body colour
     if (this.waterU) this.waterU.uWTime.value = this.time;
