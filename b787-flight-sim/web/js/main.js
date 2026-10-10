@@ -1758,7 +1758,7 @@ class App {
     else if (hdr) {
       const rainAmt = this.world.rain || 0;
       this.post.update(this._postDt, { night: this.world.night, plumes: this.plumes(), clouds: this.world.volumetricState(this.quality === 'high' || this.quality === 'ultra'),
-        sun: this.sunFX(),
+        sun: this.sunFX(), autoExMax: 1.3 + 1.2 * (1 - this.world.night),
         windshield: cockpit ? rainAmt : 0, wsSpeed: Math.min(1, (fm.out.ias || 0) / 120) });
       this.post.render(fgOn ? this.frameGenRoots() : null);
       this._postDt = 0;

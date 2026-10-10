@@ -10,7 +10,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CloudPass } from './clouds.js';
 import { DepthGrabPass, SSAOPass, GodRayPass, FlarePass } from './ultrafx.js';
-import { Pass } from 'three/addons/postprocessing/Pass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { FrameGen } from './framegen.js';
 import { AerialPass } from './atmo.js';
 
@@ -158,6 +158,70 @@ const LensShader = {
     }`,
 };
 
+// auto exposure (eye adaptation), entirely on the GPU: log-average luminance of the HDR image
+// (mip chain of a small log-luminance target), a 1x1 adaptation state blended over time
+// (faster into the bright than out of it), then the scene is scaled before bloom and the tone
+// curve. Partial adaptation only: the day / night exposure set by the world stays the anchor,
+// the cabin or the flight deck at night gets brighter, a snow field or a cloud top darker.
+const FSQ_V = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+class AutoExposurePass extends Pass {
+  constructor() {
+    super();
+    this.needsSwap = true;
+    this.lumRT = new THREE.WebGLRenderTarget(128, 64, { type: THREE.HalfFloatType, depthBuffer: false, generateMipmaps: true,
+      minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter });
+    this.ad = [0, 1].map(() => new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter }));
+    this.cur = 0;
+    this.u = { tDiffuse: { value: null }, tLum: { value: this.lumRT.texture }, tPrev: { value: null }, tAd: { value: null },
+      uEx: { value: 1 }, uKey: { value: 0.16 }, uKMin: { value: 0.65 }, uKMax: { value: 2.4 }, uUp: { value: 0.05 }, uDown: { value: 0.1 }, uInit: { value: 1 } };
+    const mat = (f) => new THREE.ShaderMaterial({ uniforms: this.u, vertexShader: FSQ_V, fragmentShader: f, depthTest: false, depthWrite: false });
+    this.lumQ = new FullScreenQuad(mat(`uniform sampler2D tDiffuse; varying vec2 vUv;
+      void main() {
+        vec3 c = texture2D(tDiffuse, vUv).rgb;
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        // centre-weighted (what one looks at), the sky / sun clipped so they do not dominate
+        vec2 d = vUv - 0.5; float w = exp(-dot(d, d) * 4.0);
+        gl_FragColor = vec4(log(clamp(l, 1e-4, 40.0)) * w, w, 0.0, 1.0);
+      }`));
+    this.adQ = new FullScreenQuad(mat(`uniform sampler2D tLum, tPrev; uniform float uEx, uKey, uKMin, uKMax, uUp, uDown, uInit; varying vec2 vUv;
+      void main() {
+        vec2 s = textureLod(tLum, vec2(0.5), 7.0).rg;
+        float avg = exp(s.x / max(s.y, 1e-4));
+        // partial adaptation around the world's exposure
+        float k = clamp(pow(uKey / max(avg * uEx, 1e-4), 0.62), uKMin, uKMax);
+        float prev = texture2D(tPrev, vec2(0.5)).r;
+        if (uInit > 0.5 || !(prev > 0.0)) prev = k;
+        float a = k < prev ? uDown : uUp;
+        gl_FragColor = vec4(mix(prev, k, a), avg, 0.0, 1.0);
+      }`));
+    this.apQ = new FullScreenQuad(mat(`uniform sampler2D tDiffuse, tAd; varying vec2 vUv;
+      void main() { vec4 c = texture2D(tDiffuse, vUv); gl_FragColor = vec4(c.rgb * texture2D(tAd, vec2(0.5)).r, c.a); }`));
+  }
+
+  update(dt, ex, kMax) {
+    this.u.uEx.value = ex;
+    this.u.uKMax.value = kMax;
+    this.u.uUp.value = 1 - Math.exp(-dt * 1.2);     // into the dark: ~1 s
+    this.u.uDown.value = 1 - Math.exp(-dt * 3.0);   // into the bright: faster
+  }
+
+  render(renderer, writeBuffer, readBuffer) {
+    const u = this.u;
+    u.tDiffuse.value = readBuffer.texture;
+    renderer.setRenderTarget(this.lumRT);
+    this.lumQ.render(renderer);
+    const prev = this.ad[this.cur], next = this.ad[1 - this.cur];
+    u.tPrev.value = prev.texture;
+    renderer.setRenderTarget(next);
+    this.adQ.render(renderer);
+    u.uInit.value = 0;
+    this.cur = 1 - this.cur;
+    u.tAd.value = next.texture;
+    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.apQ.render(renderer);
+  }
+}
+
 export class PostFX {
   constructor(renderer, scene, camera) {
     this.renderer = renderer; this.scene = scene; this.camera = camera;
@@ -176,6 +240,8 @@ export class PostFX {
     this.clouds = new CloudPass(camera);
     this.clouds.shared = this.shared;
     this.composer.addPass(this.clouds);
+    this.autoEx = new AutoExposurePass();
+    this.composer.addPass(this.autoEx);
     this.rays = new GodRayPass(camera, this.shared);
     this.composer.addPass(this.rays);
     this.clamp = new ShaderPass(ClampShader);
@@ -250,12 +316,13 @@ export class PostFX {
   }
 
   // plumes: [{ start: Vector3, end: Vector3, r0, r1, strength }] in world space
-  update(dt, { night = 0, plumes = [], clouds = null, windshield = 0, wsSpeed = 0, sun = null } = {}) {
+  update(dt, { night = 0, plumes = [], clouds = null, windshield = 0, wsSpeed = 0, sun = null, autoExMax = 2.4 } = {}) {
     this.time += dt;
     if (clouds) this.clouds.update(dt, clouds); else this.clouds.enabled = false;
     // bloom works on the HDR image (before exposure): only what ends up brighter than
     // ~1.4 after exposure blooms - sun glints, lights, the sun disc
     const ex = this.renderer.toneMappingExposure || 1;
+    this.autoEx.update(dt, ex, autoExMax);
     if (this.ultra) {
       this.ssao.enabled = true;
       this.ssao.update(dt, ex);

@@ -635,6 +635,9 @@ uniform mediump sampler2DArray uLayers; uniform vec3 uLayerMean[${T_LAYERS}];
 // moving the hand-tuned albedo; sampled at three scales, rotated against each other so that no
 // tile repeats. Minified past the pixel it mip-maps to the mean and fades to 1 by itself.
 float tLum(vec3 c) { return dot(c, vec3(0.3, 0.55, 0.15)); }
+// height blend: w moved by the height difference dh in the middle of the transition only
+// (w = 0 and 1 stay), then tightened
+float hBlend(float w, float dh) { return smoothstep(0.28, 0.72, w + dh * 4.0 * w * (1.0 - w)); }
 // (mostly a brightness ratio: per-channel ratios of the dark pixels would tint shadows blue)
 vec3 tRatio(vec3 c, vec3 m, float sat) {
   float l = tLum(c) / tLum(m);
@@ -721,6 +724,9 @@ vec3 gNW = vec3(0.0, 1.0, 0.0);`)
   }
   float fz = d3.r * 0.62 + d2.b * 0.38 + 0.32 * smoothstep(40.0, 450.0, h) + 0.25 * smoothstep(0.06, 0.25, vSlope);
   float fm = smoothstep(0.55, 0.62, fz) * smoothstep(8.0, 40.0, h) * (1.0 - alpine);
+  // height-based blends: the transitions follow the texture relief (crowns at the forest edge,
+  // rock ribs through the scree, snow lying in the gullies) instead of a smooth fade
+  fm = hBlend(fm, (tLum(pCan) - 1.0) * 1.4 + (nB - 0.5) * 0.35);
   vec3 col = mix(grass, forest, fm);
   gH += fm * (tLum(pCan) - 1.0) * 0.35;
   // farmland patchwork outside the city: rotated field blocks, crops, soil, hedgerows
@@ -783,16 +789,19 @@ vec3 gNW = vec3(0.0, 1.0, 0.0);`)
   vec3 scree = vec3(0.22, 0.19, 0.16) * (0.8 + 0.4 * d2.b) * pBare;
   float cliff = smoothstep(0.3, 0.5, vSlopeD + (d2.r - 0.5) * 0.12);
   float summit = smoothstep(treeLine + 250.0, treeLine + 750.0, h + d2.g * 300.0);
+  summit = hBlend(summit, (tLum(pBare) - 1.0) * 1.2 + (nC - 0.5) * 0.3);
+  cliff = hBlend(cliff, (tLum(pRock) - 1.0) * 1.6 + (nB - 0.5) * 0.3);
   col = mix(col, scree, summit);
   col = mix(col, rock, cliff);
   gH += cliff * (tLum(pRock) - 1.0) * 0.6 + summit * (tLum(pBare) - 1.0) * 0.3;
   float snowLine = mix(2500.0, 1500.0, hok);     // autumn: Fuji's cap, the Hokkaido peaks
   float snow = smoothstep(snowLine - 200.0, snowLine, h + d2.r * 200.0) * (1.0 - smoothstep(0.45, 0.7, vSlopeD));
   vec3 pSnow = tDet(7, vTW.xz, 60.0);
+  snow = hBlend(snow, (1.0 - tLum(pRock)) * 1.3 + (d2.r - 0.5) * 0.3 - vSlopeD * 0.4);
   col = mix(col, vec3(0.9, 0.93, 0.97) * mix(vec3(1.0), pSnow, 0.5), snow);
   vec3 sand = mix(vec3(0.42, 0.37, 0.27), vec3(0.62, 0.6, 0.53), oki) * (0.85 + 0.3 * d1.r) * mix(1.0, 0.85 + 0.3 * nD, nearB)
             * tDet(6, vTW.xz, 14.0);
-  col = mix(col, sand, smoothstep(-0.05, -1.2, h));
+  col = mix(col, sand, hBlend(smoothstep(-0.05, -1.2, h), (nD - 0.5) * 0.5));
   col = mix(col, vec3(0.16, 0.19, 0.17), smoothstep(-6.0, -30.0, h));
   // relief shading: deepen the sun-side / shade-side contrast of slopes against flat ground; it
   // stands in for the cast shadows and inter-reflections that photo scenery carries, so that hills

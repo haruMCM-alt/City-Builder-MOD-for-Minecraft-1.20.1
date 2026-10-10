@@ -104,13 +104,55 @@ const CAB_FRAG = `
   reflectedLight.indirectDiffuse *= 0.1;
   reflectedLight.indirectSpecular *= 0.3;
   vec3 nC = normalize(uCabV2C * normal);
-  reflectedLight.indirectDiffuse += cabinIrradiance(vCabP, nC) * BRDF_Lambert(material.diffuseColor);
+  vec3 cabE = cabinIrradiance(vCabP, nC);
+  reflectedLight.indirectDiffuse += cabE * BRDF_Lambert(material.diffuseColor);
+  #if defined(CAB_SKIN) || defined(CAB_HAIR) || defined(CAB_CLOTH)
+  vec3 vC = normalize(uCabV2C * geometryViewDir);
+  float nv = clamp(dot(nC, vC), 0.0, 1.0);
+  float eL = dot(cabE, vec3(0.3, 0.55, 0.15));
+  #endif
+  #ifdef CAB_SKIN
+  // skin: light scattered under the surface comes out red around the shadow side and the
+  // thin parts (ears, nose); a soft oily sheen from the ceiling light
+  {
+    vec3 sss = vec3(0.55, 0.16, 0.08) * material.diffuseColor * (1.0 - nv) * (1.0 - nv);
+    reflectedLight.indirectDiffuse += cabE * sss * 0.6;
+    vec3 rC = reflect(-vC, nC);
+    reflectedLight.indirectSpecular += vec3(1.0, 0.94, 0.86) * uCabL.x * 0.035 * pow(max(rC.y, 0.0), 6.0) * (0.3 + 0.7 * pow(1.0 - nv, 3.0));
+  }
+  #endif
+  #ifdef CAB_HAIR
+  // hair: Kajiya-Kay highlights along the strands (combed down the head), a white primary and
+  // a tinted, shifted secondary
+  {
+    vec3 tC = normalize(vec3(0.0, 1.0, 0.0) - nC * nC.y + vec3(1e-4, 0.0, 0.0));
+    vec3 hC = normalize(vC + vec3(0.0, 1.0, 0.0));
+    float th = dot(tC, hC);
+    float s1 = pow(sqrt(max(1.0 - th * th, 0.0)), 80.0);
+    float th2 = dot(normalize(tC + nC * 0.25), hC);
+    float s2 = pow(sqrt(max(1.0 - th2 * th2, 0.0)), 24.0);
+    reflectedLight.indirectSpecular += (vec3(0.9, 0.85, 0.78) * s1 * 0.12 + material.diffuseColor * s2 * 0.5) * eL;
+  }
+  #endif
+  #ifdef CAB_CLOTH
+  // woven fabric: soft sheen at grazing angles (fibres catching the light)
+  reflectedLight.indirectDiffuse += cabE * mix(material.diffuseColor, vec3(0.5), 0.35) * pow(1.0 - nv, 4.0) * 0.45;
+  #endif
 }`;
 
+// surface kinds with their own shading (skin, hair, fabric)
+function cabinKind(name) {
+  if (/(_Skin)$/.test(name)) return 'SKIN';
+  if (/^(Pax_Hair|Pax_HairLong|Pax_HairBun|Pax_Brow|Crew_Hair)$/.test(name)) return 'HAIR';
+  if (/^(Pax_Shirt|Pax_Pants|Seat_Fabric|Crew_Uniform|Crew_Pants|Crew_Jacket|Cabin_Carpet)/.test(name)) return 'CLOTH';
+  return '';
+}
 function patchCabinMaterial(m, variant) {
   m.userData.cabinLit = true;
+  const kind = cabinKind(m.name);
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, CAB_U);
+    if (kind) sh.fragmentShader = '#define CAB_' + kind + '\n' + sh.fragmentShader;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', (variant ? '#define CAB_VARIANT\n' : '') + '#include <common>' + CAB_VERT_PARS)
       .replace('#include <project_vertex>', CAB_VERT + '\n#include <project_vertex>');
@@ -118,7 +160,7 @@ function patchCabinMaterial(m, variant) {
       .replace('#include <common>', '#include <common>' + CAB_FRAG_PARS)
       .replace('#include <lights_fragment_end>', CAB_FRAG);
   };
-  m.customProgramCacheKey = () => 'cabin-lit' + (variant ? '-v' : '');
+  m.customProgramCacheKey = () => 'cabin-lit' + (variant ? '-v' : '') + kind;
   m.needsUpdate = true;
 }
 // articulated passenger / crew parts (Blender prototypes)
