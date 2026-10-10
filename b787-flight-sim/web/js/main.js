@@ -101,7 +101,7 @@ const MODES = [
 // for the current scenario
 const SETTINGS_MODE = { id: 'settings', icon: '⚙', name: '詳細設定', en: 'Settings', slides: ['load', 'opts'], scen: null, preset: {} };
 // options remembered in this browser
-const SAVED_OPTS = ['traffic', 'atcVoice', 'atcNoise', 'sound', 'quality'];
+const SAVED_OPTS = ['traffic', 'atcVoice', 'atcNoise', 'sound', 'quality', 'frameGen'];
 const FAILS = [
   { id: 'engineFire', icon: '🔥', name: 'エンジン火災', en: 'Engine fire' },
   { id: 'engineFail', icon: '⚙', name: 'エンジン停止', en: 'Engine failure' },
@@ -346,6 +346,7 @@ class App {
     window.addEventListener('keydown', key, true);
     this.last = performance.now();
     this.fps = 60;
+    this._fgStat = { t: 0, real: 0, gen: 0 }; this._fgCam = new THREE.Vector3(); this.fgFps = null;
     renderer.setAnimationLoop((t) => this.frame(t));
   }
 
@@ -919,6 +920,7 @@ class App {
   startFromMenu() {
     const q = $('quality').value;
     if (q !== this.quality) this.setQuality(q);
+    this.frameGenMode = $('frameGen')?.value || 'auto';
     this.audio.enabled = $('sound').checked;
     this.audio.start();
     $('menu').classList.add('hidden');
@@ -992,7 +994,7 @@ class App {
     if (this._drCool > 0) return;
     let s = this.renderScale || 1;
     if (fps < 45) s = Math.max(0.6, s * (fps < 30 ? 0.8 : 0.9));
-    else if (fps > 58 && s < (this.quality === 'ultra' ? 1.5 : 1)) s = Math.min(this.quality === 'ultra' ? 1.5 : 1, s * 1.12);
+    else if (fps > 58 && !this.post?.fgOn && s < (this.quality === 'ultra' ? 1.5 : 1)) s = Math.min(this.quality === 'ultra' ? 1.5 : 1, s * 1.12);
     else return;
     if (Math.abs(s - this.renderScale) < 0.01) return;
     this.renderScale = s;
@@ -1295,6 +1297,15 @@ class App {
         break;
       }
       case 'hud': this.instruments.hudOn = !this.instruments.hudOn; break;
+      case 'fgCycle': {
+        const order = ['auto', 'on', 'off'];
+        const m = order[(order.indexOf(this.frameGenMode || 'auto') + 1) % 3];
+        this.frameGenMode = m; this._fgAuto = false; this._fgProbe = false;
+        const el = $('frameGen');
+        if (el) { el.value = m; try { localStorage.setItem('b787.opt.frameGen', m); } catch (e) { /* storage unavailable */ } }
+        this.toast('フレーム生成 Frame generation: ' + { auto: '自動 Auto', on: 'ON', off: 'OFF' }[m]);
+        break;
+      }
       case 'lights': {
         const L = this.visual.lightsOn;
         const on = !L.landing;
@@ -1564,6 +1575,7 @@ class App {
 
   // ------------------------------------------------------------------- per frame
   frame(now) {
+    this.refreshProbe(now);
     // menu / pause screen: nothing moves, so ~30 fps is enough (less heat and battery)
     if (this.paused && this.last && now - this.last < 31) return;
     const dt = Math.max(0, Math.min((now - this.last) / 1000, 0.1));
@@ -1733,14 +1745,92 @@ class App {
     // clouds / smoke: lit like white surfaces; point lights: bright enough to bloom at night
     HDR.uGain.value = (this.world.sun.intensity / (LIGHT.dayK || 1) * 0.85 + 0.45) / (this.world.expK || 1);
     HDR.uGainL.value = 1.1 / Math.max(this.renderer.toneMappingExposure, 0.3);
-    if (hdr) {
+    // frame generation: every second refresh is warped from the last render instead
+    const fgOn = hdr && !this.paused && this.frameGenActive();
+    if (this.post && this.post.fgOn !== fgOn) this.post.setFrameGen(fgOn);
+    this._postDt = (this._postDt || 0) + dt;
+    let generated = false;
+    if (fgOn && this._fgNext && this.rig.view === this._fgView && this.camera.position.distanceTo(this._fgCam) < 60) generated = this.post.generate(dt);
+    this._fgNext = fgOn && !generated;
+    if (generated) this._fgStat.gen++;
+    else if (hdr) {
       const rainAmt = this.world.rain || 0;
-      this.post.update(dt, { night: this.world.night, plumes: this.plumes(), clouds: this.world.volumetricState(this.quality === 'high' || this.quality === 'ultra'),
+      this.post.update(this._postDt, { night: this.world.night, plumes: this.plumes(), clouds: this.world.volumetricState(this.quality === 'high' || this.quality === 'ultra'),
         sun: this.sunFX(),
         windshield: cockpit ? rainAmt : 0, wsSpeed: Math.min(1, (fm.out.ias || 0) / 120) });
-      this.post.render();
-    } else { this.world.volumetricState(false); this.renderer.render(this.scene, this.camera); }
+      this.post.render(fgOn ? this.frameGenRoots() : null);
+      this._postDt = 0;
+      this._fgView = this.rig.view; this._fgCam.copy(this.camera.position);
+      this._fgStat.real++;
+    } else { this.world.volumetricState(false); this.renderer.render(this.scene, this.camera); this._fgStat.real++; }
+    this.frameGenAuto(dt);
     if (!this.paused) this.updateUI();
+  }
+
+  // ---------------------------------------------------------------- frame generation
+  // display refresh rate: the shortest steady interval between animation frames (the paused
+  // menu skips its renders, so its callbacks show the bare refresh)
+  refreshProbe(now) {
+    const iv = now - (this._rafPrev || now);
+    this._rafPrev = now;
+    if (!(iv > 2 && iv < 60)) return;
+    const a = this._ivs || (this._ivs = []);
+    a.push(iv);
+    if (a.length < 90) return;
+    const p = a.slice().sort((x, y) => x - y)[Math.floor(a.length * 0.25)];
+    a.length = 0;
+    const r = this._refreshMs || p;
+    this._refreshMs = Math.min(r * 1.02, p);
+  }
+
+  get refreshHz() { return 1000 / (this._refreshMs || 1000 / 60); }
+
+  frameGenActive() {
+    const m = this.frameGenMode || 'auto';
+    if (m === 'off') return false;
+    if (m === 'on') return true;
+    return !!this._fgAuto;
+  }
+
+  // the objects that move on their own: own aircraft (with flight deck and cabin), AI
+  // aircraft on the move, ground vehicles
+  frameGenRoots() {
+    const out = this._fgRoots || (this._fgRoots = []);
+    out.length = 0;
+    out.push(this.visual.root);
+    const t = this.traffic;
+    if (t && t.enabled !== false) {
+      for (const ac of t.aircraft) if (ac.art && ac.art.obj.visible) out.push(ac.art.obj);
+      for (const ac of t.remote || []) if (ac.art && ac.art.obj.visible) out.push(ac.art.obj);
+      for (const v of t.vehicles) if (v.obj.visible && out.length < 250) out.push(v.obj);
+    }
+    return out;
+  }
+
+  // Auto: on when the renders cannot keep up with the display; probes now and then whether
+  // the GPU has become fast enough to render every refresh again
+  frameGenAuto(dt) {
+    const S = this._fgStat;
+    S.t += dt;
+    if (S.t < 1.5) return;
+    const disp = (S.real + S.gen) / S.t, real = S.real / S.t;
+    this.fgFps = { disp, real, gen: S.gen > 0 };
+    S.t = 0; S.real = 0; S.gen = 0;
+    if ((this.frameGenMode || 'auto') !== 'auto' || this.paused) return;
+    const hz = this.refreshHz;
+    this._fgCool = (this._fgCool || 0) - 1.5;
+    if (!this._fgAuto) {
+      if (this._fgProbe) {                      // probing without generation
+        this._fgProbe = false;
+        if (disp < hz * 0.9) { this._fgAuto = true; this._fgBack = Math.min(240, (this._fgBack || 20) * 2); this._fgCool = this._fgBack; }
+        else this._fgBack = 20;
+        return;
+      }
+      if (disp < hz * 0.85 && this._fgCool <= 0) { this._fgSlow = (this._fgSlow || 0) + 1; if (this._fgSlow >= 2) { this._fgAuto = true; this._fgSlow = 0; this._fgCool = this._fgBack || 20; } }
+      else this._fgSlow = 0;
+    } else if (this._fgCool <= 0 && disp > hz * 0.95) {
+      this._fgAuto = false; this._fgProbe = true;
+    }
   }
 
   sunFX() {
@@ -1881,7 +1971,7 @@ class App {
     const rd = (v) => Math.round(v);
     const fd = (lab, val, unit = '') => `<div class="fd"><i>${lab}</i><b>${val}</b><u>${unit}</u></div>`;
     const chip = (t, c = '') => `<span class="${c}">${t}</span>`;
-    const html = `<div class="fdh">${VIEW_NAMES[this.rig.view]}<small>${rd(this.fps)} FPS</small></div>` +
+    const html = `<div class="fdh">${VIEW_NAMES[this.rig.view]}<small>${rd(this.fps)} FPS${this.fgFps?.gen ? ` · FG ${rd(this.fgFps.real)}→${rd(this.fgFps.disp)}` : ''}</small></div>` +
       fd('IAS', rd(o.ias), 'KT') + fd('ALT', rd(o.altFt).toLocaleString('en-US'), 'FT') + fd('HDG', String(rd(o.hdg) % 360).padStart(3, '0'), '°') +
       fd('GS', rd(o.gs), 'KT') + fd('V/S', (o.vs > 0 ? '+' : '') + rd(o.vs / FPM), 'FPM') + fd('RA', o.raFt < 2500 ? rd(o.raFt) : '----', 'FT') +
       fd('MACH', o.mach.toFixed(2)) + fd('PITCH', o.pitch.toFixed(1), '°') + fd('BANK', o.bank.toFixed(0), '°') +

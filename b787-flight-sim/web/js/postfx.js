@@ -10,6 +10,14 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CloudPass } from './clouds.js';
 import { DepthGrabPass, SSAOPass, GodRayPass, FlarePass } from './ultrafx.js';
+import { Pass } from 'three/addons/postprocessing/Pass.js';
+import { FrameGen } from './framegen.js';
+
+// frame generation: keeps a copy of the scene depth before the later passes reuse the targets
+class FGDepthPass extends Pass {
+  constructor(post) { super(); this.post = post; this.needsSwap = false; this.enabled = false; }
+  render(renderer, writeBuffer, readBuffer) { this.post.fg?.copyDepth(readBuffer.depthTexture); }
+}
 
 const HazeShader = {
   uniforms: {
@@ -160,6 +168,8 @@ export class PostFX {
     this.composer.addPass(new RenderPass(scene, camera));
     this.shared = { depth: null };
     this.composer.addPass(new DepthGrabPass(this.shared));
+    this.fgDepth = new FGDepthPass(this);
+    this.composer.addPass(this.fgDepth);
     this.ssao = new SSAOPass(camera, this.shared);
     this.composer.addPass(this.ssao);
     this.clouds = new CloudPass(camera);
@@ -178,6 +188,11 @@ export class PostFX {
     this.composer.addPass(new OutputPass());
     this.lens = new ShaderPass(LensShader);
     this.composer.addPass(this.lens);
+    // the display-referred image before the lens pass is what frame generation warps
+    const lensRender = this.lens.render.bind(this.lens);
+    this._lensRender = lensRender;
+    this.lens.render = (r, w, read, dt, mask) => { this.preLens = read; lensRender(r, w, read, dt, mask); };
+    this.fg = null;
     this.enabled = true;
     this.ultra = false;
     this.setUltra(false);
@@ -209,6 +224,19 @@ export class PostFX {
     this.ssao.setSize(s.x, s.y);
     this.rays.setSize(s.x, s.y);
     this.flare.setSize(s.x, s.y);
+    this.fg?.setSize(s.x, s.y);
+  }
+
+  // frame generation on / off (the warp needs the scene depth and an object-ID pass)
+  setFrameGen(on) {
+    if (on && !this.fg) {
+      this.fg = new FrameGen(this.renderer, this.scene, this.camera);
+      const s = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+      this.fg.setSize(s.x, s.y);
+    }
+    this.fgDepth.enabled = !!on;
+    this.fgOn = !!on;
+    if (this.fg) this.fg.src.valid = false;
   }
 
   // plumes: [{ start: Vector3, end: Vector3, r0, r1, strength }] in world space
@@ -255,5 +283,23 @@ export class PostFX {
     }
   }
 
-  render() { this.composer.render(); }
+  // roots: the objects that move on their own (for the frame-generation ID pass)
+  render(roots) {
+    this.composer.render();
+    if (this.fgOn && this.fg && this.preLens) this.fg.capture(this.preLens.texture, roots || []);
+  }
+
+  // a generated frame: warp the last render to the current camera, then the lens pass
+  generate(dt) {
+    if (!this.fgOn || !this.fg) return false;
+    const rt = this.fg.generate();
+    if (!rt) return false;
+    this.time += dt;
+    this.lens.uniforms.uTime.value = this.time;
+    const prev = this.lens.renderToScreen;
+    this.lens.renderToScreen = true;
+    this._lensRender(this.renderer, null, rt);
+    this.lens.renderToScreen = prev;
+    return true;
+  }
 }

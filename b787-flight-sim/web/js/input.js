@@ -79,6 +79,7 @@ export class Input {
     if (e.shiftKey && k === 'm') return this.onCommand('uiMcp');
     if (e.shiftKey && k === 'i') return this.onCommand('uiInfo');
     if (e.shiftKey && k === 'v') return this.onCommand('uiRadio');
+    if (e.shiftKey && k === 'g') return this.onCommand('fgCycle');
     if (map[k]) this.onCommand(map[k]);
   }
 
