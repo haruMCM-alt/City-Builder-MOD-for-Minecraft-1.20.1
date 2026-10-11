@@ -65,7 +65,7 @@ export class Wheel {
   find(pads) {
     const live = [...pads].filter((p) => p && p.connected);
     let gp = live.find(isWheel) || null;
-    this.xinput = false;
+    this.xinput = !!gp && gp.mapping === 'standard';
     if (!gp && xinputWheel()) {
       gp = live.find((p) => p.mapping === 'standard' && XINPUT.test(p.id)) || live.find((p) => p.mapping === 'standard') || null;
       this.xinput = !!gp;
@@ -74,6 +74,9 @@ export class Wheel {
       this.id = gp.id; this.index = gp.index;
       let c = null;
       try { c = JSON.parse(localStorage.getItem(KEY + gp.id) || 'null'); } catch (e) { /* storage unavailable */ }
+      // (a wheel in the standard layout is an XInput wheel, whatever its name: its triggers are
+      // the pedals, not buttons to bind)
+      if (gp.mapping === 'standard') this.xinput = true;
       this.cfg = Object.assign(this.xinput ? xinputDefaults() : defaults(), c || {});
       this.thrActive = false; this.hatAxis = null;
       this.fresh = true;           // (the app shows a hint once)
@@ -127,9 +130,11 @@ export class Wheel {
     S.hat = this.hat(gp);
     if (S.thr > 0.05) this.thrActive = true;
     if (this.cal) { this._calStep(gp); return S; }
+    const busy = new Set([c.thr?.btn, c.brk?.btn, c.clu?.btn].filter((x) => x != null));
+    if (gp.mapping === 'standard') [12, 13, 14, 15].forEach((i) => busy.add(i));   // D-pad: pitch
     gp.buttons.forEach((b, i) => {
       const p = !!(b && (b.pressed || b.value > 0.5));
-      const cmd = c.buttons[i];
+      const cmd = busy.has(i) ? null : c.buttons[i];
       if (cmd && p && !this.prevBtn[i]) onCommand(cmd);
       this.prevBtn[i] = p;
     });
@@ -229,7 +234,20 @@ export function bindWheelUI(wheel, $) {
     brk: 'ブレーキを奥まで踏んで、離してください', clu: 'クラッチを奥まで踏んで、離してください' };
   const LABEL = { steer: 'ハンドル', thr: 'アクセル', brk: 'ブレーキ', clu: 'クラッチ' };
   const pads = () => (navigator.getGamepads ? navigator.getGamepads() : []);
-  const syncSelects = () => { if (wheel.cfg) { gain.value = String(wheel.cfg.gain); mode.value = wheel.cfg.thrMode; } };
+  // the current bindings, so that nothing is ever bound twice without it showing
+  const CMD = { gear: 'ギア', speedbrake: 'スピードブレーキ', reverse: '逆噴射', ap: 'A/P', at: 'A/T', view: '視点',
+    flapsUp: 'フラップ上げ', flapsDown: 'フラップ下げ' };
+  const BTN_X = ['A', 'B', 'X', 'Y', 'LB（左パドル）', 'RB（右パドル）', 'LT', 'RT', 'ビュー', 'メニュー'];
+  const BTN_L = ['✕', '□', '○', '△', '右パドル', '左パドル', 'R2', 'L2', 'Share', 'Options'];
+  const showMap = () => {
+    const el = $('wheelMap');
+    if (!el || !wheel.cfg) return;
+    const c = wheel.cfg, names = wheel.xinput ? BTN_X : BTN_L;
+    const ped = (p) => (p ? (p.btn != null ? (names[p.btn] || 'ボタン ' + p.btn) : '軸 ' + p.axis) : '未割り当て');
+    const btns = Object.entries(c.buttons).map(([i, cmd]) => `${names[i] || 'ボタン ' + i}＝${CMD[cmd] || cmd}`);
+    el.textContent = `ハンドル＝ロール（軸 ${c.steer.axis}）／アクセル＝${ped(c.thr)}／ブレーキ＝${ped(c.brk)}／クラッチ（機首上げ）＝${ped(c.clu)}／十字キー上下＝機首下げ・上げ／` + btns.join('／');
+  };
+  const syncSelects = () => { if (wheel.cfg) { gain.value = String(wheel.cfg.gain); mode.value = wheel.cfg.thrMode; } showMap(); };
   gain.addEventListener('change', () => { if (wheel.cfg) { wheel.cfg.gain = +gain.value; wheel.save(); } });
   mode.addEventListener('change', () => { if (wheel.cfg) { wheel.cfg.thrMode = mode.value; wheel.save(); } });
   root.querySelectorAll('[data-cal]').forEach((btn) => btn.addEventListener('click', () => {
@@ -242,6 +260,7 @@ export function bindWheelUI(wheel, $) {
     wheel.calibrate(what, gp, (ok) => {
       btn.classList.remove('on');
       const a = what === 'steer' ? wheel.cfg.steer : wheel.cfg[what];
+      showMap();
       msg.textContent = ok ? `${LABEL[what]}を割り当てました（${a.btn != null ? 'ボタン ' + a.btn : '軸 ' + a.axis}）` :
         `${LABEL[what]}の割り当てを中止しました（動きを検出できませんでした）`;
     });

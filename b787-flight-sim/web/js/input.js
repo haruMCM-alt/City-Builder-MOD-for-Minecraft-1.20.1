@@ -139,7 +139,10 @@ export class Input {
       }
       brakes = Math.max(brakes, S.brk);
     }
-    const gp = [...pads].find((p) => p && p.connected && p !== wg && !isWheel(p));
+    // gamepads: never the wheel itself, nor a second report of it (some wheels show up twice:
+    // same name, or another XInput entry), or one control would do two things at once
+    const gp = [...pads].find((p) => p && p.connected && p !== wg && !isWheel(p) &&
+      !(wg && (p.id === wg.id || (this.wheel.xinput && /xinput|xbox/i.test(p.id)))));
     if (gp) {
       const dz = (v) => (Math.abs(v) < 0.08 ? 0 : (v - Math.sign(v) * 0.08) / 0.92);
       const ax = gp.axes;
@@ -157,7 +160,10 @@ export class Input {
         if (p && !this._padPrev[i]) this.onCommand(cmd);
         this._padPrev[i] = p;
       };
-      edge(0, 'gear'); edge(2, 'flapsDown'); edge(3, 'flapsUp'); edge(9, 'ap'); edge(8, 'view'); edge(12, 'speedbrake');
+      // D-pad up / down = pitch, as on a wheel; speedbrake on D-pad right
+      const dp = val(13) - val(12);
+      if (dp) pitch = dp * 0.6;
+      edge(0, 'gear'); edge(2, 'flapsDown'); edge(3, 'flapsUp'); edge(9, 'ap'); edge(8, 'view'); edge(15, 'speedbrake');
     }
     // ---- touch ----
     const T = this.touch;
