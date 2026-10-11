@@ -71,6 +71,7 @@ export class RemoteAirport {
     this.world.prepareGLB(gltf.scene);
     this.group.add(gltf.scene);
     freezeStatic(gltf.scene);
+    this.world.addCurved(this.group, this.ap.x, this.ap.z);
     const t = remoteTrees(this.ap, this.data);
     if (t.length) this.world.buildTrees(t);
   }

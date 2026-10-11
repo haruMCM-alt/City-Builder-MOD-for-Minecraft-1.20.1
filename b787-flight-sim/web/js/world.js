@@ -8,7 +8,7 @@ import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL, EROSION_GLSL, terrainHeight } from '
 import { patchFacade, patchStructure } from './shading.js';
 import { GROUND_GLSL } from './ground.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
-import { clamp, smoothstep, lerp, mulberry32, DEG, northAt, freezeStatic } from './util.js';
+import { clamp, smoothstep, lerp, mulberry32, DEG, northAt, freezeStatic, curveDrop } from './util.js';
 import { GEO } from './geo_data.js';
 import { Atmosphere, mieFromVisibility, transmittanceCPU } from './atmo.js';
 
@@ -79,7 +79,7 @@ function loadTerrainLayers(renderer, done) {
   }, undefined, () => {});
 }
 
-function noiseCanvas(size, seed, channels = 3, scales = [8, 32, 4]) {
+function noiseCanvas(size, seed, channels = 3, scales = [8, 32, 4], gray = false) {
   // tileable value noise, two octaves per channel (each octave has its own lattice)
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -112,6 +112,8 @@ function noiseCanvas(size, seed, channels = 3, scales = [8, 32, 4]) {
         if (ch >= channels) n = 0;
         img.data[i + ch] = Math.round(n * 255);
       }
+      // grey: the octaves of all channels mixed into one luminance (a colour map must not be RGB noise)
+      if (gray) { const g = Math.round((img.data[i] + img.data[i + 1] + img.data[i + 2]) / 3); img.data[i] = img.data[i + 1] = img.data[i + 2] = g; }
       img.data[i + 3] = 255;
     }
   }
@@ -462,11 +464,12 @@ void main() {
   float e = r * 0.02;
   float h = terrainHeight(p + uRingC), hx = terrainHeight(p + uRingC + vec2(e, 0.0)), hz = terrainHeight(p + uRingC + vec2(0.0, e));
   float land = (step(0.5, h) + step(0.5, hx) + step(0.5, hz)) / 3.0;
-  vec3 n = normalize(vec3(h - hx, e, h - hz));
+  // the sea is flat (the seabed slopes must not tilt it)
+  vec3 n = normalize(vec3(max(h, 0.0) - max(hx, 0.0), e, max(h, 0.0) - max(hz, 0.0)));
   gl_FragColor = vec4(max(h, 0.0), n.x, n.z, land);
 }`,
     }));
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, envMapIntensity: 0.6 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, envMapIntensity: 1.0 });
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, this.ringU);
       sh.vertexShader = sh.vertexShader
@@ -494,7 +497,7 @@ landC = mix(landC, vec3(0.11, 0.1, 0.09), smoothstep(1400.0, 2400.0, hR));
 landC = mix(landC, vec3(0.75, 0.77, 0.8), smoothstep(2500.0, 3100.0, hR));
 diffuseColor.rgb = mix(vec3(0.012, 0.04, 0.06), landC, landR);`)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-roughnessFactor = mix(0.22, 0.95, landR);`);
+roughnessFactor = mix(0.24, 0.95, landR);`);
     };
     mat.customProgramCacheKey = () => 'farring';
     this.farRing = new THREE.Mesh(g, mat);
@@ -1001,6 +1004,32 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     // tree prototypes
     this.treeProtos = [0, 1].map((k) => root.getObjectByName('TreeProto_' + k));
     freezeStatic(root);
+    // far away the scenery sinks with the curved terrain (each top-level part by its own centre)
+    const bb = new THREE.Box3(), c = new THREE.Vector3();
+    for (const ch of root.children) {
+      bb.setFromObject(ch);
+      if (bb.isEmpty()) continue;
+      bb.getCenter(c);
+      this.addCurved(ch, c.x, c.z);
+    }
+    if (this.signs) this.addCurved(this.signs, 0, 0);
+  }
+
+  // objects lowered by the Earth curvature as seen from the camera (only beyond 15 km)
+  addCurved(obj, cx, cz) {
+    (this._curved || (this._curved = [])).push({ obj, cx, cz, y0: obj.position.y, dy: 0 });
+  }
+
+  _applyCurvature(cam) {
+    if (!this._curved) return;
+    for (const e of this._curved) {
+      const dy = -curveDrop(Math.hypot(e.cx - cam.x, e.cz - cam.z));
+      if (Math.abs(dy - e.dy) < Math.max(2, Math.abs(dy) * 0.03)) continue;
+      e.dy = dy;
+      e.obj.position.y = e.y0 + dy;
+      e.obj.updateMatrix();
+      e.obj.updateMatrixWorld(true);
+    }
   }
 
   setAirportName(name) {
@@ -1292,7 +1321,7 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     // overcast deck (flat layer at the base)
     if (this.deck) { this.scene.remove(this.deck); this.deck = null; }
     if (W.overcast > 0) {
-      const t = new THREE.CanvasTexture(noiseCanvas(256, 17, 3, [6, 12, 24]));
+      const t = new THREE.CanvasTexture(noiseCanvas(256, 17, 3, [6, 12, 24], true));
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
       t.repeat.set(40, 40);
       const dm = new THREE.MeshBasicMaterial({ map: t, color: 0x9aa3ad, transparent: true, opacity: 0.55 + 0.4 * W.overcast,
@@ -1542,6 +1571,9 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     // with the aerial perspective pass the clear-air haze is physical; the fog is left for
     // low visibility (mist, rain, the cloud deck)
     const fk = this.aerial ? smoothstep(18000, 6000, W.vis) : 1;
+    this.atmo.u.uFogMix.value = this.aerial ? 0 : 1;
+    this.atmo.u.uFogCol.value.copy(horizon);
+    if (this.farRing) this.farRing.visible = !!this.aerial;     // fully fogged without it
     this.scene.fog.density = density === 1 / 180 ? density * 1.3 : density * 1.3 * fk;
     // ground bounce in the sky light: sunlit concrete and grass reflect 15-30 % of the sun, a
     // warm grey fill that keeps shadows from turning pure sky-blue
@@ -1585,6 +1617,7 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
       this.renderer.setRenderTarget(prev);
     }
     this.water.position.x = cx; this.water.position.z = cz;
+    this._applyCurvature(camera.position);
     if (this.farRing) {
       const rs = 2000, rx = Math.round(camera.position.x / rs) * rs, rz = Math.round(camera.position.z / rs) * rs;
       this.farRing.position.set(rx, 0, rz);

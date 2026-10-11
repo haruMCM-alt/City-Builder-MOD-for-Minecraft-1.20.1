@@ -921,7 +921,7 @@ class App {
   startFromMenu() {
     const q = $('quality').value;
     if (q !== this.quality) this.setQuality(q);
-    this.frameGenMode = $('frameGen')?.value || 'auto';
+    this.frameGenMode = $('frameGen')?.value || 'off';
     this.audio.enabled = $('sound').checked;
     this.audio.start();
     $('menu').classList.add('hidden');
@@ -986,13 +986,26 @@ class App {
   // ~45 fps so the flying stays smooth. High: only backs off (never above the native
   // resolution), so slow GPUs keep a fluid frame rate
   dynamicResolution(dt) {
-    if ((this.quality !== 'ultra' && this.quality !== 'high') || this.paused || !(dt > 0)) return;
+    if (this.quality === 'low' || this.paused || !(dt > 0)) return;
     this._drT += dt; this._drN++;
     this._drCool -= dt;
     if (this._drT < 2) return;
     const fps = this._drN / this._drT;
     this._drT = 0; this._drN = 0;
     if (this._drCool > 0) return;
+    // still too slow at the lowest render scale for ~6 s: one graphics step down (remembered)
+    const atMin = this.quality === 'medium' || (this.renderScale || 1) <= 0.61;
+    this._drSlow = atMin && fps < 24 ? (this._drSlow || 0) + 1 : 0;
+    if (this._drSlow >= 3) {
+      const next = { ultra: 'high', high: 'medium', medium: 'low' }[this.quality];
+      this._drSlow = 0;
+      this.setQuality(next);
+      const el = $('quality');
+      if (el) { el.value = next; try { localStorage.setItem('b787.opt.quality', next); } catch (e) { /* storage unavailable */ } }
+      this.toast(`描画が重いため画質を「${{ high: '高', medium: '中', low: '低' }[next]}」に下げました（設定で変更できます）`, 5000);
+      return;
+    }
+    if (this.quality === 'medium') return;
     let s = this.renderScale || 1;
     if (fps < 45) s = Math.max(0.6, s * (fps < 30 ? 0.8 : 0.9));
     else if (fps > 58 && !this.post?.fgOn && s < (this.quality === 'ultra' ? 1.5 : 1)) s = Math.min(this.quality === 'ultra' ? 1.5 : 1, s * 1.12);
@@ -1299,8 +1312,8 @@ class App {
       }
       case 'hud': this.instruments.hudOn = !this.instruments.hudOn; break;
       case 'fgCycle': {
-        const order = ['auto', 'on', 'off'];
-        const m = order[(order.indexOf(this.frameGenMode || 'auto') + 1) % 3];
+        const order = ['off', 'auto', 'on'];
+        const m = order[(order.indexOf(this.frameGenMode || 'off') + 1) % 3];
         this.frameGenMode = m; this._fgAuto = false; this._fgProbe = false;
         const el = $('frameGen');
         if (el) { el.value = m; try { localStorage.setItem('b787.opt.frameGen', m); } catch (e) { /* storage unavailable */ } }
@@ -1788,7 +1801,7 @@ class App {
   get refreshHz() { return 1000 / (this._refreshMs || 1000 / 60); }
 
   frameGenActive() {
-    const m = this.frameGenMode || 'auto';
+    const m = this.frameGenMode || 'off';
     if (m === 'off') return false;
     if (m === 'on') return true;
     return !!this._fgAuto;
@@ -1804,7 +1817,12 @@ class App {
     if (t && t.enabled !== false) {
       for (const ac of t.aircraft) if (ac.art && ac.art.obj.visible) out.push(ac.art.obj);
       for (const ac of t.remote || []) if (ac.art && ac.art.obj.visible) out.push(ac.art.obj);
-      for (const v of t.vehicles) if (v.obj.visible && out.length < 250) out.push(v.obj);
+      // parked things are part of the static world: only what is moving near the camera
+      const cp = this.camera.position;
+      for (const v of t.vehicles) {
+        if (out.length >= 120) break;
+        if (v.obj.visible && Math.abs(v.v || 0) > 0.05 && Math.abs(v.obj.position.x - cp.x) + Math.abs(v.obj.position.z - cp.z) < 4000) out.push(v.obj);
+      }
     }
     return out;
   }
@@ -1818,7 +1836,7 @@ class App {
     const disp = (S.real + S.gen) / S.t, real = S.real / S.t;
     this.fgFps = { disp, real, gen: S.gen > 0 };
     S.t = 0; S.real = 0; S.gen = 0;
-    if ((this.frameGenMode || 'auto') !== 'auto' || this.paused) return;
+    if ((this.frameGenMode || 'off') !== 'auto' || this.paused) return;
     const hz = this.refreshHz;
     this._fgCool = (this._fgCool || 0) - 1.5;
     if (!this._fgAuto) {

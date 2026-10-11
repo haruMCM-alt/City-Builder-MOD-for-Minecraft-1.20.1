@@ -229,8 +229,8 @@ ${TRANS_SAMPLE}
 ${SKYUV}
 #include <logdepthbuf_pars_fragment>
 uniform sampler2D tSky;
-uniform float uR, uK, uDisc, uSunAng;
-uniform vec3 uSunW;
+uniform float uR, uK, uDisc, uSunAng, uFogMix;
+uniform vec3 uSunW, uFogCol;
 varying vec3 vDir;
 void main() {
   #include <logdepthbuf_fragment>
@@ -246,16 +246,44 @@ void main() {
     L += trans(uR, dir.y) * limb * uDisc;
   }
   gl_FragColor = vec4(L * uK, 1.0);
+  // straight to the screen (low quality, no post chain): tone curve and sRGB like the scene
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  // without the aerial-perspective pass (low quality) the scene fades into the fog colour
+  // (three mixes the fog in after the tone curve): the sky meets it at the horizon
+  if (uFogMix > 0.0) gl_FragColor.rgb = mix(gl_FragColor.rgb, uFogCol, uFogMix * (1.0 - smoothstep(-0.02, 0.2, dir.y)));
+  gl_FragDepth = 1.0;          // behind everything, also the far ring beyond the dome radius
 }`;
 
-const AERIAL_FRAG = /* glsl */`${COMMON}
+// aerial perspective in a camera-aligned froxel volume (32 x 32 screen cells x 32 depth slices,
+// square-root distributed out to AP_MAX km): the ray march runs once per froxel, not per pixel
+const AP_N = 32, AP_MAX = 480.0;
+const FROXEL_FRAG = /* glsl */`${COMMON}
 ${TRANS_SAMPLE}
 ${MS_SAMPLE}
 ${MARCH}
-uniform sampler2D tDiffuse, tDepth;
 uniform mat4 uProjInv, uCamWorld;
-uniform float uFar, uR, uK, uAmt;
-uniform vec3 uSunW, uCamPos;
+uniform float uR, uSlice, uOut;
+uniform vec3 uSunW;
+varying vec2 vUv;
+void main() {
+  vec4 v = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+  vec3 dir = normalize((uCamWorld * vec4(normalize(v.xyz / v.w), 0.0)).xyz);
+  float s = (uSlice + 0.5) / ${AP_N.toFixed(1)};
+  float dist = ${AP_MAX.toFixed(1)} * s * s;
+  vec3 L, T;
+  int ns = int(clamp(3.0 + dist * 0.12, 3.0, 16.0));
+  march(vec3(0.0, uR, 0.0), dir, dist, uSunW, ns, false, L, T);
+  gl_FragColor = uOut < 0.5 ? vec4(L, 1.0) : vec4(T, 1.0);
+}`;
+
+const AERIAL_FRAG = /* glsl */`
+precision highp float;
+precision highp sampler3D;
+uniform sampler2D tDiffuse, tDepth;
+uniform sampler3D tApL, tApT;
+uniform mat4 uProjInv;
+uniform float uFar, uK, uAmt;
 varying vec2 vUv;
 void main() {
   vec4 col = texture2D(tDiffuse, vUv);
@@ -264,16 +292,13 @@ void main() {
   float w = exp2(d * log2(uFar + 1.0)) - 1.0;
   vec4 v = uProjInv * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
   vec3 rv = v.xyz / v.w;
-  vec3 pv = rv * (w / -rv.z);
-  vec3 dirW = (uCamWorld * vec4(pv, 0.0)).xyz;
-  float dist = length(dirW) / 1000.0;                  // km
-  if (dist < 0.02) { gl_FragColor = col; return; }
-  vec3 dir = dirW / (dist * 1000.0);
-  vec3 L, T;
-  int ns = int(clamp(4.0 + dist * 0.5, 4.0, 14.0));
-  march(vec3(0.0, uR, 0.0), dir, dist, uSunW, ns, false, L, T);
-  T = mix(vec3(1.0), T, uAmt);
-  gl_FragColor = vec4(col.rgb * T + L * uK * uAmt, col.a);
+  float dist = length(rv * (w / -rv.z)) / 1000.0;          // km
+  float s = sqrt(min(dist / ${AP_MAX.toFixed(1)}, 1.0));
+  float z = max(s, 0.5 / ${AP_N.toFixed(1)});
+  vec3 L = texture(tApL, vec3(vUv, z)).rgb, T = texture(tApT, vec3(vUv, z)).rgb;
+  // closer than the first slice: fade in from nothing
+  float f = clamp(s * ${(AP_N * 2).toFixed(1)}, 0.0, 1.0) * uAmt;
+  gl_FragColor = vec4(col.rgb * mix(vec3(1.0), T, f) + L * uK * f, col.a);
 }`;
 
 // --------------------------------------------------------------------- CPU side
@@ -315,6 +340,7 @@ export class Atmosphere {
       uAlbedo: { value: new THREE.Vector3(...ATMO.albedo) }, uAlbedoG: { value: new THREE.Vector3(...ATMO.albedo) },
       uR: { value: ATMO.Rg + 0.05 }, uSun: { value: new THREE.Vector3(0, 1, 0) }, uSunW: { value: new THREE.Vector3(0, 1, 0) },
       uK: { value: 1 }, uDisc: { value: 1 }, uSunAng: { value: 0.0047 * 1.15 },
+      uFogMix: { value: 0 }, uFogCol: { value: new THREE.Color() },
     };
     const mat = (frag) => new THREE.ShaderMaterial({ vertexShader: FSQ_VERT, fragmentShader: frag, uniforms: this.u, depthTest: false, depthWrite: false });
     this.transQ = new FullScreenQuad(mat(TRANS_FRAG));
@@ -357,22 +383,46 @@ export class AerialPass extends Pass {
   constructor(atmo, camera, shared) {
     super();
     this.atmo = atmo; this.camera = camera; this.shared = shared;
-    this.uniforms = Object.assign({}, atmo.u, {
-      tDiffuse: { value: null }, tDepth: { value: null }, uProjInv: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() },
-      uFar: { value: 1 }, uAmt: { value: 1 }, uCamPos: { value: new THREE.Vector3() },
+    const rt3 = () => {
+      const t = new THREE.WebGL3DRenderTarget(AP_N, AP_N, AP_N, { type: THREE.HalfFloatType, depthBuffer: false });
+      t.texture.minFilter = t.texture.magFilter = THREE.LinearFilter;
+      t.texture.wrapS = t.texture.wrapT = t.texture.wrapR = THREE.ClampToEdgeWrapping;
+      return t;
+    };
+    this.apL = rt3(); this.apT = rt3();
+    this.fu = Object.assign({}, atmo.u, {
+      uProjInv: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uSlice: { value: 0 }, uOut: { value: 0 },
     });
+    this.froxel = new FullScreenQuad(new THREE.ShaderMaterial({ vertexShader: FSQ_VERT, fragmentShader: FROXEL_FRAG, uniforms: this.fu,
+      depthTest: false, depthWrite: false }));
+    this.uniforms = {
+      tDiffuse: { value: null }, tDepth: { value: null }, tApL: { value: this.apL.texture }, tApT: { value: this.apT.texture },
+      uProjInv: this.fu.uProjInv, uFar: { value: 1 }, uK: atmo.u.uK, uAmt: { value: 1 },
+    };
     this.quad = new FullScreenQuad(new THREE.ShaderMaterial({ vertexShader: FSQ_VERT, fragmentShader: AERIAL_FRAG, uniforms: this.uniforms,
       depthTest: false, depthWrite: false }));
   }
 
   render(renderer, writeBuffer, readBuffer) {
-    const u = this.uniforms, cam = this.camera;
+    const u = this.uniforms, cam = this.camera, fu = this.fu;
+    fu.uProjInv.value.copy(cam.projectionMatrixInverse);
+    fu.uCamWorld.value.copy(cam.matrixWorld);
+    // the froxel volume for this camera (2 x 32 small layers)
+    for (let o = 0; o < 2; o++) {
+      fu.uOut.value = o;
+      const rt = o ? this.apT : this.apL;
+      for (let z = 0; z < AP_N; z++) {
+        fu.uSlice.value = z;
+        renderer.setRenderTarget(rt, z);
+        this.froxel.render(renderer);
+      }
+    }
     u.tDiffuse.value = readBuffer.texture;
     u.tDepth.value = this.shared.depth;
-    u.uProjInv.value.copy(cam.projectionMatrixInverse);
-    u.uCamWorld.value.copy(cam.matrixWorld);
     u.uFar.value = cam.far;
     renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
     this.quad.render(renderer);
   }
+
+  dispose() { this.apL.dispose(); this.apT.dispose(); }
 }

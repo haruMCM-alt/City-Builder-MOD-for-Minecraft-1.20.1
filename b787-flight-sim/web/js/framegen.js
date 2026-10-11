@@ -253,7 +253,8 @@ export class FrameGen {
     for (let i = 0; i < n; i++) {
       const o = roots[i];
       if (!o) continue;
-      this._tag(o);
+      // re-tag when the hierarchy changed (the cabin is added later) and now and then
+      if (o.userData.fgKids !== o.children.length || this._tick % 60 === 1 || !o.userData.fgList) { o.userData.fgKids = o.children.length; this._tag(o); }
       const pid = o.userData.fgPid;
       S.roots.push({ obj: o, pid, m: (o.userData.fgM || (o.userData.fgM = new THREE.Matrix4())).copy(o.matrixWorld) });
       for (const e of o.userData.fgList) {

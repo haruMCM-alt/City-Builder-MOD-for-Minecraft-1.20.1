@@ -31,7 +31,20 @@ float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.y
 // ------------------------------------------------------------------------------ depth grab
 export class DepthGrabPass extends Pass {
   constructor(shared) { super(); this.shared = shared; this.needsSwap = false; }
-  render(renderer, writeBuffer, readBuffer) { this.shared.depth = readBuffer.depthTexture; }
+  render(renderer, writeBuffer, readBuffer) {
+    this.shared.depth = readBuffer.depthTexture;
+    // the later full-screen passes draw into the same multisampled targets: their MSAA resolve
+    // would copy a cleared depth buffer over this depth texture (the clouds then covered the
+    // aircraft). Only the scene render resolves depth; DepthResolvePass re-enables it per frame
+    readBuffer.resolveDepthBuffer = false;
+    writeBuffer.resolveDepthBuffer = false;
+  }
+}
+
+// first pass of the chain: the scene render resolves its depth into the depth texture
+export class DepthResolvePass extends Pass {
+  constructor() { super(); this.needsSwap = false; }
+  render(renderer, writeBuffer, readBuffer) { readBuffer.resolveDepthBuffer = true; writeBuffer.resolveDepthBuffer = true; }
 }
 
 // ------------------------------------------------------------------------------ SSAO

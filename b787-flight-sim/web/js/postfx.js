@@ -9,7 +9,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CloudPass } from './clouds.js';
-import { DepthGrabPass, SSAOPass, GodRayPass, FlarePass } from './ultrafx.js';
+import { DepthGrabPass, DepthResolvePass, SSAOPass, GodRayPass, FlarePass } from './ultrafx.js';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { FrameGen } from './framegen.js';
 import { AerialPass } from './atmo.js';
@@ -230,6 +230,7 @@ export class PostFX {
     rt.depthTexture = new THREE.DepthTexture(size.x, size.y);
     rt.depthTexture.type = THREE.FloatType;
     this.composer = new EffectComposer(renderer, rt);
+    this.composer.addPass(new DepthResolvePass());
     this.composer.addPass(new RenderPass(scene, camera));
     this.shared = { depth: null };
     this.composer.addPass(new DepthGrabPass(this.shared));

@@ -8,6 +8,10 @@ export function freezeStatic(root) {
   root.traverse((o) => { o.matrixAutoUpdate = false; o.matrixWorldAutoUpdate = false; });
 }
 
+// visual Earth curvature (same law as the terrain / water / far-ring shaders): flat to 15 km,
+// then the surface drops away with the square of the distance
+export function curveDrop(d) { const e = Math.max(d - 15000, 0); return e * e / 12742000; }
+
 export const DEG = Math.PI / 180;
 export const RAD = 180 / Math.PI;
 export const KT = 0.514444;          // m/s per knot
