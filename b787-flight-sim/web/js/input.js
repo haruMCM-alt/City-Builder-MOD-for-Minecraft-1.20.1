@@ -1,5 +1,6 @@
 // Keyboard + gamepad input -> pilot controls and discrete commands.
 import { clamp, approach } from './util.js';
+import { Wheel, isWheel } from './wheel.js';
 
 export class Input {
   constructor(onCommand) {
@@ -25,6 +26,9 @@ export class Input {
     window.addEventListener('blur', () => this.keys.clear());
     this.pad = null;
     this._padPrev = {};
+    this.wheel = new Wheel();
+    this.wheelPitch = 0;
+    this._pedal = 0;
     this.touch = { pitch: 0, roll: 0, yaw: 0, brake: 0, throttle: null, active: false };
   }
 
@@ -115,7 +119,27 @@ export class Input {
     sys.trimInput = (K.down('End') ? 1 : 0) - (K.down('Home') ? 1 : 0);
     // ---- gamepad ----
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    const gp = [...pads].find((p) => p && p.connected);
+    // ---- racing wheel (wheel.js) ----
+    const wg = this.wheel.find(pads);
+    if (wg) {
+      const W = this.wheel, S = W.read(wg, (c) => this.onCommand(c));
+      const wr = W.roll();
+      if (Math.abs(wr) > 0.01 || !tgtRoll) roll = wr;
+      // no pitch axis on a wheel: D-pad up / down = push / pull, the clutch pulls
+      const wp = clamp(S.hat * 0.6 + S.clu, -1, 1);
+      this.wheelPitch = approach(this.wheelPitch, wp, wp === 0 ? 3.5 : 1.6, dt);
+      if (Math.abs(this.wheelPitch) > 0.005) pitch = this.wheelPitch;
+      const onGround = sys.fm.gear.some((g) => g.onGround);
+      if (W.cfg.thr) {
+        if (W.cfg.thrMode === 'rate') thr += (S.thr - (onGround ? 0 : S.brk)) * dt * 0.5;
+        // absolute: the pedal sets the levers while it is pressed or moving (released and still,
+        // the keyboard keeps the levers)
+        else if (W.thrActive && (S.thr > 0.02 || Math.abs(S.thr - this._pedal) > 0.002)) thr = S.thr;
+        this._pedal = S.thr;
+      }
+      brakes = Math.max(brakes, S.brk);
+    }
+    const gp = [...pads].find((p) => p && p.connected && !isWheel(p));
     if (gp) {
       const dz = (v) => (Math.abs(v) < 0.08 ? 0 : (v - Math.sign(v) * 0.08) / 0.92);
       const ax = gp.axes;

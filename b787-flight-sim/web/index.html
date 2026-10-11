@@ -240,6 +240,20 @@
   .opts label { margin: 0; }
   .opts .inl { display: flex; align-items: center; gap: 8px; }
   .opts .inl select { width: auto; }
+  .wheelCfg { margin-top: 14px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.12); border-radius: 10px; }
+  .wheelCfg .wHead { font-weight: 600; margin-bottom: 6px; }
+  .wheelCfg .wHead small { font-weight: 400; opacity: .75; margin-left: 8px; }
+  .wheelCfg .wRow { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  .wheelCfg .wRow select { width: auto; }
+  .wheelCfg .wCal { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; margin-top: 8px; max-width: 520px; }
+  .wheelCfg .wCal button { padding: 4px 10px; font-size: 12px; }
+  .wheelCfg .wCal button.on { outline: 2px solid #4cc3ff; }
+  .wheelCfg .wCal #wheelReset { grid-column: 1; }
+  .wheelCfg .wBar { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,.12); overflow: hidden; }
+  .wheelCfg .wBar i { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #4cc3ff; }
+  .wheelCfg .wBar.c i { left: 50%; }
+  .wheelCfg .wBar.off { opacity: .35; }
+  .wheelCfg .wMsg { font-size: 12px; opacity: .8; margin: 8px 0 0; }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 12px; }
   .types { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
   .types button { text-align: left; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
@@ -773,6 +787,33 @@
               </select>
             </label>
           </div>
+          <div class="wheelCfg" id="wheelCfg">
+            <div class="wHead">🏎 ハンコン Racing wheel <small id="wheelName">未接続 — つないでハンドルを少し回してください</small></div>
+            <div class="wRow">
+              <label class="inl">ハンドル感度
+                <select id="wheelGain">
+                  <option value="1.5">±300° で最大</option>
+                  <option value="2.5" selected>±180° で最大</option>
+                  <option value="4">±110° で最大</option>
+                  <option value="6">±75° で最大</option>
+                </select>
+              </label>
+              <label class="inl">アクセル
+                <select id="wheelThrMode">
+                  <option value="abs" selected>踏んだ量 = スラスト</option>
+                  <option value="rate">踏むと増加・空中でブレーキを踏むと減少</option>
+                </select>
+              </label>
+            </div>
+            <div class="wCal">
+              <button type="button" data-cal="steer">ハンドル</button><span class="wBar c" data-k="steer"><i></i></span>
+              <button type="button" data-cal="thr">アクセル</button><span class="wBar" data-k="thr"><i></i></span>
+              <button type="button" data-cal="brk">ブレーキ</button><span class="wBar" data-k="brk"><i></i></span>
+              <button type="button" data-cal="clu">クラッチ（機首上げ）</button><span class="wBar" data-k="clu"><i></i></span>
+              <button type="button" id="wheelReset">リセット</button>
+            </div>
+            <p class="wMsg" id="wheelMsg">ボタンを押してから、ペダルを 1 回奥まで踏んで離すと割り当てられます（機種ごとに軸の並びが違うため）。ハンドル＝ロール（地上では前輪操舵）、パドル＝フラップ、十字キー上下・クラッチ＝ピッチ。</p>
+          </div>
           <div class="apNames">
             <label>出発空港 東京・羽田 RJTT<input type="text" id="apName" maxlength="24" value="Tokyo" autocomplete="off" spellcheck="false"></label>
             <label>大阪・関西 RJBB（西南西 260 km）<input type="text" id="apName2" maxlength="24" value="Kansai" autocomplete="off" spellcheck="false"></label>
@@ -785,6 +826,7 @@
         <div><b>↑ ↓ / W S</b> ピッチ Pitch</div>
         <div><b>← → / A D</b> ロール・地上で前輪操舵 Roll / Steer</div>
         <div><b>Q E</b> ラダー・前輪操舵 Rudder / Steer</div>
+        <div><b>ハンコン</b> ハンドル＝ロール・前輪、アクセル／ブレーキ、クラッチ・十字キー＝ピッチ、パドル＝フラップ（オプションで割り当て）</div>
         <div><b>R F</b> スラスト Thrust ±</div>
         <div><b>Shift+R</b> TOGA</div>
         <div><b>Shift+F</b> アイドル Idle</div>
@@ -860,6 +902,7 @@
         <div><b>↑ ↓ / W S</b> ピッチ Pitch</div>
         <div><b>← → / A D</b> ロール・地上で前輪操舵 Roll / Steer</div>
         <div><b>Q E</b> ラダー・前輪操舵 Rudder / Steer</div>
+        <div><b>ハンコン</b> ハンドル＝ロール・前輪、アクセル／ブレーキ、クラッチ・十字キー＝ピッチ、パドル＝フラップ（オプションで割り当て）</div>
         <div><b>R F</b> スラスト Thrust ±</div>
         <div><b>Shift+R</b> TOGA</div>
         <div><b>Shift+F</b> アイドル Idle</div>

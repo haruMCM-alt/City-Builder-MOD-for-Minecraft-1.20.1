@@ -33,6 +33,7 @@ import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
 import { ARFF, Evacuation } from './emergency.js';
 import { UISound } from './uisound.js';
+import { bindWheelUI } from './wheel.js';
 import { configureObstacles } from './obstacles.js';
 import { V3, DEG, KT, FT, FPM, clamp, smoothstep, headingVec, runwayDir, compassOf, northAt, wrap360, mulberry32 } from './util.js';
 
@@ -646,6 +647,7 @@ class App {
     menuVis();
     $('sound').addEventListener('change', () => { this.audio.enabled = $('sound').checked; this.uiSound.refresh(); });
     $('menuMusic')?.addEventListener('change', () => this.uiSound.refresh());
+    bindWheelUI(this.input.wheel, $);
     this.showModeHub();
   }
 
@@ -1617,6 +1619,12 @@ class App {
     const events = [];
     if (!this.paused && !fm.crashed) {
       this.input.update(dt, sys.pilot, sys);
+      const W = this.input.wheel;
+      if (W.fresh) {
+        W.fresh = false;
+        this.toast(W.calibrated() ? 'ハンコン接続 Racing wheel connected' :
+          'ハンコンを検出 — オプションの「ハンコン」でアクセル・ブレーキを割り当ててください（ハンドルはそのまま使えます）', 7000);
+      }
       // auto flight flies the aircraft; stick input hands control back to the pilot
       if (this.autoFlight && !this.autoFlight.done) {
         if (Math.abs(sys.pilot.pitch) > 0.6 || Math.abs(sys.pilot.roll) > 0.6) {
