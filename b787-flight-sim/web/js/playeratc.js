@@ -350,7 +350,8 @@ export class PlayerATC {
     // no fire any more and stopped for a while: close out, the runway reopens
     if (s.stoppedCall && !s.closedOut) {
       const D = P.dmg, fire = D && (D.engFire[0] || D.engFire[1] || D.wingFire[0] || D.wingFire[1]);
-      s._cT = fire ? 0 : (s._cT || 0) + dt;
+      // (not while the passengers are still on the runway after an evacuation)
+      s._cT = fire || T.emergencyBusy?.() ? 0 : (s._cT || 0) + dt;
       if (s._cT > (M.ground ? 30 : 45)) {
         s.closedOut = true; s.squawk = null;
         if (M.ground) {

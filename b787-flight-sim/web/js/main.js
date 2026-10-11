@@ -1020,6 +1020,7 @@ class App {
   // ------------------------------------------------------------------- scenario setup
   startScenario(id, run) {
     const fm = this.fm, sys = this.sys, W = this.worldData;
+    this._drCool = Math.max(this._drCool || 0, 10); this._drSlow = 0;     // (shader compiles / loading right after the start)
     this.scenario = id;
     fm.fuel = +$('fuel').value;
     fm.payload = +$('payload').value;
@@ -1440,10 +1441,11 @@ class App {
   setupEmergency() {
     const T = this.traffic;
     if (!T) return;
-    const fm = this.fm;
-    const pos = () => ({ x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90 - northAt(fm.pos.x, fm.pos.z)) * DEG, v: (fm.out.gs || 0) * KT });
+    // (always the current flight model: picking another aircraft type creates a new one - the
+    // fire trucks used to drive to where the first type had been parked)
+    const pos = () => { const fm = this.fm; return { x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90 - northAt(fm.pos.x, fm.pos.z)) * DEG, v: (fm.out.gs || 0) * KT }; };
     const fire = () => {
-      const D = fm.dmg, m = this.meta, root = this.visual?.root;
+      const fm = this.fm, D = fm.dmg, m = this.meta, root = this.visual?.root;
       if (!root) return null;
       let p = null;
       for (let i = 0; i < 2 && !p; i++) {
@@ -1461,12 +1463,14 @@ class App {
       this.toast(onGround ? '🚒 消防車が出動しました Fire trucks on their way' : '🚒 消防車が滑走路脇で待機します Emergency services standing by', 4500);
     };
     T.onEmergencyLanded = () => this.arff.attend(pos, fire, this.meta);
+    this._arffPos = pos;
     T.onEmergencyEnd = () => { if (!this.evac.active) this.arff.stand(); this.toast('✅ 緊急事態解除 — 滑走路再開 Emergency closed out', 4000); };
     T.onBrace = () => this.toast('📢 客室「頭を下げて！」 Brace for impact!', 5000);
+    T.emergencyBusy = () => !!(this.evac?.active && !this.evac.finished);
     T.onAutoLand = () => this.emergencyAutoLand();
     // AI emergencies: the same trucks meet the aircraft
     T.onAIEmergency = (ac, runway) => this.arff.deploy(1, runway);
-    T.onAIEmergencyLanded = (ac) => this.arff.attend(() => ({ x: ac.x, z: ac.z, a: ac.a, v: ac.v }), () => null, ac.tm?.meta || null);
+    T.onAIEmergencyLanded = (ac) => this.arff.attend(() => ({ x: ac.x, z: ac.z, a: ac.a, v: ac.v }), () => null, ac.tm?.meta || null, { follow: true });
     T.onAIEmergencyEnd = () => this.arff.stand();
   }
 
@@ -1946,10 +1950,7 @@ class App {
   onEvent(e) {
     if (e.type === 'touchdown') {
       // an emergency aircraft touched down: the fire trucks go after it straight away
-      if (this.traffic?.pc?.s?.mayday && this.arff.job?.phase !== 'ATTEND') {
-        const fm = this.fm;
-        this.arff.attend(() => ({ x: fm.pos.x, z: fm.pos.z, a: ((fm.out.hdg || 0) - 90 - northAt(fm.pos.x, fm.pos.z)) * DEG, v: (fm.out.gs || 0) * KT }), this._arffFire, this.meta);
-      }
+      if (this.traffic?.pc?.s?.mayday && this.arff.job?.phase !== 'ATTEND') this.arff.attend(this._arffPos, this._arffFire, this.meta);
       const fpm = e.vs / FPM;
       this.rig.impulse(Math.min(1, Math.abs(fpm) / 600));
       const r = this.nearestRunway();

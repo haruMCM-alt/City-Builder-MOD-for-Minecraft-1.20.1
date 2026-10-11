@@ -49,7 +49,7 @@ CABIN = {
     # bins clear the window tops and the ceiling is ~2.4 m above the floor)
     "maw": dict(S0=6.6, S1=65.0, BAND=(0.0, 1.30), CEIL=1.95, BIN_BOT=1.47, BIN_FRONT=1.30, centre=True,
                 aisle_y=1.20),
-    "at76": dict(S0=3.95, S1=21.3, BAND=(-0.49, 0.73), CEIL=1.20, BIN_BOT=0.80, BIN_FRONT=0.50, centre=False,
+    "at76": dict(S0=3.95, S1=20.45, BAND=(-0.49, 0.73), CEIL=1.20, BIN_BOT=0.80, BIN_FRONT=0.50, centre=False,
                  aisle_y=0.0),
 }[G.TYPE]
 FL = G.FLOOR_Z                  # cabin floor (design z)
@@ -492,8 +492,8 @@ def build_lining(M, parent, col):
     outer = rr_outline(WIN_W + 0.02, WIN_H + 0.02, 0.11)
     for side in (1, -1):
         for wc in windows():
-            a0 = np.array([lining_pt(wc + ds, WIN_Z + dz, side, 0.014) for ds, dz in inner])
-            a1 = np.array([lining_pt(wc + ds, WIN_Z + dz, side, 0.011) for ds, dz in bezel])
+            a0 = np.array([lining_pt(wc + ds, WIN_Z + dz, side, 0.020) for ds, dz in inner])
+            a1 = np.array([lining_pt(wc + ds, WIN_Z + dz, side, 0.016) for ds, dz in bezel])
             a2 = np.array([lining_pt(wc + ds, WIN_Z + dz, side, -0.003) for ds, dz in bezel])
             b = []
             for ds, dz in outer:
@@ -1560,6 +1560,12 @@ def build_cabin(col, tex, bake=True):
     if G.TYPE != "b789":
         # small windows: put the eye close to the window reveal so the wing is in view
         y_win = max(y_win, lining_y(win_s, WIN_Z) - 0.22)
+    # the eye stays in your own seat: where the windows do not line up with the rows (ATR: every
+    # window ~0.2 m aft of its row) it was in the lap of the passenger behind, whose arm crossed
+    # the window
+    cam_s = win_s + 0.10
+    if abs(cam_s - MY_SEAT_S) > 0.25:
+        cam_s = MY_SEAT_S + 0.05
     counts = {}
     for st in seats:
         counts[st["c"]] = counts.get(st["c"], 0) + 1
@@ -1569,7 +1575,9 @@ def build_cabin(col, tex, bake=True):
         mySeat=my,
         views=dict(
             aisle=G.to_three([MY_SEAT_S + 1.55, CABIN["aisle_y"], FL + 1.62]),
-            window=G.to_three([win_s + 0.10, y_win, WIN_Z + 0.02]),
+            window=G.to_three([cam_s, y_win, WIN_Z + 0.02]),
+            # centre of that window: the wing view aims at it
+            windowAt=G.to_three([win_s, lining_y(win_s, WIN_Z), WIN_Z]),
         ),
         paxMass=100,
         # the prototypes are shared by every type (cabin-protos.glb) with the seat origin at 0

@@ -109,7 +109,14 @@ export class CameraRig {
         // left cabin window behind the wing root, looking out at the left wing
         const cv = this.meta.cabin?.views;
         cam.position.copy(toWorld(cv ? cv.window : [-5.0, 0.6, -2.45]));
-        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw - (this.meta.cabin ? 0.2 : 0.5));
+        // aim at the window beside the eye (ATR: the windows sit ~0.2 m aft of the rows, so a
+        // fixed forward look stared at the wall beside the window)
+        let yaw0 = this.meta.cabin ? 0.2 : 0.5;
+        if (cv?.windowAt) {
+          const e = cv.window, w = cv.windowAt;
+          yaw0 = THREE.MathUtils.clamp(Math.atan2(w[0] - e[0], Math.max(0.15, Math.abs(w[2] - e[2]))), -0.7, 0.7);
+        }
+        const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw - yaw0);
         const qp = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.pitch - (this.meta.cabin ? 0.02 : 0.18));
         cam.quaternion.copy(q).multiply(qy).multiply(qp);
         cam.near = 0.05;

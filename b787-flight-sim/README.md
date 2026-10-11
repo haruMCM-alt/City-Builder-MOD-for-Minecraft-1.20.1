@@ -208,7 +208,7 @@ WebGL2 対応ブラウザ（Chrome / Edge / Firefox / Safari 最新版）で動�
 | Shift+G | フレーム生成 自動 / ON / OFF | | |
 | L | 着陸灯 | T | 時刻 +1 時間 |
 | B | AI 交通カメラ（対象切替） | 9 | ATC 音声 ON/OFF |
-| O | 地上サービス | Shift+X | 消火（火災ハンドル） |
+| O | 機内食サービス（客室乗務員） | Shift+X | 消火（火災ハンドル） |
 | Shift+E | 故障発生（緊急訓練） | Y（損傷時） | メーデー / パンパン宣言 → 再度 Y で全自動緊急着陸 |
 | Shift+L | 全自動緊急着陸 | | |
 | Shift+D | 出発案内板 | 視点 Walk で WASD | 機内を歩く |

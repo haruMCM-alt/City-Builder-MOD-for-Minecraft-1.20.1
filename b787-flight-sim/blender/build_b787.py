@@ -1754,8 +1754,10 @@ def export_cabin(cabin_root):
         ob.select_set(False)
     for ob in shell:
         ob.select_set(True)
+    # (14-bit positions: at 12 bits a 60 m cabin quantised to 1.5 cm steps - the window frames of
+    # the tapering aft cabin came out lumpy)
     C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + "-cabin.glb"), selected_only=True, draco=True,
-                 vertex_color="ACTIVE", quant=(12, 7, 12, 7))
+                 vertex_color="ACTIVE", quant=(14, 7, 12, 7))
     cabin_b787.center_protos(protos)
     bpy.context.view_layer.update()
     for ob in bpy.data.objects:

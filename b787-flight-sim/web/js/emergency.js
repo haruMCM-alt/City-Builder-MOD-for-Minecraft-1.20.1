@@ -288,34 +288,82 @@ export class ARFF {
   // The runway direction comes from its compass heading and the local north (util.js), so
   // every runway of every airport works, whatever its angle.
   deploy(apt, runway) {
-    const T = this._fleet(apt), st = fireStation(apt);
     if (this.job?.phase === 'ATTEND' && this.job.apt === apt) return;     // already on the way to it
-    const d = runwayDir(runway), tx = runway.threshold[0], tz = runway.threshold[2];
-    // unit normal of the runway pointing towards the fire station
-    let nx = -d.z, nz = d.x;
-    if ((st.x - tx) * nx + (st.z - tz) * nz < 0) { nx = -nx; nz = -nz; }
-    const off = 75, face = Math.atan2(-nz, -nx);                         // facing the runway
+    // the emergency moved on to another airport (handover): the first fleet goes home
+    if (this.job && this.job.apt !== apt) this._home(this.job.apt);
+    const T = this._fleet(apt);
+    const S = this._strip(apt, runway);
+    const face = Math.atan2(-S.nz, -S.nx);                               // facing the runway
     this.job = { apt, runway, phase: 'STANDBY', t: 0 };
     T.forEach((tr, k) => {
       const along = 500 + k * 350;
-      const px = tx + d.x * along + nx * off, pz = tz + d.z * along + nz * off;
-      tr.active = true; tr.spray = null; tr.onScene = false;
-      tr.goTo([{ x: tr.x, z: st.z - 25 * st.side }, { x: px + nx * 25, z: pz + nz * 25 }, { x: px, z: pz, face }], 26);
+      const p = S.at(along, S.off);
+      tr.active = true; tr.spray = null; tr.onScene = false; tr._off = false;
+      tr.goTo([...this._viaStrip(tr, S, along), { x: p.x, z: p.z, face }], 26);
     });
+  }
+
+  // the runway strip used as the trucks' road: a line parallel to the runway, ~75 m out on the
+  // fire station side (open grass, clear of the terminal and the parallel taxiway)
+  _strip(apt, runway) {
+    const st = fireStation(apt);
+    let r = runway;
+    if (!r) {
+      const rs = (this.app.worldData?.runways || []).filter((q) => (apt === 1 ? !q.apt : q.apt === apt));
+      let best = 1e18;
+      for (const q of rs) { const d = Math.hypot(q.threshold[0] - st.x, q.threshold[2] - st.z); if (d < best) { best = d; r = q; } }
+    }
+    const d = r ? runwayDir(r) : { x: 1, z: 0 }, tx = r ? r.threshold[0] : st.x, tz = r ? r.threshold[2] : st.z - 300 * st.side;
+    let nx = -d.z, nz = d.x;
+    if ((st.x - tx) * nx + (st.z - tz) * nz < 0) { nx = -nx; nz = -nz; }
+    const off = 75;
+    return { d, tx, tz, nx, nz, off, len: r?.length || 3000,
+      at: (a, o) => ({ x: tx + d.x * a + nx * o, z: tz + d.z * a + nz * o }),
+      along: (x, z) => (x - tx) * d.x + (z - tz) * d.z,
+      lat: (x, z) => (x - tx) * nx + (z - tz) * nz };
+  }
+
+  // waypoints from where the truck is to the strip abeam `along`: out to the strip line, then
+  // along it (trucks no longer cut across the terminal, the aprons or the sea)
+  _viaStrip(tr, S, along) {
+    const a0 = S.along(tr.x, tr.z), l0 = S.lat(tr.x, tr.z);
+    const pts = [];
+    if (Math.abs(l0 - S.off) > 30) pts.push(S.at(a0, S.off));
+    if (Math.abs(along - a0) > 60) pts.push(S.at(along, S.off));
+    return pts;
+  }
+
+  // one fleet back to its station along the strip
+  _home(apt) {
+    const T = this.trucks[apt];
+    if (!T) return;
+    const S = this._strip(apt, this.job?.apt === apt ? this.job.runway : null);
+    for (const tr of T) {
+      tr.spray = null; tr.onScene = false;
+      tr.recallCrew(() => {
+        const st = tr.home, a = S.along(st.x, st.z);
+        tr.goTo([...this._viaStrip(tr, S, a), { x: st.x + (tr.k - 1) * 9, z: st.z - 30 * st.side }, { x: st.x + (tr.k - 1) * 9, z: st.z, face: -Math.PI / 2 * st.side }], 16);
+        tr._off = true;
+      });
+    }
   }
 
   // chase the aircraft, take the attack positions round it, fight the fire, crews out.
   // getPos() -> {x, z, a (heading, three.js angle), v}; getFire() -> world position or null;
   // meta: aircraft dimensions (noseTip, span, fusW)
-  attend(getPos, getFire, meta = null) {
+  // opts.follow: an AI arrival - escort it off the runway and to the stand (behind it), no
+  // attack positions at the terminal
+  attend(getPos, getFire, meta = null, opts = {}) {
+    const p = getPos();
+    // the airport where the aircraft actually is (it may have diverted after the call)
+    const apt = p ? nearestAirport(p.x, p.z) : this.job?.apt;
+    if (this.job && apt != null && this.job.apt !== apt) { this._home(this.job.apt); this.job = null; }
     if (!this.job) {
-      const p = getPos();
-      if (!p) return;
-      const apt = nearestAirport(p.x, p.z);
+      if (apt == null) return;
       this.job = { apt, phase: 'STANDBY', t: 0 };
-      this._fleet(apt).forEach((tr) => { tr.active = true; });
     }
-    Object.assign(this.job, { phase: 'ATTEND', getPos, getFire, meta, t: 0, lastPlan: -9, stopT: 0 });
+    this._fleet(this.job.apt).forEach((tr) => { tr.active = true; tr._off = false; });
+    Object.assign(this.job, { phase: 'ATTEND', getPos, getFire, meta, t: 0, lastPlan: -9, stopT: 0, follow: !!opts.follow, trail: [] });
   }
 
   // aircraft frame helpers: f forward, r to the right
@@ -343,21 +391,14 @@ export class ARFF {
 
   stand() {
     const J = this.job;
-    const T = this.trucks[J?.apt];
+    if (!J) return;
+    this._home(J.apt);
     this.job = null;
-    if (!T) return;
-    for (const tr of T) {
-      tr.spray = null; tr.onScene = false;
-      tr.recallCrew(() => {
-        const st = tr.home;
-        tr.goTo([{ x: st.x + (tr.k - 1) * 9, z: st.z - 30 * st.side }, { x: st.x + (tr.k - 1) * 9, z: st.z, face: -Math.PI / 2 * st.side }], 16);
-        tr._off = true;
-      });
-    }
   }
 
   // an accident on the airport: all trucks straight to the wreck, water on the fires
   crash(apt, p) {
+    if (this.job && this.job.apt !== apt) this._home(this.job.apt);
     this._fleet(apt).forEach((tr) => { tr.active = true; tr.spray = null; tr.path = []; tr.onScene = false; });
     this.job = { apt, phase: 'ATTEND', t: 0, crash: true, lastPlan: -9, stopT: 0,
       getPos: () => ({ x: p.x, z: p.z, a: p.a || 0, v: 0 }),
@@ -386,16 +427,34 @@ export class ARFF {
       const T = this.trucks[J.apt];
       const M = this._metaOf(J.meta);
       // not beyond the airfield (a crash in the city is not theirs to reach)
-      const st0 = fireStation(J.apt);
-      if (p && Math.hypot(p.x - st0.x, p.z - st0.z) > 6000) { /* hold where they are */ }
+      const ap0 = J.apt === 1 ? { x: 0, z: 0 } : remoteById(J.apt);
+      if (p && Math.hypot(p.x - ap0.x, p.z - ap0.z) > 8000) { /* hold where they are */ }
       else if (p && T) {
-        const moving = p.v > 6;                  // (down to taxi speed: close in)
+        const moving = p.v > (J.follow ? 0.8 : 6);       // (down to taxi speed: close in)
         J.stopT = moving ? 0 : J.stopT + dt;
+        // the aircraft's track: an escort at taxi speed drives where the aircraft drove
+        const tl = J.trail, last = tl[tl.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.z - last.z) > 6) { tl.push({ x: p.x, z: p.z }); if (tl.length > 400) tl.shift(); }
+        const behind = (dist) => {
+          let acc = 0;
+          for (let i = tl.length - 1; i > 0; i--) {
+            const seg = Math.hypot(tl[i].x - tl[i - 1].x, tl[i].z - tl[i - 1].z);
+            if (acc + seg >= dist) { const f = (dist - acc) / seg; return { x: tl[i].x + (tl[i - 1].x - tl[i].x) * f, z: tl[i].z + (tl[i - 1].z - tl[i].z) * f }; }
+            acc += seg;
+          }
+          return tl[0] || { x: p.x, z: p.z };
+        };
         if (J.t - J.lastPlan > (moving ? 0.7 : 2)) {
           J.lastPlan = J.t;
           const st = fireStation(J.apt), sideR = this._toBody(p, st.x, st.z).r >= 0 ? 1 : -1;
           T.forEach((tr, k) => {
-            if (moving) {
+            const gap = -(M.tailF || -30) + 35 + k * 28;           // behind the tail, in a column
+            if (J.follow && (p.v < 22 || !moving)) {
+              // escort at taxi speed / parked: in the aircraft's track, behind the tail
+              tr.onScene = false;
+              const tgt = behind(gap);
+              if (Math.hypot(tgt.x - tr.x, tgt.z - tr.z) > 6) tr.goTo([tgt], Math.max(8, Math.min(20, p.v + 6)));
+            } else if (moving) {
               // race alongside, clear of the wing tip, level with the aircraft
               tr.onScene = false;
               const lat = sideR * (M.span / 2 + 30 + k * 14);
@@ -421,7 +480,7 @@ export class ARFF {
         for (const tr of T) {
           if (!tr.onScene || moving) { tr.spray = null; continue; }
           if (fire) tr.spray = { x: fire.x, y: fire.y, z: fire.z };
-          else if (!J.crash && J.stopT < 14) tr.spray = { x: gear.x, y: 1, z: gear.z };
+          else if (!J.crash && !J.follow && J.stopT < 45) tr.spray = { x: gear.x, y: 1, z: gear.z };   // foam on the hot brakes
           else tr.spray = null;
         }
         // the crews: to the slides (evacuation), to the fire, or round the aircraft
