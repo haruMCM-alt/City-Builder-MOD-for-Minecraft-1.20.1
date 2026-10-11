@@ -1178,7 +1178,7 @@ def proto_seat_j(M, col, parent):
 
 # pivots of the articulated passenger (design frame, seat origin): the simulator poses the head
 # and both arms (shoulder + elbow) per instance for random motions (look around, phone, sleep, eat ...)
-PAX_PIVOTS = dict(neck=(0.20, 0.0, 1.12), shoulderL=(0.19, 0.21, 1.00), shoulderR=(0.19, -0.21, 1.00),
+PAX_PIVOTS = dict(neck=(0.21, 0.0, 1.14), shoulderL=(0.2, 0.21, 1.055), shoulderR=(0.2, -0.21, 1.055),
                   elbowL=(0.13, 0.205, 0.70), elbowR=(0.13, -0.205, 0.70))
 # hair / glasses variants (Pax_HairLong, Pax_HairBun, Pax_Glasses) are switched per instance
 PAX_MATS = ["skin", "shirt", "pants", "hair", "shoes", "hairlong", "hairbun", "glasses", "eye", "brow", "eyewhite"]
@@ -1318,8 +1318,8 @@ def proto_pax(M, col, parent):
 
 
 # --------------------------------------------------------------------------- cabin crew, cart, meal tray
-CREW_PIVOTS = dict(shoulderL=(0.0, 0.20, 1.42), shoulderR=(0.0, -0.20, 1.42), hipL=(0.0, 0.09, 0.90),
-                   hipR=(0.0, -0.09, 0.90))
+CREW_PIVOTS = dict(shoulderL=(0.0, 0.195, 1.31), shoulderR=(0.0, -0.195, 1.31), hipL=(0.0, 0.08, 0.88),
+                   hipR=(0.0, -0.08, 0.88))
 
 
 def proto_crew(M, col, parent):

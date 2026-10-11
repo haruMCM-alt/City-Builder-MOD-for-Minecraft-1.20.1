@@ -178,38 +178,59 @@ def skull(c, r, lat, lon):
 
 
 def head_skin(c, female, res=0.004):
-    """neck, skull, face (brow, cheekbones, nose, lips, jaw, chin), ears"""
+    """neck, skull, face, ears. Proportions after adult anthropometry (head length ~0.20 m,
+    breadth ~0.15, menton-vertex ~0.23, face breadth ~0.14, jaw breadth ~0.11, interpupillary
+    0.063): a full, soft face from few large forms; the eyes sit behind lids instead of in
+    hollow sockets (the old staring-skull look)"""
     f = Family("Skin", res)
     s0, z0 = c[0], c[2]
+    ze = z0 + 0.011                                   # eye line
     w = 0.94 if female else 1.0
-    f.ellipsoid((s0 + 0.008, 0, z0 + 0.012), 0.098, (0.98, 0.76 * w, 1.0))                 # cranium
-    f.ellipsoid((s0 - 0.03, 0, z0 - 0.035), 0.066, (0.95, 0.9 * w, 0.8))                  # midface
-    f.ellipsoid((s0 - 0.052, 0, z0 - 0.074), 0.04, (1.0, 1.08 * w * (0.88 if female else 1.0), 0.66))   # jaw
-    f.ball((s0 - 0.084, 0, z0 - 0.093), 0.019)                                           # chin
+    f.ellipsoid((s0 + 0.012, 0, z0 + 0.014), 0.1, (0.97, 0.76 * w, 1.0))                     # cranium
+    f.ellipsoid((s0 - 0.026, 0, ze - 0.032), 0.068, (0.8, 0.95 * w, 1.0))                    # face mass
+    f.ellipsoid((s0 - 0.03, 0, ze - 0.076), 0.054, (1.0, 1.08 * w * (0.9 if female else 1.0), 0.56))   # jaw
+    f.ball((s0 - 0.072, 0, ze - 0.097), 0.0165)                                            # chin
     for sy in (-1, 1):
-        f.ball((s0 - 0.07, sy * 0.043, z0 - 0.02), 0.022)                                 # cheekbones
-        f.ellipsoid((s0 - 0.015, sy * 0.05, z0 - 0.066), 0.026, (1.0, 0.65, 0.9))         # jaw angle
-        f.ball((s0 - 0.093, sy * 0.032, z0 + 0.012), 0.016, neg=True, k=3.0)              # eye socket
-        f.ellipsoid((s0 - 0.091, sy * 0.032, z0 + 0.019), 0.013, (0.55, 1.0, 0.5))        # upper lid
-        f.ellipsoid((s0 - 0.09, sy * 0.032, z0 + 0.002), 0.011, (0.5, 1.0, 0.4))          # lower lid
-        f.ellipsoid((s0 + 0.003, sy * 0.074, z0 - 0.008), 0.03, (0.75, 0.35, 1.0), k=3.0)  # ear
+        f.ellipsoid((s0 - 0.056, sy * 0.039, ze - 0.022), 0.026, (0.75, 0.85, 1.0))          # cheeks
+        f.ellipsoid((s0 - 0.084, sy * 0.032, ze + 0.0118), 0.0125, (0.62, 1.0, 0.46))        # upper lid
+        f.ellipsoid((s0 - 0.082, sy * 0.032, ze - 0.0112), 0.011, (0.6, 1.0, 0.4))           # lower lid
+        f.ellipsoid((s0 + 0.006, sy * 0.073, ze - 0.022), 0.027, (0.68, 0.28, 1.0), k=3.0)   # ear
+        f.ellipsoid((s0 - 0.084, sy * 0.026, ze + 0.025), 0.0105, (0.55, 1.5, 0.42))         # brow
+    f.ellipsoid((s0 - 0.09, 0, ze - 0.014), 0.0085, (0.8, 0.7, 1.9), tilt=math.radians(-18))  # nose bridge
+    f.ball((s0 - 0.1, 0, ze - 0.036), 0.0095)                                              # nose tip
     for sy in (-1, 1):
-        f.ellipsoid((s0 - 0.09, sy * 0.03, z0 + 0.031), 0.012, (0.6, 1.4, 0.45))           # brow ridge
-    f.ball((s0 - 0.097, 0, z0 + 0.028), 0.012)                                           # glabella
-    f.ellipsoid((s0 - 0.104, 0, z0 - 0.008), 0.011, (0.9, 0.8, 1.9), tilt=math.radians(-16))   # nose bridge
-    f.ball((s0 - 0.112, 0, z0 - 0.028), 0.0105)                                          # nose tip
-    for sy in (-1, 1):
-        f.ball((s0 - 0.104, sy * 0.011, z0 - 0.032), 0.008)                              # nostrils
-    f.ellipsoid((s0 - 0.097, 0, z0 - 0.05), 0.0095, (0.8, 2.0, 0.5))                      # upper lip
-    f.ellipsoid((s0 - 0.094, 0, z0 - 0.061), 0.009, (0.8, 1.7, 0.6))                      # lower lip
+        f.ball((s0 - 0.091, sy * 0.012, ze - 0.038), 0.0075)                                # nostril wings
+    f.ellipsoid((s0 - 0.085, 0, ze - 0.058), 0.0092, (0.6, 2.3, 0.48))                      # upper lip
+    f.ellipsoid((s0 - 0.083, 0, ze - 0.068), 0.0088, (0.6, 2.0, 0.52))                      # lower lip
     return f
+
+
+def brows(c, mat, name):
+    """eyebrows: thin arcs lying on the brow ridge"""
+    from cabin_b787 import capsule
+    bm = C.MeshBuilder(G.to_blender)
+    for sy in (-1, 1):
+        pts = [(c[0] - 0.0912, sy * 0.012, c[2] + 0.0375), (c[0] - 0.0905, sy * 0.029, c[2] + 0.0405),
+               (c[0] - 0.0845, sy * 0.046, c[2] + 0.0355)]
+        capsule(bm, pts[0], pts[1], 0.0034, 0.0032, 0, n=6, m=2)
+        capsule(bm, pts[1], pts[2], 0.0032, 0.0022, 0, n=6, m=2)
+    return bm.build(name, [mat])
+
+
+def mouth_line(mb, c, mat):
+    """the dark parting between the lips, a shallow smile curve"""
+    from cabin_b787 import capsule
+    s0, ze = c[0], c[2] + 0.011
+    pts = [(s0 - 0.083, 0.021, ze - 0.0615), (s0 - 0.0915, 0.0, ze - 0.0635), (s0 - 0.083, -0.021, ze - 0.0615)]
+    capsule(mb, pts[0], pts[1], 0.0011, 0.0013, mat, n=6, m=2)
+    capsule(mb, pts[1], pts[2], 0.0013, 0.0011, mat, n=6, m=2)
 
 
 def neck(female, res=0.004):
     """its own family: a clean jawline instead of a jaw melting into the neck"""
     f = Family("Neck", res)
-    f.limb((0.196, 0, 1.06), (0.208, 0, 1.2), 0.046 if female else 0.052, 0.043, k=2.0)
-    f.ellipsoid((0.215, 0, 1.08), 0.055, (0.75, 1.2, 0.45))          # base of the neck (behind, into the trapezius)
+    f.limb((0.205, 0, 1.08), (0.218, 0, 1.18), 0.044 if female else 0.05, 0.043, k=2.0)
+    f.ellipsoid((0.225, 0, 1.1), 0.055, (0.75, 1.2, 0.45))           # base of the neck (behind, into the trapezius)
     return f
 
 
@@ -222,7 +243,7 @@ def hair_cap(c, seed, style, female):
     # hairline latitude per longitude: front (forehead) / temple / behind the ear / nape
     cl = np.cos(lon)
     front = np.radians({"short": 26, "long": 22, "bun": 24}.get(style, 26))
-    hl = np.interp(cl, [-1, -0.3, 0.2, 0.7, 1], [-48, -30, -6, 8, 1]) * math.pi / 180
+    hl = np.interp(cl, [-1, -0.45, 0.0, 0.3, 0.7, 1], [-50, -40, -26, -16, 6, 1]) * math.pi / 180
     hl = np.where(cl > 0.7, front - (1 - cl) * 0.6, hl)
     t = np.linspace(0, 1, rows)[:, None]
     LAT = hl[None] + (math.pi / 2 - hl[None]) * t ** 0.85
@@ -235,8 +256,8 @@ def hair_cap(c, seed, style, female):
     v = (LAT - LAT.min()) / (LAT.max() - LAT.min() + 1e-9)
     clump = _noise2(u * 3, v, seed, 10)
     fine = 0.5 + 0.5 * np.sin(LON * 70 + 6 * _noise2(u, v, seed + 1, 6))
-    thick = 0.008 + (0.014 if style != "short" else 0.009) * np.sin(np.clip(LAT, 0, None)) ** 0.6
-    thick = thick * (0.7 + 0.6 * clump) + 0.0025 * fine
+    thick = 0.009 + (0.016 if style != "short" else 0.013) * np.sin(np.clip(LAT, 0, None)) ** 0.6
+    thick = thick * (0.85 + 0.3 * clump) + 0.0012 * fine
     edge = np.clip(t / 0.18, 0, 1) ** 0.5                       # thin at the hairline
     P = P + n * (thick * edge + 0.0015)[..., None]
     # a side parting
@@ -281,17 +302,13 @@ def build_head(M, col, parent, name, c):
     are separate materials switched per passenger in the simulator."""
     obs = [head_skin(c, False).mesh(name + "_skin", 2400, M["skin"]), neck(False).mesh(name + "_neck", 500, M["skin"])]
     for sy in (-1, 1):
-        e = (c[0] - 0.08, sy * 0.032, c[2] + 0.011)
-        obs.append(sphere_object(name + "_eye", e, (0.0108, 0.0108, 0.0108), M["eyewhite"], (8, 12)))
-        obs.append(sphere_object(name + "_iris", (e[0] - 0.0083, e[1], e[2]), (0.0035, 0.0064, 0.0064), M["eye"], (6, 10)))
-        # eyebrow: a thin arc over the eye
-        bm = C.MeshBuilder(G.to_blender)
-        from cabin_b787 import capsule
-        pts = [(c[0] - 0.1, sy * 0.014, c[2] + 0.031), (c[0] - 0.099, sy * 0.03, c[2] + 0.037),
-               (c[0] - 0.092, sy * 0.048, c[2] + 0.032)]
-        capsule(bm, pts[0], pts[1], 0.0034, 0.0032, 0, n=6, m=2)
-        capsule(bm, pts[1], pts[2], 0.0032, 0.0022, 0, n=6, m=2)
-        obs.append(bm.build(name + "_brow", [M["brow"]]))
+        e = (c[0] - 0.0795, sy * 0.032, c[2] + 0.011)
+        obs.append(sphere_object(name + "_eye", e, (0.0115, 0.0115, 0.0115), M["eyewhite"], (8, 12)))
+        obs.append(sphere_object(name + "_iris", (e[0] - 0.0093, e[1], e[2]), (0.0035, 0.0062, 0.0062), M["eye"], (6, 10)))
+    obs.append(brows(c, M["brow"], name + "_brow"))
+    ml = C.MeshBuilder(G.to_blender)
+    mouth_line(ml, c, 0)
+    obs.append(ml.build(name + "_mouth", [M["eye"]]))
     obs.append(grid_object(name + "_hair", hair_cap(c, 11, "short", False), M["hair"], outward=(c[0], 0, c[2])))
     obs.append(grid_object(name + "_hairlong", hair_long(c, 12, True), M["hairlong"], outward=(c[0] - 0.02, 0, c[2] - 0.05)))
     bun = Family("Bun", 0.004)
@@ -324,14 +341,14 @@ def build_body(M, col, parent, name, female):
     hip_w = 0.17 if female else 0.155
     shirt = Family("Shirt", 0.006)
     shirt.ellipsoid(at(0.19), 0.115, (0.78, hip_w / 0.115 * 0.82, 1.0), tilt=lean)              # waist
-    shirt.ellipsoid(at(0.34, -0.012), 0.125, (0.82, (0.152 if female else 0.165) / 0.125, 1.0), tilt=lean)  # chest
-    shirt.ellipsoid(at(0.46), 0.085, (0.95, sh_w / 0.085 * 0.93, 0.72), tilt=lean)               # upper chest
+    shirt.ellipsoid(at(0.36, -0.012), 0.125, (0.82, (0.152 if female else 0.165) / 0.125, 1.0), tilt=lean)  # chest
+    shirt.ellipsoid(at(0.5), 0.088, (0.95, sh_w / 0.088 * 0.93, 0.72), tilt=lean)               # upper chest
     for sy in (-1, 1):
-        shirt.ball(at(0.495) + np.array([0, sy * (sh_w - 0.04), 0]), 0.052)                        # shoulder
-        shirt.ellipsoid(at(0.53, 0.012) + np.array([0, sy * 0.068, 0]), 0.042, (0.9, 1.45, 0.62), tilt=lean)  # trapezius
+        shirt.ball(at(0.555) + np.array([0, sy * (sh_w - 0.04), 0]), 0.052)                        # shoulder
+        shirt.ellipsoid(at(0.58, 0.012) + np.array([0, sy * 0.07, 0]), 0.042, (0.9, 1.5, 0.62), tilt=lean)  # trapezius
         if female:
             shirt.ball(at(0.33, -0.075) + np.array([0, sy * 0.066, -0.01]), 0.052)               # bust
-    shirt.limb(at(0.53, 0.014), at(0.556, 0.016), 0.058, 0.054)                                  # collar
+    shirt.limb(at(0.57, 0.014), at(0.6, 0.016), 0.056, 0.052)                                  # collar
     pants = Family("Pants", 0.006)
     pants.ellipsoid(at(0.04), 0.12, (1.05, hip_w / 0.12, 0.8), tilt=lean)                         # pelvis
     for sy in (-1, 1):
@@ -385,55 +402,68 @@ def build_pax(M, col, parent, piv):
 
 # --------------------------------------------------------------------------- crew
 def build_crew(M, col, parent):
-    """Standing flight attendant (origin between the feet, facing -s): body + head, arms, legs"""
-    c = (0.0, 0.0, 1.635)
+    """Standing flight attendant (origin between the feet, facing -s): body + head, arms, legs.
+    Standing adult female proportions: stature ~1.65 m with low heels, eye 1.55, acromion 1.33
+    (biacromial 0.36, bideltoid 0.45), waist 1.04, knee 0.50; jacket, knee-length pencil skirt
+    (overlapping the jacket hem, no gap), tights, court shoes."""
+    c = (0.0, 0.0, 1.539)                            # head centre (eye line 1.55)
     jacket = Family("CJacket", 0.006)
-    jacket.ellipsoid((0.0, 0, 1.06), 0.11, (0.78, 1.3, 1.0))
-    jacket.ellipsoid((-0.008, 0, 1.2), 0.12, (0.8, 1.3, 1.0))
-    jacket.ellipsoid((0.0, 0, 1.34), 0.09, (0.95, 1.85, 0.75))
+    jacket.ellipsoid((0.005, 0, 0.97), 0.13, (0.72, 1.32, 0.75))                     # hips (under the skirt top)
+    jacket.ellipsoid((0.0, 0, 1.06), 0.105, (0.86, 1.22, 1.0))                       # waist
+    jacket.ellipsoid((-0.004, 0, 1.2), 0.118, (0.92, 1.36, 1.0))                     # ribcage
+    jacket.ellipsoid((0.008, 0, 1.3), 0.09, (1.0, 1.9, 0.72))                        # upper chest / shoulder line
     for sy in (-1, 1):
-        jacket.ball((0.0, sy * 0.165, 1.39), 0.058)
-        jacket.ball((-0.07, sy * 0.065, 1.21), 0.05)
-    jacket.limb((0.0, 0, 1.40), (0.0, 0, 1.47), 0.056, 0.048)
+        jacket.ball((0.0, sy * 0.165, 1.3), 0.05)                                   # shoulder
+        jacket.ball((-0.072, sy * 0.06, 1.2), 0.05)                                 # bust
+        jacket.ellipsoid((0.018, sy * 0.06, 1.35), 0.035, (0.9, 1.5, 0.6))          # trapezius
+    jacket.limb((0.012, 0, 1.33), (0.015, 0, 1.38), 0.05, 0.046)                     # collar
     skirt = Family("CSkirt", 0.006)          # knee-length pencil skirt
-    for z, R, ax in ((0.95, 0.118, (0.95, 1.3, 0.7)), (0.84, 0.124, (0.93, 1.3, 0.75)), (0.72, 0.122, (0.9, 1.24, 0.75)),
-                     (0.6, 0.118, (0.88, 1.18, 0.75)), (0.52, 0.112, (0.86, 1.14, 0.55))):
-        skirt.ellipsoid((0.0, 0, z), R, ax)
+    for z, R, ax in ((0.99, 0.125, (0.85, 1.38, 0.6)), (0.9, 0.132, (0.84, 1.36, 0.75)), (0.78, 0.13, (0.82, 1.3, 0.75)),
+                     (0.66, 0.126, (0.82, 1.26, 0.75)), (0.55, 0.12, (0.82, 1.24, 0.6))):
+        skirt.ellipsoid((0.005, 0, z), R, ax)
     sc = Family("CScarf", 0.004)
-    sc.ellipsoid((-0.075, 0, 1.40), 0.03, (0.8, 1.6, 1.0))
-    sc.ellipsoid((-0.09, 0.02, 1.35), 0.02, (0.6, 0.8, 1.3))
+    sc.ellipsoid((-0.062, 0, 1.335), 0.026, (0.8, 1.6, 1.0))
+    sc.ellipsoid((-0.08, 0.018, 1.29), 0.018, (0.6, 0.8, 1.3))
     head = head_skin(c, True)
     nk = Family("CNeck", 0.004)
-    nk.limb((0.0, 0, 1.44), (-0.005, 0, 1.58), 0.045, 0.042)
-    obs = [jacket.mesh("cj", 1500, M["uniform"]), skirt.mesh("cs", 700, M["crewpants"]), sc.mesh("csc", 200, M["crewaccent"]),
-           head.mesh("ch", 2200, M["crewskin"]), nk.mesh("cn", 400, M["crewskin"])]
+    nk.limb((0.012, 0, 1.33), (0.008, 0, 1.47), 0.041, 0.038)
+    obs = [jacket.mesh("cj", 1600, M["uniform"]), skirt.mesh("cs", 800, M["crewpants"]), sc.mesh("csc", 200, M["crewaccent"]),
+           head.mesh("ch", 2400, M["crewskin"]), nk.mesh("cn", 400, M["crewskin"])]
     obs.append(grid_object("chair", hair_cap(c, 21, "bun", True), M["crewhair"], outward=c))
     bun = Family("CBun", 0.004)
-    bun.ellipsoid((c[0] + 0.098, 0, c[2] + 0.055), 0.04, (1.0, 1.1, 0.95))
+    bun.ellipsoid((c[0] + 0.1, 0, c[2] + 0.045), 0.038, (1.0, 1.1, 0.95))
     obs.append(bun.mesh("cbun", 400, M["crewhair"]))
     for sy in (-1, 1):
-        e = (c[0] - 0.08, sy * 0.032, c[2] + 0.011)
-        obs.append(sphere_object("ceye", e, (0.0108, 0.0108, 0.0108), M["eyewhite"], (8, 12)))
-        obs.append(sphere_object("ciris", (e[0] - 0.0083, e[1], e[2]), (0.0035, 0.0064, 0.0064), M["eye"], (6, 10)))
+        e = (c[0] - 0.0795, sy * 0.032, c[2] + 0.011)
+        obs.append(sphere_object("ceye", e, (0.0115, 0.0115, 0.0115), M["eyewhite"], (8, 12)))
+        obs.append(sphere_object("ciris", (e[0] - 0.0093, e[1], e[2]), (0.0035, 0.0062, 0.0062), M["eye"], (6, 10)))
     mb = C.MeshBuilder(G.to_blender)
-    mb.add_box((-0.1, 0.07, 1.30), (0.01, 0.05, 0.015), mat=0)                                   # name badge
+    mouth_line(mb, c, 0)
+    obs.append(mb.build("cmouth", [M["eye"]]))
+    obs.append(brows(c, M["crewhair"], "cbrow"))
+    mb = C.MeshBuilder(G.to_blender)
+    mb.add_box((-0.098, 0.075, 1.25), (0.01, 0.05, 0.014), mat=0)                                 # name badge
     obs.append(mb.build("cbadge", [M["crewaccent"]]))
     join("Proto_Crew", obs, parent, col)
     for sy, L in ((1, "L"), (-1, "R")):
         a = Family("CArm" + L, 0.005)
-        sh = np.array([0.0, sy * 0.2, 1.42])
-        a.ball(sh + np.array([0, -sy * 0.01, -0.01]), 0.055)
-        a.limb(sh + np.array([0, sy * 0.01, -0.03]), (0.0, sy * 0.222, 1.12), 0.046, 0.04)
-        a.limb((0.0, sy * 0.222, 1.12), (-0.01, sy * 0.225, 0.86), 0.04, 0.031)
+        sh = np.array([0.0, sy * 0.195, 1.31])
+        a.ball(sh + np.array([0, -sy * 0.008, -0.005]), 0.052)                       # deltoid
+        a.limb(sh + np.array([0, sy * 0.008, -0.03]), (0.008, sy * 0.21, 1.03), 0.044, 0.037)
+        a.limb((0.008, sy * 0.21, 1.03), (-0.004, sy * 0.215, 0.8), 0.036, 0.028)
         h = Family("CHand" + L, 0.0035)
-        h.ellipsoid((-0.012, sy * 0.222, 0.80), 0.04, (0.45, 0.32, 1.0))
-        h.limb((-0.012, sy * 0.222, 0.77), (-0.02, sy * 0.222, 0.71), 0.012, 0.009)
-        join("Proto_CrewArm" + L, [a.mesh("ca" + L, 700, M["uniform"]), h.mesh("ch" + L, 400, M["crewskin"])], parent, col)
+        h.limb((-0.004, sy * 0.215, 0.81), (-0.006, sy * 0.215, 0.77), 0.024, 0.026)   # wrist
+        h.ellipsoid((-0.008, sy * 0.213, 0.73), 0.042, (0.42, 0.3, 1.0))             # palm
+        h.limb((-0.008, sy * 0.213, 0.7), (-0.016, sy * 0.211, 0.64), 0.013, 0.009)  # fingers
+        h.limb((-0.03, sy * 0.205, 0.75), (-0.04, sy * 0.2, 0.7), 0.01, 0.008)        # thumb
+        join("Proto_CrewArm" + L, [a.mesh("ca" + L, 700, M["uniform"]), h.mesh("ch" + L, 450, M["crewskin"])], parent, col)
         lg = Family("CLeg" + L, 0.005)
-        lg.limb((0.0, sy * 0.085, 0.86), (0.0, sy * 0.09, 0.47), 0.068, 0.05)
-        lg.limb((0.0, sy * 0.09, 0.47), (0.0, sy * 0.09, 0.09), 0.047, 0.033)
-        lg.ball((0.012, sy * 0.09, 0.32), 0.048)
+        lg.limb((0.005, sy * 0.072, 0.86), (0.0, sy * 0.078, 0.5), 0.058, 0.045)     # thigh (under the skirt)
+        lg.ball((0.004, sy * 0.082, 0.49), 0.047)                                   # knee
+        lg.limb((0.0, sy * 0.082, 0.48), (0.008, sy * 0.084, 0.1), 0.044, 0.03)     # shin
+        lg.ellipsoid((0.022, sy * 0.082, 0.33), 0.05, (0.85, 0.9, 1.5))              # calf
         sh2 = Family("CShoe" + L, 0.004)
-        sh2.ellipsoid((-0.04, sy * 0.09, 0.045), 0.055, (2.0, 0.75, 0.75))
-        sh2.ellipsoid((0.035, sy * 0.09, 0.06), 0.03, (0.8, 0.8, 1.6))
-        join("Proto_CrewLeg" + L, [lg.mesh("cl" + L, 600, M["crewskin"]), sh2.mesh("cf" + L, 300, M["shoes"])], parent, col)
+        sh2.ellipsoid((-0.05, sy * 0.084, 0.04), 0.055, (2.0, 0.7, 0.62))
+        sh2.ellipsoid((0.03, sy * 0.084, 0.055), 0.03, (0.9, 0.8, 1.4))
+        sh2.limb((0.045, sy * 0.084, 0.04), (0.05, sy * 0.084, 0.0), 0.009, 0.007)   # low heel
+        join("Proto_CrewLeg" + L, [lg.mesh("cl" + L, 650, M["crewskin"]), sh2.mesh("cf" + L, 300, M["shoes"])], parent, col)

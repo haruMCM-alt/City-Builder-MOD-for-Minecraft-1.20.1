@@ -1,4 +1,4 @@
-"""Menu music: "Runway Sunshine" — composed and synthesised in code.
+"""Menu music: "Blue Hour Departure" — composed and synthesised in code.
 
   python3 tools/menu_bgm/compose.py [out_dir]
 
@@ -10,15 +10,11 @@ Writes
 
 Needs numpy, scipy, lameenc and mido (pip install lameenc mido).
 
-Bright city-pop / fusion in E major, 128 BPM, 32 bars (60 s):
-  intro (8)   brass stabs and the chorus hook, groove from the first bar
-  verse (8)   16-beat groove, electric-piano comping, slap bass, the lead enters
-  chorus (8)  "royal road" progression IV-V-iii-vi, strings, brass, the hook up high
-  chorus 2 (8) the hook with a harmony a third below and a bell arpeggio, turnaround
-The loop is rendered three times in a row and the middle pass is cut out, so the reverb and
-the release tails of bar 32 run on into bar 1 and the loop has no seam. The game loops
-[PRE, PRE + LOOP) of the file: an encoder delay shifts both ends by the same amount, so the
-cut stays seamless.
+D major, 96 BPM, 24 bars (60 s): A = pad + electric-piano arpeggio, B = groove + melody,
+C = the melody an octave up over the opening chords. The loop is rendered three times in a
+row and the middle pass is cut out, so the reverb and the release tails of bar 24 run on
+into bar 1 and the loop has no seam. The game loops [PRE, PRE + LOOP) of the file: an
+encoder delay shifts both ends by the same amount, so the cut stays seamless.
 """
 import os
 import sys
@@ -30,16 +26,16 @@ import numpy as np
 from scipy import signal
 
 SR = 44100
-BPM = 128
+BPM = 96
 BEAT = 60 / BPM
 BAR = 4 * BEAT
-BARS = 32
+BARS = 24
 LOOP = BARS * BAR                     # 60.0 s
 PRE = 0.5                             # pre/post roll around the loop in the game file
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 ASSETS = os.path.join(ROOT, "web", "assets")
-rng = np.random.default_rng(128)
+rng = np.random.default_rng(787)
 
 
 def hz(m):
@@ -47,190 +43,148 @@ def hz(m):
 
 
 # ------------------------------------------------------------------ score
-# chord voicings (around E4) and the progression: per bar [(beat, chord, bass note)]
+# chord voicings (rootless, F#3..B4) and bass roots per bar
 V = {
-    "Amaj9": [61, 64, 68, 71], "B": [63, 66, 71, 73], "G#m7": [63, 66, 68, 71], "C#m7": [64, 68, 71, 73],
-    "E": [64, 66, 68, 71], "Esus": [64, 66, 69, 71], "F#m7": [61, 64, 66, 69],
-    "B7sus": [64, 66, 69, 71], "B7": [63, 66, 69, 71],
+    "Dmaj9": [54, 57, 61, 64, 69], "Bm9": [54, 57, 61, 62, 66], "Gmaj9": [54, 57, 59, 62, 66],
+    "A11": [55, 59, 62, 64, 69], "F#m7": [52, 57, 61, 64, 66], "Asus": [57, 62, 64, 69],
+    "A": [57, 61, 64, 69], "Gmaj7": [55, 59, 62, 66, 71], "A6": [54, 57, 61, 64, 66],
+    "Bm7": [54, 57, 62, 66, 69], "Em7": [55, 59, 62, 64, 67],
 }
-A_, B_, Gs, Cs, E_, Ds, Fs = 45, 47, 44, 49, 40, 39, 42
-CHORUS = [[(0, "Amaj9", A_)], [(0, "B", B_)], [(0, "G#m7", Gs)], [(0, "C#m7", Cs)],
-          [(0, "F#m7", Fs)], [(0, "G#m7", Gs)], [(0, "Amaj9", A_)], [(0, "B", B_)]]
-PROG = (
-    # intro
-    [[(0, "Amaj9", A_)], [(0, "B", B_)], [(0, "Esus", E_), (2, "E", E_)], [(0, "E", E_)],
-     [(0, "Amaj9", A_)], [(0, "B", B_)], [(0, "G#m7", Gs)], [(0, "C#m7", Cs)]]
-    # verse
-    + [[(0, "E", E_)], [(0, "B", Ds)], [(0, "C#m7", Cs)], [(0, "G#m7", Gs)],
-       [(0, "Amaj9", A_)], [(0, "E", Gs)], [(0, "F#m7", Fs)], [(0, "B7sus", B_), (2, "B7", B_)]]
-    + CHORUS
-    + CHORUS[:7] + [[(0, "B7sus", B_), (2, "B7", B_)]]
-)
-INTRO, VERSE, CHO, CHO2 = range(0, 8), range(8, 16), range(16, 24), range(24, 32)
-# lead melody (beat, length, note) per bar; the intro plays the chorus hook
+ROOTS = {"D": 38, "E": 40, "F#": 42, "G": 43, "A": 45, "B": 47}
+OPEN = [("Dmaj9", "D"), ("Bm9", "B"), ("Gmaj9", "G"), ("A11", "A"),
+        ("Dmaj9", "D"), ("F#m7", "F#"), ("Gmaj9", "G"), ("Asus", "A")]
+MID = [("Gmaj7", "G"), ("A6", "A"), ("F#m7", "F#"), ("Bm7", "B"),
+       ("Em7", "E"), ("F#m7", "F#"), ("Gmaj7", "G"), ("Asus", "A")]
+CHORDS = OPEN + MID + OPEN
+# melody (beat, length, note) per bar of sections B and C
 MEL = {
-    8: [(0, .5, 71), (.5, .5, 73), (1, 1, 76), (2.5, .5, 75), (3, 1, 73)],
-    9: [(0, 1.5, 71), (1.5, .5, 68), (2, .5, 66), (2.5, 1.5, 68)],
-    10: [(0, .5, 68), (.5, .5, 71), (1, 1, 73), (2.5, .5, 76), (3, 1, 75)],
-    11: [(0, 2, 71), (2.5, .5, 68), (3, 1, 66)],
-    12: [(0, .5, 64), (.5, .5, 66), (1, 1, 68), (2, .5, 69), (2.5, 1.5, 71)],
-    13: [(0, 1, 76), (1, .5, 75), (1.5, 1, 73), (2.5, 1.5, 71)],
-    14: [(0, .5, 69), (.5, .5, 71), (1, 1, 73), (2, 1, 76), (3, 1, 78)],
-    15: [(0, 3, 78), (3, .5, 75), (3.5, .5, 78)],
-    16: [(0, 1, 80), (1, .5, 78), (1.5, 1, 76), (2.5, .5, 78), (3, 1, 80)],
-    17: [(0, 1.5, 78), (1.5, .5, 75), (2, .5, 73), (2.5, 1.5, 75)],
-    18: [(0, 1, 75), (1, .5, 76), (1.5, 1, 78), (2.5, .5, 80), (3, 1, 83)],
-    19: [(0, 2.5, 80), (2.5, .5, 78), (3, 1, 76)],
-    20: [(0, .5, 73), (.5, .5, 76), (1, 1, 78), (2, .5, 81), (2.5, 1.5, 80)],
-    21: [(0, 1, 78), (1, .5, 76), (1.5, 1, 75), (2.5, 1.5, 71)],
-    22: [(0, .5, 73), (.5, .5, 76), (1, 1, 80), (2, 1, 81), (3, 1, 83)],
-    23: [(0, 2.5, 83), (2.5, .5, 80), (3, 1, 78)],
+    8: [(0, 1.5, 71), (1.5, .5, 69), (2, 1, 66), (3, 1, 69)],
+    9: [(0, 2, 76), (2, 1, 73), (3, 1, 71)],
+    10: [(0, 1.5, 73), (1.5, .5, 71), (2, 2, 69)],
+    11: [(0, 1, 66), (1, 1, 69), (2, 1, 71), (3, 1, 74)],
+    12: [(0, 1.5, 78), (1.5, .5, 76), (2, 1, 74), (3, 1, 71)],
+    13: [(0, 2, 73), (2, 1, 76), (3, 1, 73)],
+    14: [(0, 1, 71), (1, 1, 74), (2, 2, 78)],
+    15: [(0, 4, 76)],
+    16: [(0, 1.5, 78), (1.5, .5, 76), (2, 1, 74), (3, .5, 76), (3.5, .5, 78)],
+    17: [(0, 2, 81), (2, 1, 78), (3, 1, 74)],
+    18: [(0, 1.5, 79), (1.5, .5, 78), (2, 1, 76), (3, 1, 74)],
+    19: [(0, 3, 76), (3, 1, 71)],
+    20: [(0, 1.5, 74), (1.5, .5, 76), (2, 1, 78), (3, 1, 81)],
+    21: [(0, 2, 85), (2, 1, 81), (3, 1, 78)],
+    22: [(0, 1, 79), (1, 1, 78), (2, 1, 76), (3, 1, 74)],
+    23: [(0, 1.5, 76), (1.5, .5, 74), (2, 2, 73)],
 }
-for b in range(24, 31):
-    MEL[b] = MEL[b - 8]
-MEL[31] = [(0, 1, 83), (1.5, .5, 80), (2, .5, 78), (2.5, 1.5, 75)]
-for b in range(4, 8):
-    MEL[b] = MEL[b + 12]
-SCALE = {4, 6, 8, 9, 11, 1, 3}        # E major
 
 
-def third_below(m):
-    return [x for x in range(m - 1, m - 6, -1) if x % 12 in SCALE][1]
-
-
-def chord_at(b, beat):
-    cur = PROG[b][0]
-    for c in PROG[b]:
-        if c[0] <= beat:
-            cur = c
-    return V[cur[1]], cur[2]
+def voicing(b, beat):
+    name, _ = CHORDS[b]
+    if name == "Asus" and beat >= 2:
+        name = "A"
+    return V[name]
 
 
 def score():
     """One pass of the loop: {track: [(time s, length s, midi note, velocity 0..1)]}."""
-    keys = ("pad", "ep", "bell", "bass", "lead", "lead2", "brass", "kick", "snare", "clap", "hat", "ohat",
-            "shaker", "tom", "crash", "swell")
-    T = {k: [] for k in keys}
-    hum = lambda s=0.006: float(rng.normal(0, s))
+    T = {k: [] for k in ("pad", "ep", "bell", "bass", "lead", "kick", "snare", "hat", "ohat", "shaker", "crash", "swell")}
+    hum = lambda s=0.008: float(rng.normal(0, s))
     for b in range(BARS):
         t0 = b * BAR
-        at = lambda beat: t0 + beat * BEAT
-        big = b in CHO or b in CHO2
-        # strings: the chorus sections and the second half of the intro
-        if big or b >= 4 and b in INTRO:
-            for beat, name, _ in PROG[b]:
-                ln = (PROG[b][1][0] if len(PROG[b]) > 1 and beat == 0 else 4) - beat
-                for n in V[name]:
-                    T["pad"].append((at(beat), ln * BEAT, n, 0.6 if big else 0.45))
-                T["pad"].append((at(beat), ln * BEAT, V[name][-1] + 12, 0.35 if big else 0.25))
-        # electric piano: 16th comping in the verse, off-beat chops elsewhere
-        pat = ((0, .25, .55), (.75, .25, .42), (1.5, .4, .5), (2.25, .25, .42), (3, .3, .5), (3.5, .25, .4)) if b in VERSE \
-            else ((.5, .3, .4), (1.5, .3, .36), (2.5, .3, .4), (3.5, .3, .36))
-        for beat, ln, vel in pat:
-            for n in chord_at(b, beat)[0]:
-                T["ep"].append((at(beat) + hum(0.004), ln * BEAT, n, vel + hum(0.03)))
-        # brass stabs (intro and choruses), a build-up at the end of the verse
-        if b in INTRO or big:
-            hits = ((0, .35, .8), (1.5, .3, .65), (2.5, .5, .75)) if b % 4 != 3 else ((0, .35, .8), (1.5, .3, .65), (2.5, .25, .7), (3, .25, .7), (3.5, .45, .85))
-        elif b == 15:
-            hits = ((2, .25, .6), (2.5, .25, .65), (3, .25, .7), (3.5, .45, .8))
+        sec = b // 8                                  # 0 = A, 1 = B, 2 = C
+        name, root = CHORDS[b]
+        # pad: one chord per bar (Asus resolves to A half way)
+        pv = 0.55 if sec == 1 else 0.75 if sec == 0 else 0.85
+        if name == "Asus":
+            for n in V["Asus"]: T["pad"].append((t0, 2 * BEAT, n, pv))
+            for n in V["A"]: T["pad"].append((t0 + 2 * BEAT, 2 * BEAT, n, pv))
         else:
-            hits = ()
-        for beat, ln, vel in hits:
-            v = chord_at(b, beat)[0]
-            for n in v + [v[-1] + 12]:
-                T["brass"].append((at(beat), ln * BEAT, n, vel))
-        # bells: a 16th arpeggio in the first intro bars and in chorus 2
-        if b < 4 or b in CHO2:
-            for i in range(16):
-                v = chord_at(b, i / 4)[0]
-                tones = [n + 12 for n in v] + [v[0] + 24]
-                idx = (0, 2, 1, 3, 2, 4, 3, 1)[i % 8]
-                T["bell"].append((at(i / 4) + hum(0.003), 0.5 * BEAT, tones[idx], 0.3 if i % 4 == 0 else 0.2))
-        # slap bass
-        if b < 4:
-            pat = ((0, .4, 0, .85), (1.5, .4, 0, .7), (2.5, .4, 0, .75), (3.5, .3, 12, .65))
+            for n in V[name]: T["pad"].append((t0, BAR, n, pv))
+        # electric piano
+        if sec == 0:
+            # rising / falling eighth-note arpeggio over the voicing and its upper octave
+            for i in range(8):
+                v = voicing(b, i / 2)
+                tones = v + [v[1] + 12, v[2] + 12, v[3] + 12]
+                idx = [0, 2, 4, 6, 7, 5, 3, 1][i]
+                T["ep"].append((t0 + i * BEAT / 2 + hum(), BEAT * 0.9, tones[idx % len(tones)], 0.42 + 0.12 * (i % 2 == 0) + hum(0.04)))
         else:
-            pat = ((0, .45, 0, .9), (.75, .2, 12, .62), (1.5, .4, 0, .75), (2, .2, 0, .45), (2.5, .2, 12, .68),
-                   (2.75, .45, 0, .8), (3.5, .4, 7, .62))
-        for beat, ln, iv, vel in pat:
-            r = chord_at(b, beat)[1]
-            T["bass"].append((at(beat), ln * BEAT, r + iv, vel))
-        # lead and the chorus-2 harmony
-        for beat, ln, n in MEL.get(b, []):
-            vel = 0.62 if b in INTRO else 0.72 if b in VERSE else 0.85
-            T["lead"].append((at(beat), ln * BEAT, n, vel))
-            if b in CHO2:
-                T["lead2"].append((at(beat), ln * BEAT, third_below(n), 0.5))
+            # syncopated comping
+            for bt, ln, vel in ((0, 1.4, .55), (1.5, .45, .42), (2.5, 1.3, .5)):
+                for n in voicing(b, bt)[1:]:
+                    T["ep"].append((t0 + bt * BEAT + hum(0.006), ln * BEAT, n, vel + hum(0.03)))
+        # bell sparkle: top chord tone two octaves up, sections A (from bar 3) and C
+        if (sec == 0 and b >= 2) or sec == 2:
+            v = voicing(b, 0)
+            T["bell"].append((t0 + hum(), 1.5 * BEAT, v[-1] + 12, 0.32))
+            v = voicing(b, 2.5)
+            T["bell"].append((t0 + 2.5 * BEAT + hum(), 1.5 * BEAT, v[-2] + 12, 0.25))
+        # bass
+        r = ROOTS[root]
+        if sec == 0 and b >= 4:
+            T["bass"].append((t0, BAR * 0.95, r, 0.6))
+        elif sec > 0:
+            for bt, ln, n, vel in ((0, 1.4, r, .8), (1.5, .45, r, .55), (2.5, .9, r + 12 if b % 2 else r + 7, .6), (3.5, .45, r, .5)):
+                T["bass"].append((t0 + bt * BEAT, ln * BEAT, n, vel))
+        # lead
+        for bt, ln, n in MEL.get(b, []):
+            T["lead"].append((t0 + bt * BEAT, ln * BEAT, n, 0.7 if sec == 1 else 0.82))
         # drums
-        for beat in ((0, 1.75, 2.5) + ((3.75,) if big and b % 2 else ())):
-            T["kick"].append((at(beat), 0.3, 36, 0.95 if beat == 0 else 0.75))
-        if b >= 2:
-            for beat in (1, 3):
-                T["snare"].append((at(beat) + hum(0.003), 0.3, 38, 0.8))
-                if big:
-                    T["clap"].append((at(beat) + 0.004, 0.3, 39, 0.6))
-            if b >= 4 and b % 2 == 0:
-                T["snare"].append((at(2.75), 0.1, 38, 0.18))         # ghost
-        else:
-            T["clap"].append((at(3), 0.3, 39, 0.55))
-        steps = 8 if b in VERSE or b < 2 else 16
-        for i in range(steps):
-            beat = i * 4 / steps
-            if big and abs(beat - 3.5) < 1e-6:
-                T["ohat"].append((at(beat), 0.4, 46, 0.5))
-                continue
-            acc = (i % (steps // 4) == 0)
-            T["hat"].append((at(beat) + hum(0.003), 0.05, 42, (0.55 if acc else 0.36 if i % 2 == 0 else 0.26) + hum(0.04)))
-        if b in VERSE:
+        if sec == 0 and b >= 4:
             for i in range(16):
-                T["shaker"].append((at(i / 4) + hum(0.003), 0.1, 70, (0.5 if i % 2 else 0.3) + hum(0.04)))
-        if b in (0, 16, 24):
-            T["crash"].append((t0, 3.0, 49, 0.75))
-        if b == 8:
-            T["crash"].append((t0, 3.0, 49, 0.5))
-        if b in (15, 23):
-            T["swell"].append((at(2), 2 * BEAT, 0, 0.6))
-        if b in (7, 15, 23, 31):                                      # tom fill into the next section
-            for beat, m in ((3, 50), (3.25, 50), (3.5, 47), (3.75, 45)):
-                T["tom"].append((at(beat), 0.3, m, 0.7))
+                T["shaker"].append((t0 + i * BEAT / 4 + hum(0.004), 0.1, 70, (0.5 if i % 2 else 0.28) + hum(0.05)))
+            T["snare"].append((t0 + 3 * BEAT, 0.2, 37, 0.35))       # rim on 4
+        if sec > 0:
+            for bt in (0, 1.5, 2.5):
+                T["kick"].append((t0 + bt * BEAT, 0.3, 36, 0.9 if bt == 0 else 0.7))
+            for bt in (1, 3):
+                T["snare"].append((t0 + bt * BEAT + hum(0.004), 0.3, 38, 0.75))
+            if b % 2:
+                T["snare"].append((t0 + 3.75 * BEAT, 0.1, 38, 0.22))  # ghost
+            steps = 16 if (sec == 2 and b >= 20) else 8
+            for i in range(steps):
+                bt = i * 4 / steps
+                if steps == 8 and i % 2:
+                    bt += 0.06                                       # a touch of swing
+                if b % 2 and abs(bt - 3.56) < 0.1:
+                    T["ohat"].append((t0 + bt * BEAT, 0.4, 46, 0.45))
+                    continue
+                T["hat"].append((t0 + bt * BEAT + hum(0.004), 0.05, 42, (0.55 if i % (steps // 4) == 0 else 0.35) + hum(0.05)))
+        if b in (0, 8, 16):
+            T["crash"].append((t0, 3.0, 49, 0.55 if b == 0 else 0.75))
+        if b in (7, 15, 23):
+            T["swell"].append((t0 + 2 * BEAT, 2 * BEAT, 0, 0.5 if b != 15 else 0.6))
+        if b == 23:                                                  # fill back to the top
+            for i in range(8, 16):
+                T["snare"].append((t0 + i * BEAT / 4, 0.12, 38, 0.25 + 0.05 * (i - 8)))
     return T
 
 
 def ending():
-    """A closing hit for the listening version: E major with brass, strings and a crash."""
-    T = {k: [] for k in ("pad", "ep", "bell", "bass", "brass", "kick", "crash", "lead")}
-    for n in V["E"]:
-        T["pad"].append((0, 2 * BAR, n, 0.7))
+    """A closing bar for the listening version: Dmaj9 and a last crash."""
+    T = {k: [] for k in ("pad", "ep", "bell", "bass", "kick", "crash")}
+    for n in V["Dmaj9"]:
+        T["pad"].append((0, 2 * BAR, n, 0.85))
         T["ep"].append((0, 2 * BAR, n, 0.5))
-        T["brass"].append((0, 0.9 * BAR, n, 0.85))
-    T["brass"].append((0, 0.9 * BAR, 83, 0.8))
-    T["lead"].append((0, 1.6 * BAR, 76, 0.85))
-    T["bell"].append((0, 2 * BAR, 88, 0.35))
-    T["bass"].append((0, 1.5 * BAR, 40, 0.9))
-    T["kick"].append((0, 0.3, 36, 0.95))
-    T["crash"].append((0, 4.0, 49, 0.85))
+    T["ep"].append((0, 2 * BAR, 74, 0.45))
+    T["bell"].append((0, 2 * BAR, 81, 0.35))
+    T["bass"].append((0, 1.5 * BAR, 38, 0.8))
+    T["kick"].append((0, 0.3, 36, 0.9))
+    T["crash"].append((0, 4.0, 49, 0.8))
     return T
 
 
 # ------------------------------------------------------------------ instruments
-def blep_saw(ph, dt):
-    """Band-limited saw from a running phase (cycles) and the phase step per sample."""
-    t = ph % 1.0
+def polyblep_saw(f, n, ph0=0.0):
+    dt = f / SR
+    t = (ph0 + dt * np.arange(n)) % 1.0
     y = 2 * t - 1
     a = t < dt
-    x = t[a] / dt[a]
+    x = t[a] / dt
     y[a] -= x + x - x * x - 1
     b = t > 1 - dt
-    x = (t[b] - 1) / dt[b]
+    x = (t[b] - 1) / dt
     y[b] -= x * x + x + x + 1
     return y
-
-
-def osc_phase(f, n, ph0=0.0):
-    f = np.broadcast_to(np.asarray(f, float), (n,))
-    dt = f / SR
-    return ph0 + np.cumsum(dt) - dt[0], dt
 
 
 def env_ar(n, a, r, hold):
@@ -243,97 +197,63 @@ def env_ar(n, a, r, hold):
 
 
 def note_pad(f, ln, vel):
-    n = int((ln + 1.0) * SR)
+    n = int((ln + 2.2) * SR)
     L = np.zeros(n); R = np.zeros(n)
-    for k, c in enumerate((-12, -5, 5, 12)):
-        ph, dt = osc_phase(f * 2 ** (c / 1200), n, rng.random())
-        s = blep_saw(ph, dt)
+    for k, c in enumerate((-11, -4, 4, 11)):
+        s = polyblep_saw(f * 2 ** (c / 1200), n, rng.random())
         (L if k % 2 == 0 else R)[:] += s
-        (R if k % 2 == 0 else L)[:] += s * 0.4
-    e = env_ar(n, 0.12, 0.6, ln) * vel
-    return np.stack([L * e, R * e]) * 0.05
+        (R if k % 2 == 0 else L)[:] += s * 0.45
+    e = env_ar(n, 0.9, 2.0, ln) * vel
+    return np.stack([L * e, R * e]) * 0.06
 
 
 def note_ep(f, ln, vel):
-    n = int((ln + 0.4) * SR)
+    n = int((ln + 0.5) * SR)
     t = np.arange(n) / SR
-    I = (1.1 + 1.8 * vel) * np.exp(-t / 0.25)
+    I = (0.9 + 1.6 * vel) * np.exp(-t / 0.35)
     y = np.sin(2 * np.pi * f * t + I * np.sin(2 * np.pi * f * t))
-    y += 0.22 * vel * np.sin(2 * np.pi * f * 14.0 * t) * np.exp(-t / 0.02)    # tine
-    y += 0.2 * np.sin(2 * np.pi * f * 0.5 * t) * np.exp(-t / 0.5)            # body
-    e = np.exp(-t / 1.2) * np.minimum(1, t / 0.002)
+    y += 0.18 * vel * np.sin(2 * np.pi * f * 14.0 * t) * np.exp(-t / 0.025)   # tine
+    y += 0.25 * np.sin(2 * np.pi * f * 0.5 * t) * np.exp(-t / 0.6)          # body
+    e = np.exp(-t / 1.8) * np.minimum(1, t / 0.003)
     rel = t > ln
-    e[rel] *= np.exp(-(t[rel] - ln) / 0.06)
-    y *= e * vel * 0.16
+    e[rel] *= np.exp(-(t[rel] - ln) / 0.12)
+    y *= e * vel * 0.18
     return np.stack([y, y])
 
 
 def note_bell(f, ln, vel):
-    n = int((ln + 1.0) * SR)
+    n = int((ln + 1.6) * SR)
     t = np.arange(n) / SR
-    y = np.sin(2 * np.pi * f * t + 1.6 * np.exp(-t / 0.2) * np.sin(2 * np.pi * 3.5 * f * t))
-    y *= np.exp(-t / 0.5) * np.minimum(1, t / 0.002) * vel * 0.12
+    y = np.sin(2 * np.pi * f * t + 1.8 * np.exp(-t / 0.25) * np.sin(2 * np.pi * 3.5 * f * t))
+    y *= np.exp(-t / 0.9) * np.minimum(1, t / 0.002) * vel * 0.12
     return np.stack([y * 0.8, y * 1.0])
 
 
 def note_bass(f, ln, vel):
-    """Slap bass: a round body plus a bright, fast-decaying pluck."""
-    n = int((ln + 0.12) * SR)
+    n = int((ln + 0.15) * SR)
     t = np.arange(n) / SR
-    y = np.sin(2 * np.pi * f * t) + 0.4 * np.sin(4 * np.pi * f * t) + 0.15 * np.sin(6 * np.pi * f * t)
-    ph, dt = osc_phase(f, n)
-    pl = blep_saw(ph, dt)
-    y += pl * 0.9 * np.exp(-t / 0.035) + lp(pl, 1200, 1) * 0.35 * np.exp(-t / 0.2)
-    y = np.tanh(1.5 * y) / np.tanh(1.5)
-    e = np.minimum(1, t / 0.003) * (0.7 + 0.3 * np.exp(-t / 0.1))
+    y = np.sin(2 * np.pi * f * t) + 0.35 * np.sin(4 * np.pi * f * t) + 0.12 * np.sin(6 * np.pi * f * t)
+    y = np.tanh(1.6 * y) / np.tanh(1.6)
+    e = np.minimum(1, t / 0.006) * (0.75 + 0.25 * np.exp(-t / 0.12))
     rel = t > ln
-    e[rel] *= np.exp(-(t[rel] - ln) / 0.03)
-    y *= e * vel * 0.28
+    e[rel] *= np.exp(-(t[rel] - ln) / 0.04)
+    y *= e * vel * 0.32
     return np.stack([y, y])
 
 
 def note_lead(f, ln, vel):
-    """Bright synth lead: saw + square, a small scoop into the note, delayed vibrato."""
-    n = int((ln + 0.3) * SR)
+    n = int((ln + 0.35) * SR)
     t = np.arange(n) / SR
-    vib = 0.007 * np.sin(2 * np.pi * 5.6 * t) * np.minimum(1, np.maximum(0, t - 0.18) / 0.3)
-    scoop = -0.5 / 12 * np.exp(-t / 0.025)
-    fi = f * 2 ** scoop * (1 + vib)
-    out = []
-    for c in (-6, 6):                                    # two slightly detuned voices: L / R
-        ph, dt = osc_phase(fi * 2 ** (c / 1200), n, rng.random())
-        saw = blep_saw(ph, dt)
-        sq = blep_saw(ph, dt) - blep_saw(ph + 0.5, dt)
-        y = 0.55 * saw + 0.45 * sq
-        dark = lp(y, 2200, 2)
-        y = dark + (y - dark) * (0.45 + 0.55 * np.exp(-t / 0.15))
-        out.append(y)
-    e = np.minimum(1, t / 0.008)
+    vib = 1 + 0.0065 * np.sin(2 * np.pi * 5.2 * t) * np.minimum(1, np.maximum(0, t - 0.25) / 0.4)
+    ph = 2 * np.pi * np.cumsum(f * vib) / SR
+    y = np.sin(ph) + 0.22 * np.sin(2 * ph) + 0.1 * np.sin(3 * ph) + 0.04 * np.sin(5 * ph)
+    breath = signal.lfilter(*signal.butter(2, [min(f * 1.5, 9000) / (SR / 2), min(f * 4, 18000) / (SR / 2)], "band"), rng.normal(0, 1, n))
+    y += breath * 0.06 * np.exp(-t / 0.15)
+    e = np.minimum(1, t / 0.045)
     rel = t > ln
-    e[rel] *= np.exp(-(t[rel] - ln) / 0.07)
-    e *= vel * 0.085
-    return np.stack([out[0] * e, out[1] * e])
-
-
-def note_brass(f, ln, vel):
-    """Synth brass stab: three detuned saws, the filter opens on the attack and closes."""
-    n = int((ln + 0.25) * SR)
-    t = np.arange(n) / SR
-    L = np.zeros(n); R = np.zeros(n)
-    for k, c in enumerate((-9, 0, 9)):
-        ph, dt = osc_phase(f * 2 ** (c / 1200), n, rng.random())
-        s = blep_saw(ph, dt)
-        L += s * (1.0 if k != 2 else 0.5); R += s * (1.0 if k != 0 else 0.5)
-    fe = 0.3 + 0.7 * np.exp(-t / 0.09)
-    out = []
-    for x in (L, R):
-        dark = lp(x, 900, 2)
-        out.append(dark + (x - dark) * fe)
-    e = np.minimum(1, t / 0.012)
-    rel = t > ln
-    e[rel] *= np.exp(-(t[rel] - ln) / 0.06)
-    e *= vel * 0.045
-    return np.stack([out[0] * e, out[1] * e])
+    e[rel] *= np.exp(-(t[rel] - ln) / 0.08)
+    y *= e * vel * 0.16
+    return np.stack([y * 0.92, y])
 
 
 def noise(n):
@@ -352,42 +272,33 @@ def lp(x, fc, order=2):
     return signal.lfilter(*signal.butter(order, fc / (SR / 2), "low"), x, axis=-1)
 
 
-def hit(kind, vel, m=0):
+def hit(kind, vel):
     if kind == "kick":
-        n = int(0.4 * SR); t = np.arange(n) / SR
-        f = 50 + 110 * np.exp(-t / 0.03)
-        y = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.18)
-        y += 0.25 * hp(noise(n), 2500) * np.exp(-t / 0.003)
-        y = np.tanh(1.6 * y) * 0.55
-    elif kind == "snare":
-        n = int(0.35 * SR); t = np.arange(n) / SR
-        y = 0.5 * np.sin(2 * np.pi * 200 * t) * np.exp(-t / 0.05)
-        y += bp(noise(n), 1500, 9000) * np.exp(-t / 0.1) * 0.85
-        y *= 0.32
-    elif kind == "clap":
-        n = int(0.35 * SR); t = np.arange(n) / SR
-        env = np.zeros(n)
-        for k, d in enumerate((0, 0.009, 0.018)):
-            i = int(d * SR); env[i:] += np.exp(-(t[i:] - d) / (0.006 if k < 2 else 0.09))
-        y = bp(noise(n), 900, 5000) * env * 0.22
-    elif kind in ("hat", "ohat"):
-        n = int((0.5 if kind == "ohat" else 0.1) * SR); t = np.arange(n) / SR
-        y = hp(noise(n), 8000, 4) * np.exp(-t / (0.13 if kind == "ohat" else 0.018)) * 0.18
-    elif kind == "shaker":
-        n = int(0.1 * SR); t = np.arange(n) / SR
-        y = bp(noise(n), 5000, 11000) * np.minimum(1, t / 0.008) * np.exp(-t / 0.03) * 0.11
-    elif kind == "tom":
         n = int(0.45 * SR); t = np.arange(n) / SR
-        f0 = {45: 105, 47: 135, 50: 175}.get(m, 140)
-        f = f0 * (1 + 0.6 * np.exp(-t / 0.03))
-        y = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.22) * 0.5
-        y += 0.1 * bp(noise(n), 800, 4000) * np.exp(-t / 0.02)
+        f = 46 + 95 * np.exp(-t / 0.035)
+        y = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.22)
+        y += 0.15 * hp(noise(n), 2000) * np.exp(-t / 0.004)
+        y = np.tanh(1.4 * y) * 0.55
+    elif kind == "snare":
+        n = int(0.4 * SR); t = np.arange(n) / SR
+        y = 0.5 * np.sin(2 * np.pi * 185 * t) * np.exp(-t / 0.06)
+        y += bp(noise(n), 1400, 7000) * np.exp(-t / 0.11) * 0.75
+        y *= 0.32
+    elif kind == "rim":
+        n = int(0.15 * SR); t = np.arange(n) / SR
+        y = (np.sin(2 * np.pi * 820 * t) * 0.6 + bp(noise(n), 2500, 6000) * 0.6) * np.exp(-t / 0.018) * 0.3
+    elif kind in ("hat", "ohat"):
+        n = int((0.6 if kind == "ohat" else 0.12) * SR); t = np.arange(n) / SR
+        y = hp(noise(n), 7500, 4) * np.exp(-t / (0.16 if kind == "ohat" else 0.022)) * 0.16
+    elif kind == "shaker":
+        n = int(0.12 * SR); t = np.arange(n) / SR
+        y = bp(noise(n), 4500, 10000) * np.minimum(1, t / 0.012) * np.exp(-t / 0.04) * 0.11
     elif kind == "crash":
-        n = int(3.0 * SR); t = np.arange(n) / SR
+        n = int(3.5 * SR); t = np.arange(n) / SR
         y = hp(noise(n), 3500, 2) * 0.6
         for fr in (3150, 4270, 5380, 6900, 8130):
             y += 0.12 * np.sin(2 * np.pi * fr * t + rng.random() * 6.28)
-        y *= np.exp(-t / 0.9) * np.minimum(1, t / 0.003) * 0.13
+        y *= np.exp(-t / 1.1) * np.minimum(1, t / 0.003) * 0.13
     y = y * vel
     return np.stack([y, y])
 
@@ -398,14 +309,10 @@ def swell(ln, vel):
     return np.stack([y * 0.9, np.roll(y, 40)])
 
 
-PAN = {"pad": 0, "ep": -0.25, "bell": 0.4, "bass": 0, "lead": 0.05, "lead2": -0.3, "brass": 0.15, "kick": 0,
-       "snare": 0.05, "clap": -0.05, "hat": 0.3, "ohat": 0.3, "shaker": -0.35, "tom": -0.1, "crash": -0.2, "swell": 0}
-SEND = {"pad": 0.3, "ep": 0.2, "bell": 0.45, "bass": 0.0, "lead": 0.3, "lead2": 0.35, "brass": 0.25, "kick": 0.03,
-        "snare": 0.22, "clap": 0.3, "hat": 0.08, "ohat": 0.12, "shaker": 0.15, "tom": 0.2, "crash": 0.25, "swell": 0.45}
-GAIN = {"pad": 1.0, "ep": 1.0, "bell": 1.8, "bass": 1.0, "lead": 1.7, "lead2": 1.1, "brass": 1.4, "kick": 0.8,
-        "snare": 1.6, "clap": 1.3, "hat": 1.5, "ohat": 1.3, "shaker": 1.3, "tom": 0.45, "crash": 1.1, "swell": 1.2}
-SYNTH = {"pad": note_pad, "ep": note_ep, "bell": note_bell, "bass": note_bass, "lead": note_lead,
-         "lead2": note_lead, "brass": note_brass}
+PAN = {"pad": 0, "ep": -0.15, "bell": 0.35, "bass": 0, "lead": 0.05, "kick": 0, "snare": 0.05, "rim": 0.1,
+       "hat": 0.3, "ohat": 0.3, "shaker": -0.35, "crash": -0.2, "swell": 0}
+SEND = {"pad": 0.35, "ep": 0.3, "bell": 0.55, "bass": 0.0, "lead": 0.4, "kick": 0.04, "snare": 0.25, "rim": 0.3,
+        "hat": 0.1, "ohat": 0.15, "shaker": 0.2, "crash": 0.3, "swell": 0.5}
 
 
 def place(buf, x, t):
@@ -422,18 +329,6 @@ def pan(x, p):
     return np.stack([x[0] * np.cos(a) * 1.414, x[1] * np.sin(a) * 1.414])
 
 
-def echo(x, n, d, fb=0.38, k=4):
-    """Dotted-eighth ping-pong echo."""
-    out = np.zeros_like(x); src = x.copy()
-    for i in range(1, k + 1):
-        src = lp(src, 4000, 1) * fb
-        sh = np.zeros_like(src)
-        if d * i < n:
-            sh[:, d * i:] = src[:, :n - d * i]
-        out[(i + 1) % 2] += sh[0] + sh[1]
-    return x + out * 0.5
-
-
 def render(passes, dur):
     """passes: [(start s, score)]. Returns stereo float array of `dur` seconds."""
     n = int(dur * SR)
@@ -447,58 +342,69 @@ def render(passes, dur):
                 # sample-exact periodic, so the seam does not click
                 rng = np.random.default_rng(zlib.crc32(f"{k}:{t:.4f}:{m}".encode()))
                 t += start
-                if k in SYNTH: x = SYNTH[k](hz(m), ln, vel)
+                if k == "pad": x = note_pad(hz(m), ln, vel)
+                elif k == "ep": x = note_ep(hz(m), ln, vel)
+                elif k == "bell": x = note_bell(hz(m), ln, vel)
+                elif k == "bass": x = note_bass(hz(m), ln, vel)
+                elif k == "lead": x = note_lead(hz(m), ln, vel)
+                elif k == "snare": x = hit("rim" if m == 37 else "snare", vel)
                 elif k == "swell": x = swell(ln, vel)
-                else: x = hit(k, vel, m)
+                else: x = hit(k, vel)
                 place(buf, x, t)
-    # sidechain: the kick ducks strings, piano and brass a little
+    # sidechain: the kick ducks pad and piano a little
     if "kick" in tracks:
         ke = np.abs(tracks["kick"][0])
-        ke = signal.lfilter([1 - np.exp(-1 / (0.07 * SR))], [1, -np.exp(-1 / (0.07 * SR))], ke)
-        duck = 1 - 0.45 * np.clip(ke / (ke.max() + 1e-9), 0, 1)
-        for k in ("pad", "ep", "brass"):
+        ke = signal.lfilter([1 - np.exp(-1 / (0.09 * SR))], [1, -np.exp(-1 / (0.09 * SR))], ke)
+        duck = 1 - 0.5 * np.clip(ke / (ke.max() + 1e-9), 0, 1)
+        for k in ("pad", "ep"):
             if k in tracks: tracks[k] *= duck
     t = np.arange(n) / SR
     if "pad" in tracks:
-        tracks["pad"] = lp(tracks["pad"], 5200, 4)
-        tracks["pad"] *= 1 + 0.06 * np.sin(2 * np.pi * 8 / LOOP * t)     # (whole cycles per loop)
-    if "ep" in tracks:                                        # stereo tremolo, a beat per cycle pair
-        tr = 0.2 * np.sin(2 * np.pi * (BPM / 60 / 2) * t)
+        tracks["pad"] = lp(tracks["pad"], 3200, 4)
+        tracks["pad"] *= 1 + 0.08 * np.sin(2 * np.pi * 6 / LOOP * t)     # (whole cycles per loop)
+    if "ep" in tracks:                                        # stereo tremolo
+        tr = 0.22 * np.sin(2 * np.pi * (BPM / 60 / 2) * t)
         tracks["ep"] = np.stack([tracks["ep"][0] * (1 + tr), tracks["ep"][1] * (1 - tr)])
-        tracks["ep"] = lp(tracks["ep"], 8000, 2)
+        tracks["ep"] = lp(tracks["ep"], 6500, 2)
     if "bass" in tracks:
-        tracks["bass"] = lp(tracks["bass"], 2600, 2)
-    d = int(0.75 * BEAT * SR)
-    for k in ("lead", "lead2"):
-        if k in tracks:
-            tracks[k] = echo(tracks[k], n, d)
+        tracks["bass"] = lp(tracks["bass"], 900, 2)
+    if "lead" in tracks:                                      # dotted-eighth ping-pong echo
+        d = int(0.75 * BEAT * SR); x = tracks["lead"]; echo = np.zeros_like(x)
+        src = x.copy()
+        for k in range(1, 5):
+            src = lp(src, 3500, 1) * 0.42
+            sh = np.zeros_like(src); sh[:, d * k:] = src[:, :n - d * k] if d * k < n else 0
+            echo[(k + 1) % 2] += sh[0] + sh[1]
+        tracks["lead"] = x + echo * 0.5
     dry = np.zeros((2, n)); wet = np.zeros((2, n))
+    gain = {"pad": 1.0, "ep": 1.0, "bell": 2.6, "bass": 0.9, "lead": 1.2, "kick": 0.95, "snare": 1.8,
+            "hat": 1.6, "ohat": 1.5, "shaker": 1.4, "crash": 1.2, "swell": 1.3}
     for k, x in tracks.items():
-        x = pan(x, PAN.get(k, 0)) * GAIN.get(k, 1)
+        x = pan(x, PAN.get(k, 0)) * gain.get(k, 1)
         dry += x
         wet += x * SEND.get(k, 0.2)
-    # reverb: stereo decaying noise, darker with time, 1.9 s RT60, 18 ms pre-delay
+    # reverb: stereo decaying noise, darker with time, 2.6 s RT60, 22 ms pre-delay
     rng = np.random.default_rng(31)
-    rt, ln = 1.9, int(2.4 * SR)
+    rt, ln = 2.6, int(3.2 * SR)
     ti = np.arange(ln) / SR
     irs = []
     for ch in range(2):
         nz = rng.normal(0, 1, ln)
-        bright, dark = lp(nz, 8000, 2), lp(nz, 2200, 2)
+        bright, dark = lp(nz, 7000, 2), lp(nz, 1800, 2)
         w = np.clip(ti / rt, 0, 1)
         ir = ((1 - w) * bright + w * dark) * np.exp(-ti * 6.9 / rt)
-        ir = np.concatenate([np.zeros(int(0.018 * SR)), ir])
+        ir = np.concatenate([np.zeros(int(0.022 * SR)), ir])
         irs.append(ir / np.sqrt(np.sum(ir ** 2)))
-    wet = hp(wet, 200, 2)
+    wet = hp(wet, 180, 2)
     rev = np.stack([signal.oaconvolve(wet[0], irs[0])[:n], signal.oaconvolve(wet[1], irs[1])[:n]])
-    mix = dry + rev * 0.5
-    mix = hp(mix, 30, 2)
-    return mix + 0.45 * hp(mix, 5000, 1)                      # air on top
+    mix = dry + rev * 0.55
+    mix = hp(mix, 28, 2)
+    return mix + 0.4 * hp(mix, 5000, 1)                       # a little air on top
 
 
 def master(x, ref):
     x = x / ref
-    return np.tanh(1.3 * x) / np.tanh(1.3) * 0.93
+    return np.tanh(1.25 * x) / np.tanh(1.25) * 0.93
 
 
 def mp3(x, path, kbps, rate=SR):
@@ -516,14 +422,12 @@ def midi(S, path):
     tpb = 480
     mf = mido.MidiFile(ticks_per_beat=tpb)
     meta = mido.MidiTrack(); mf.tracks.append(meta)
-    meta.append(mido.MetaMessage("track_name", name="Runway Sunshine"))
     meta.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(BPM)))
     meta.append(mido.MetaMessage("time_signature", numerator=4, denominator=4))
-    meta.append(mido.MetaMessage("key_signature", key="E"))
-    parts = [("Strings", 0, 50, ["pad"]), ("Electric Piano", 1, 4, ["ep"]), ("Bells", 2, 9, ["bell"]),
-             ("Slap Bass", 3, 36, ["bass"]), ("Lead", 4, 81, ["lead"]), ("Harmony", 5, 81, ["lead2"]),
-             ("Synth Brass", 6, 62, ["brass"]),
-             ("Drums", 9, 0, ["kick", "snare", "clap", "hat", "ohat", "shaker", "tom", "crash"])]
+    meta.append(mido.MetaMessage("key_signature", key="D"))
+    parts = [("Warm Pad", 0, 89, ["pad"]), ("Electric Piano", 1, 4, ["ep"]), ("Bells", 2, 10, ["bell"]),
+             ("Bass", 3, 38, ["bass"]), ("Lead", 4, 73, ["lead"]),
+             ("Drums", 9, 0, ["kick", "snare", "hat", "ohat", "shaker", "crash"])]
     for name, ch, prog, keys in parts:
         tr = mido.MidiTrack(); mf.tracks.append(tr)
         tr.append(mido.MetaMessage("track_name", name=name))
@@ -558,12 +462,11 @@ def main():
     mp3(seg, os.path.join(ASSETS, "menu_bgm.mp3"), 160)
     mp3(seg, os.path.join(ASSETS, "menu_bgm_lite.mp3"), 48, 32000)
     # listening version: two passes, then the closing chord
-    tail = 2 * BAR + 2.5
-    full = render([(0, S), (LOOP, S), (2 * LOOP, E)], 2 * LOOP + tail)
+    full = render([(0, S), (LOOP, S), (2 * LOOP, E)], 2 * LOOP + 2 * BAR + 3.5)
     full = master(full, ref)
     k = int(2 * LOOP * SR)
-    tt = np.arange(full.shape[1] - k) / SR
-    full[:, k:] *= np.clip(1 - tt / tail, 0, 1) ** 1.5
+    tail = np.arange(full.shape[1] - k) / SR
+    full[:, k:] *= np.clip(1 - tail / (2 * BAR + 3.5), 0, 1) ** 1.5
     full[:, :int(0.01 * SR)] *= np.linspace(0, 1, int(0.01 * SR))
     mp3(full, os.path.join(out, "menu_bgm_full.mp3"), 192)
     midi(S, os.path.join(HERE, "menu_bgm.mid"))

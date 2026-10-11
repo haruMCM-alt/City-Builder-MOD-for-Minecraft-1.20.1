@@ -38,7 +38,7 @@ export class PaxLife {
     const info = cabin.info;
     const o = info.protoOrigin;
     const pv = info.paxPivots || {
-      neck: [-0.2, 1.12, 0], shoulderL: [-0.19, 1.0, -0.21], shoulderR: [-0.19, 1.0, 0.21],
+      neck: [-0.21, 1.14, 0], shoulderL: [-0.2, 1.055, -0.21], shoulderR: [-0.2, 1.055, 0.21],
       elbowL: [-0.13, 0.7, -0.205], elbowR: [-0.13, 0.7, 0.205],
     };
     const rel = (k) => new THREE.Vector3(pv[k][0] - o[0], pv[k][1] - o[1], pv[k][2] - o[2]);
@@ -174,7 +174,7 @@ export class CrewService {
     this.cabin = cabin;
     const info = cabin.info;
     const o = info.protoOrigin;
-    const cp = info.crewPivots || { shoulderL: [0, 1.42, -0.2], shoulderR: [0, 1.42, 0.2], hipL: [0, 0.9, -0.09], hipR: [0, 0.9, 0.09] };
+    const cp = info.crewPivots || { shoulderL: [0, 1.31, -0.195], shoulderR: [0, 1.31, 0.195], hipL: [0, 0.88, -0.08], hipR: [0, 0.88, 0.08] };
     const rel = (k) => new THREE.Vector3(cp[k][0] - o[0], cp[k][1] - o[1], cp[k][2] - o[2]);
     this.cp = { sL: rel('shoulderL'), sR: rel('shoulderR'), hL: rel('hipL'), hR: rel('hipR') };
     this.floorY = info.floorY ?? info.seats[0].p[1];
