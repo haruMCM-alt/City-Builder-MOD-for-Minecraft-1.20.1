@@ -30,7 +30,7 @@ ASSET = {"b789": "b787-9", "b738": "b737-800", "b763": "b767-300er",
          "ma3": "ma-300", "ma7": "ma-700", "ma9": "ma-900", "b744": "b747-400", "at76": "atr72-600", "maw": "ma-w8"}[TYPE]
 NAME = {"b789": "Boeing 787-9", "b738": "Boeing 737-800", "b763": "Boeing 767-300ER",
         "ma3": "Micomsoft MA-300 Tsubame", "ma7": "Micomsoft MA-700 Hayabusa", "ma9": "Micomsoft MA-900 Otori",
-        "b744": "Boeing 747-400", "at76": "ATR 72-600", "maw": "Micomsoft MA-W8 Ootaka"}[TYPE]
+        "b744": "Boeing 747-400 MA-Custom", "at76": "ATR 72-600", "maw": "Micomsoft MA-W8 Ootaka"}[TYPE]
 
 # ---------------------------------------------------------------------------
 # Global figures
@@ -493,7 +493,10 @@ MAIN_AXLES = (-MAIN_AXLE_DS, MAIN_AXLE_DS)
 # ---------------------------------------------------------------------------
 # Crew / lights
 # ---------------------------------------------------------------------------
-EYE = (4.15, 0.53, 1.08)   # captain eye point (s, y, z)
+# captain eye point (s, y, z): seated upright, 0.79 m above the seat cushion and ~0.35 m ahead
+# of the backrest (it was 0.35 m further forward and 5 cm higher, leaning over the control column,
+# which then sat out of view below the eye)
+EYE = (4.50, 0.53, 1.03)
 EYE787 = EYE
 
 # ---------------------------------------------------------------------------
@@ -678,7 +681,7 @@ TYPES = {
                       [3.25, 3.12, 2.84, 2.44, 2.03, 1.55, 1.14, 0.75, 0.42, 0.25, 0.12]),
                   zw=([50.0, 56.0, 62.0, 66.0, 69.0, 70.66], [0.0, 0.0, 1.30, 1.95, 2.35, 2.33])),
         CARGO=[(13.6, 2.64, -3.05, -0.95), (46.7, 2.64, -2.95, -0.95), (50.6, 1.12, -2.4, -1.0)],
-        LABEL="747-400", REG="JA744C", CK=(1.12, 1.6, 1.0, 1.04, 2.21),
+        LABEL="747-400 MA-Custom", REG="JA744C", CK=(1.12, 1.6, 1.0, 1.04, 2.21),
         SPEC=dict(S=506.6, b=64.44, c=11.2, OEW=178756, MTOW=396894, MLW=285763, MZFW=246075,
                   fuelCapacity=173000, thrustSL=552000, VMO=365, MMO=0.92),
         ENGINE="GE CF6-80C2B5F", CHEVRONS=0,

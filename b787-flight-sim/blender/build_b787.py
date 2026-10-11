@@ -1559,7 +1559,7 @@ def build_cockpit(M, root, col):
     CK = G.ck if G.TYPE != "b789" else (lambda p: np.asarray(p, dtype=np.float64))
     CS = lambda s: float(G.ck(np.array([s, 0.0, 0.0]))[0])  # noqa: E731
     # --- inner shell (inward facing copy of the nose skin) ------------------
-    st = np.linspace(CS(1.3), CS(6.9), 60)
+    st = np.linspace(CS(1.3), CS(7.05), 62)
     nv = 128
     phi = np.linspace(0, 2 * math.pi, nv + 1)
     P = np.zeros((len(st), nv + 1, 3))
@@ -1588,16 +1588,32 @@ def build_cockpit(M, root, col):
     fb = C.MeshBuilder(TBc)
     DZ = -0.30          # furniture height offset (floor raised above main deck)
     fl = DZ + 0.02      # floor height (design z)
-    # floor
-    fb.add_poly([(2.9, 1.25, fl), (6.9, 1.35, fl), (6.9, -1.35, fl), (2.9, -1.25, fl)], mat=5,
-                outward=("dir", (0, 0, 1)))
+    # floor: wall to wall (its edge between the inner shell and the skin), no gaps at the sides
+    fs = np.linspace(2.9, 7.0, 24)
+    phf = np.linspace(0.0, 2 * math.pi, 721)
+    edge = []
+    for s7 in fs:
+        q = G.ck(np.array([s7, 0.0, fl]))
+        yy, zz = G.fus_section(float(q[0]), phf)
+        h = len(phf) // 2
+        yl, zl = np.abs(yy[:h + 1]), zz[:h + 1]
+        o = np.argsort(zl)
+        w = float(np.interp(q[2], zl[o], yl[o])) * 0.985 / G.CK[2]
+        edge.append((s7, w, fl))
+    fb.add_poly(edge + [(s7, -w, fl) for s7, w, _ in reversed(edge)], mat=5, outward=("dir", (0, 0, 1)))
     # rear bulkhead with door
-    phb = np.linspace(math.pi * 0.5, math.pi * 1.5, 40)
+    # (the whole section down to the floor: half of it left a ~0.2 m slot above the floor
+    # through which the outside showed past the end of the flight deck)
+    phb = np.linspace(0.0, 2 * math.pi, 121)[:-1]
     sb_ = CS(6.85)
     yb, zb = G.fus_section(sb_, phb)
     zcb = float(G.fus_profile(sb_)[3])
     flb = float(CK(np.array([6.85, 0, fl]))[2])
-    bulk = [(sb_, 0.95 * yy, max(flb, zcb + 0.95 * (zz - zcb))) for yy, zz in zip(yb, zb)]
+    bulk = []
+    for yy, zz in zip(yb, zb):
+        q = (sb_, 0.99 * yy, max(flb, zcb + 0.99 * (zz - zcb)))
+        if not bulk or abs(q[1] - bulk[-1][1]) + abs(q[2] - bulk[-1][2]) > 1e-4:
+            bulk.append(q)
     if G.TYPE != "b789":
         bulk = [tuple(G.ck_inv(np.array(p))) for p in bulk]
     fb.add_poly(bulk, mat=2, outward=("dir", (-1, 0, 0)))
@@ -1665,15 +1681,16 @@ def build_cockpit(M, root, col):
         test = np.array([top])
         add_part("Throttle_" + L, "throttle", tb, [Mi["metal"], Mi["black"], Mi["grey"]], CK(base),
                  CK(base + np.array([0, 1, 0])), CK(test), MOVE_FWD, 30, root, col)
-    # control columns and wheels (787: open-top "ram's horn" wheel with grips, PTT and trim switches)
+    # control columns and wheels (787: open-top "ram's horn" wheel with grips, PTT and trim switches);
+    # the wheel ~0.48 m below and ~0.6 m ahead of the eye, in front of the PFD / ND gap
     for sy in (0.53, -0.53):
         L = "L" if sy > 0 else "R"
         yb = C.MeshBuilder(TBc)
         c0 = np.array([3.72, sy, 0.05 + DZ])
-        c1 = np.array([3.9, sy, 0.6 + DZ])
+        c1 = np.array([3.9, sy, 0.81 + DZ])
         cyl(yb, c0 + np.array([0, 0, -0.02]), c0 + np.array([0.03, 0, 0.12]), 0.07, 1, n=14, r1=0.035)   # boot
         cyl(yb, c0, c1, 0.028, 0, n=12)
-        hub = np.array([3.925, sy, 0.655 + DZ])
+        hub = np.array([3.925, sy, 0.865 + DZ])
         cyl(yb, c1, hub, 0.03, 1, n=12)
         yb.add_box(tuple(hub + np.array([0.005, 0, 0.0])), (0.06, 0.11, 0.075), mat=1)
         # checklist / chart clip on the hub face

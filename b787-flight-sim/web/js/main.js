@@ -67,7 +67,7 @@ const TYPES = [
   { id: 'ma3', asset: 'ma-300', weight: 0.6, maker: 'Micomsoft', short: 'MA-300 Tsubame', cls: '次世代単通路 Next-gen narrow-body' },
   { id: 'ma7', asset: 'ma-700', weight: 0.6, maker: 'Micomsoft', short: 'MA-700 Hayabusa', cls: '高速長距離 High-speed long-haul' },
   { id: 'ma9', asset: 'ma-900', weight: 0.5, maker: 'Micomsoft', short: 'MA-900 Otori', cls: '超大型4発 Super-widebody quad' },
-  { id: 'b744', asset: 'b747-400', weight: 0.5, maker: 'Boeing', short: '747-400', cls: 'ジャンボ 4発 Jumbo quad' },
+  { id: 'b744', asset: 'b747-400', weight: 0.5, maker: 'Boeing', short: '747-400 MA-Custom', cls: 'ジャンボ 4発・マイコムソフト改修 Jumbo quad, Micomsoft custom' },
   { id: 'at76', asset: 'atr72-600', weight: 0.8, maker: 'ATR', short: '72-600', cls: 'ターボプロップ Turboprop' },
   { id: 'maw', asset: 'ma-w8', weight: 0.4, maker: 'Micomsoft', short: 'MA-W8 Ootaka', cls: '8発 Eight-engine long-haul' },
 ];
