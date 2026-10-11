@@ -8,6 +8,16 @@ export function freezeStatic(root) {
   root.traverse((o) => { o.matrixAutoUpdate = false; o.matrixWorldAutoUpdate = false; });
 }
 
+// moved a frozen object: recompose its matrix and the world matrices of its whole subtree
+// (updateMatrixWorld skips objects with matrixWorldAutoUpdate off, even when forced)
+export function refreshFrozen(obj) {
+  obj.updateMatrix();
+  obj.traverse((o) => {
+    if (o.parent) o.matrixWorld.multiplyMatrices(o.parent.matrixWorld, o.matrix);
+    else o.matrixWorld.copy(o.matrix);
+  });
+}
+
 // visual Earth curvature (same law as the terrain / water / far-ring shaders): flat to 15 km,
 // then the surface drops away with the square of the distance
 export function curveDrop(d) { const e = Math.max(d - 15000, 0); return e * e / 12742000; }

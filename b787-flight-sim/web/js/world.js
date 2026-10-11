@@ -8,7 +8,7 @@ import { TERRAIN, TERRAIN_GLSL, FLATS_GLSL, EROSION_GLSL, terrainHeight } from '
 import { patchFacade, patchStructure } from './shading.js';
 import { GROUND_GLSL } from './ground.js';
 import { stripTriangles, textSign, signTexts } from './signs.js';
-import { clamp, smoothstep, lerp, mulberry32, DEG, northAt, freezeStatic, curveDrop } from './util.js';
+import { clamp, smoothstep, lerp, mulberry32, DEG, northAt, freezeStatic, curveDrop, refreshFrozen } from './util.js';
 import { GEO } from './geo_data.js';
 import { Atmosphere, mieFromVisibility, transmittanceCPU } from './atmo.js';
 
@@ -1024,11 +1024,10 @@ roughnessFactor = clamp(roughnessFactor + 0.12 * smoothstep(0.5, 8.0, length(fwi
     if (!this._curved) return;
     for (const e of this._curved) {
       const dy = -curveDrop(Math.hypot(e.cx - cam.x, e.cz - cam.z));
-      if (Math.abs(dy - e.dy) < Math.max(2, Math.abs(dy) * 0.03)) continue;
+      if (Math.abs(dy - e.dy) < Math.max(2, Math.abs(dy) * 0.03) && !(dy === 0 && e.dy !== 0)) continue;
       e.dy = dy;
       e.obj.position.y = e.y0 + dy;
-      e.obj.updateMatrix();
-      e.obj.updateMatrixWorld(true);
+      refreshFrozen(e.obj);
     }
   }
 

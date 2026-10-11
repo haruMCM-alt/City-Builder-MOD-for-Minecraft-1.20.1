@@ -5,7 +5,7 @@
 // Roofs are separate instances (flat slabs, gable roofs on the houses, rooftop plant, the
 // water tanks on Okinawan roofs) with their own colours.
 import * as THREE from 'three';
-import { curveDrop } from './util.js';
+import { curveDrop, refreshFrozen } from './util.js';
 import { NOISE_GLSL } from './shading.js';
 import { terrainHeight } from './terrain.js';
 
@@ -261,7 +261,11 @@ export class Cityscape {
       const on = d < far;
       // sink with the curved terrain far away
       const dy = -curveDrop(d + 2121);
-      for (const arr of [t.main, t.small, t.medium, t.detail]) for (const m of arr) m.position.y = dy;
+      if (Math.abs((t.dy || 0) - dy) > 1 || (dy === 0 && t.dy)) {
+        t.dy = dy;
+        // (the tile matrices are frozen: recompose them by hand)
+        for (const arr of [t.main, t.small, t.medium, t.detail]) for (const m of arr) { m.position.y = dy; refreshFrozen(m); }
+      }
       for (const m of t.main) { m.visible = on; m.castShadow = this.shadows && d < SHADOW_R; }
       const sm = on && d < SMALL_R;
       for (const m of t.small) { m.visible = sm; m.castShadow = this.shadows && d < SHADOW_R; }
