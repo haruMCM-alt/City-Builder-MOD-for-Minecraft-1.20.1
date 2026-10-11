@@ -1104,8 +1104,9 @@ def proto_seat_y(M, col, parent):
     sbox(mb, on_back(0.2, -0.004), (0.008, 0.135, 0.09), DK, e=0.15, n=(4, 12), tilt=SEAT_TILT)
     sbox(mb, on_back(0.2), (0.006, 0.12, 0.075), SCR, e=0.15, n=(12, 16), tilt=SEAT_TILT)
     # tray table (stowed) with its latch, literature pocket, coat hook
-    sbox(mb, on_back(-0.08), (0.012, 0.19, 0.12), PL, e=0.2, n=(2, 8), tilt=SEAT_TILT)
-    sbox(mb, on_back(0.055, 0.012), (0.006, 0.025, 0.008), DK, e=0.3, n=(3, 6), tilt=SEAT_TILT)
+    # (enough segments for a rounded rectangle: with two rows the tray came out as a diamond)
+    sbox(mb, on_back(-0.08), (0.012, 0.19, 0.12), PL, e=0.2, n=(8, 20), tilt=SEAT_TILT)
+    sbox(mb, on_back(0.055, 0.012), (0.006, 0.025, 0.008), DK, e=0.3, n=(4, 12), tilt=SEAT_TILT)
     sbox(mb, on_back(-0.33, 0.006), (0.014, 0.175, 0.07), DK, e=0.3, n=(4, 10), tilt=SEAT_TILT)
     sbox(mb, on_back(0.33, 0.006), (0.01, 0.02, 0.012), MET, e=0.4, n=(3, 6), tilt=SEAT_TILT)
     # armrests (each seat carries the inner half of each shared armrest), dark pad on top
