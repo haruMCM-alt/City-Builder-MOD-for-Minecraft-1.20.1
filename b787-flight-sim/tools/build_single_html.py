@@ -32,8 +32,8 @@ ROOT = os.path.dirname(HERE)
 WEB = os.path.join(ROOT, "web")
 
 MIME = {".glb": "model/gltf-binary", ".json": "application/json", ".jpg": "image/jpeg", ".png": "image/png",
-        ".mp4": "video/mp4", ".js": "text/javascript", ".wasm": "application/wasm", ".bin": "application/octet-stream"}
-SKIP = {"jal_safety.webm", "title.jpg", "draco_decoder.js", "arff.json"}   # title.jpg: inlined in the CSS; JS decoder: wasm is used          # mp4 is enough (the embedded build always uses it)
+        ".mp4": "video/mp4", ".mp3": "audio/mpeg", ".js": "text/javascript", ".wasm": "application/wasm", ".bin": "application/octet-stream"}
+SKIP = {"jal_safety.webm", "title.jpg", "draco_decoder.js", "arff.json", "menu_bgm.mp3"}   # menu_bgm.mp3: the lite encode is embedded; title.jpg: inlined in the CSS; JS decoder: wasm is used          # mp4 is enough (the embedded build always uses it)
 STRIP_TEX = re.compile(r"airport\d+\.glb$")   # same images as world.glb: the game reuses those
 MAX_TEX = 4096                        # aircraft textures above this are halved
 # secondary maps (and the cabin wall) are halved from 4096 too: keeps the file under the

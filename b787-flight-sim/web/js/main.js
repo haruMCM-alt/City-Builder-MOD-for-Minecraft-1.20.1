@@ -32,6 +32,7 @@ import { MCP3D } from './mcp3d.js';
 import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
 import { ARFF, Evacuation } from './emergency.js';
+import { UISound } from './uisound.js';
 import { configureObstacles } from './obstacles.js';
 import { V3, DEG, KT, FT, FPM, clamp, smoothstep, headingVec, runwayDir, compassOf, northAt, wrap360, mulberry32 } from './util.js';
 
@@ -101,7 +102,7 @@ const MODES = [
 // for the current scenario
 const SETTINGS_MODE = { id: 'settings', icon: '⚙', name: '詳細設定', en: 'Settings', slides: ['load', 'opts'], scen: null, preset: {} };
 // options remembered in this browser
-const SAVED_OPTS = ['traffic', 'atcVoice', 'atcNoise', 'sound', 'quality', 'frameGen'];
+const SAVED_OPTS = ['traffic', 'atcVoice', 'atcNoise', 'sound', 'menuMusic', 'quality', 'frameGen'];
 const FAILS = [
   { id: 'engineFire', icon: '🔥', name: 'エンジン火災', en: 'Engine fire' },
   { id: 'engineFail', icon: '⚙', name: 'エンジン停止', en: 'Engine failure' },
@@ -308,6 +309,12 @@ class App {
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     if (this.isTouch) this.input.bindTouch($('touch'));
     this.audio = new Audio();
+    // button clicks and the menu music (the single-file build embeds a lighter encode)
+    this.uiSound = new UISound({
+      url: assetURL(ASSET + (EMBEDDED ? 'menu_bgm_lite.mp3' : 'menu_bgm.mp3')),
+      enabled: () => !!$('sound')?.checked && this.audio.enabled,
+      musicOn: () => !$('menuMusic') || $('menuMusic').checked,
+    });
     this.ui = this.loadUIPrefs();
     this.panelOn = this.ui.panel;
     this.paused = true;
@@ -632,6 +639,13 @@ class App {
         try { localStorage.setItem('b787.opt.' + id, el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value); } catch (e) { /* storage unavailable */ }
       });
     }
+    // menu music while the title screen or the menu is up; the options apply at once
+    const menuVis = () => this.uiSound.setMenu(!$('menu').classList.contains('hidden') || !$('title').classList.contains('hidden'));
+    const mo = new MutationObserver(menuVis);
+    for (const id of ['menu', 'title']) mo.observe($(id), { attributes: true, attributeFilter: ['class'] });
+    menuVis();
+    $('sound').addEventListener('change', () => { this.audio.enabled = $('sound').checked; this.uiSound.refresh(); });
+    $('menuMusic')?.addEventListener('change', () => this.uiSound.refresh());
     this.showModeHub();
   }
 
