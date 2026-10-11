@@ -139,7 +139,7 @@ export class Input {
       }
       brakes = Math.max(brakes, S.brk);
     }
-    const gp = [...pads].find((p) => p && p.connected && !isWheel(p));
+    const gp = [...pads].find((p) => p && p.connected && p !== wg && !isWheel(p));
     if (gp) {
       const dz = (v) => (Math.abs(v) < 0.08 ? 0 : (v - Math.sign(v) * 0.08) / 0.92);
       const ax = gp.axes;

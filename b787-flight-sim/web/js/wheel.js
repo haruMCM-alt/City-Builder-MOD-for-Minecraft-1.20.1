@@ -11,13 +11,25 @@
 //   brake        wheel brakes (analogue)
 //   clutch       pull (nose up): a wheel has no pitch axis; D-pad up / down = push / pull
 //   buttons      paddles: flaps up / down; gear, speedbrake, reverse, A/P, A/T, view
+//
+// XInput wheels (HORI Racing Wheel APEX in PC mode, ...) appear as an ordinary Xbox controller
+// ("Xbox 360 Controller (XInput STANDARD GAMEPAD)"): the name gives nothing away, so they are
+// chosen in the options ("XInput ハンコン"). Their layout is fixed: wheel = left stick X,
+// accelerator = right trigger, brake = left trigger, paddles = LB / RB, D-pad = buttons 12-15.
 
-const WHEEL_ID = /wheel|racing|G2[5-9]\b|G9[0-9]{2}|G923|driving force|DFGT|thrustmaster|\bT(?:150|248|300|500|GT|MX|S-?PC|S-?XW)\b|fanatec|csl|clubsport|podium|moza|simucube|simagic|PXN|hori.*rac|logitech.*(?:046d.*c2[0-9a-f]{2})/i;
+const WHEEL_ID = /wheel|racing|apex|G2[5-9]\b|G9[0-9]{2}|G923|driving force|DFGT|thrustmaster|\bT(?:150|248|300|500|GT|MX|S-?PC|S-?XW)\b|fanatec|csl|clubsport|podium|moza|simucube|simagic|PXN|hori.*rac|logitech.*(?:046d.*c2[0-9a-f]{2})/i;
 const KEY = 'b787.wheel.';
 
-export const GAINS = { 1.5: '±300°', 2.5: '±180°', 4: '±110°', 6: '±75°' };
-
 export function isWheel(gp) { return !!gp && WHEEL_ID.test(gp.id || ''); }
+
+// "treat the XInput pad as a wheel" (a global choice: an XInput wheel has no name of its own)
+export function xinputWheel(v) {
+  try {
+    if (v !== undefined) localStorage.setItem(KEY + 'xinput', v ? '1' : '0');
+    return localStorage.getItem(KEY + 'xinput') === '1';
+  } catch (e) { return false; }
+}
+const XINPUT = /xinput|xbox|standard gamepad/i;
 
 function defaults() {
   return {
@@ -27,6 +39,17 @@ function defaults() {
     // button index -> command (Logitech layout: 0 ✕ 1 □ 2 ○ 3 △ 4 right paddle 5 left paddle 6 R2 7 L2)
     buttons: { 0: 'gear', 1: 'speedbrake', 2: 'reverse', 3: 'ap', 4: 'flapsDown', 5: 'flapsUp', 6: 'at', 7: 'view' },
   };
+}
+
+// XInput wheel (HORI APEX: 270 degrees lock to lock, so x1.5 = full aileron at about +-90 degrees):
+// the triggers are the pedals (0 at rest, so no calibration is needed)
+function xinputDefaults() {
+  return Object.assign(defaults(), {
+    thr: { btn: 7 }, brk: { btn: 6 }, gain: 1.5,
+    // A gear, B speedbrake, X reverse, Y A/P, LB (left paddle) flaps up, RB (right paddle) flaps down,
+    // View = view, Menu = A/T
+    buttons: { 0: 'gear', 1: 'speedbrake', 2: 'reverse', 3: 'ap', 4: 'flapsUp', 5: 'flapsDown', 8: 'view', 9: 'at' },
+  });
 }
 
 export class Wheel {
@@ -40,12 +63,18 @@ export class Wheel {
 
   // the first connected wheel (or null); loads its configuration when it changes
   find(pads) {
-    const gp = [...pads].find((p) => p && p.connected && isWheel(p)) || null;
+    const live = [...pads].filter((p) => p && p.connected);
+    let gp = live.find(isWheel) || null;
+    this.xinput = false;
+    if (!gp && xinputWheel()) {
+      gp = live.find((p) => p.mapping === 'standard' && XINPUT.test(p.id)) || live.find((p) => p.mapping === 'standard') || null;
+      this.xinput = !!gp;
+    }
     if (gp && gp.id !== this.id) {
       this.id = gp.id; this.index = gp.index;
       let c = null;
       try { c = JSON.parse(localStorage.getItem(KEY + gp.id) || 'null'); } catch (e) { /* storage unavailable */ }
-      this.cfg = Object.assign(defaults(), c || {});
+      this.cfg = Object.assign(this.xinput ? xinputDefaults() : defaults(), c || {});
       this.thrActive = false; this.hatAxis = null;
       this.fresh = true;           // (the app shows a hint once)
     }
@@ -58,12 +87,16 @@ export class Wheel {
     try { localStorage.setItem(KEY + this.id, JSON.stringify(this.cfg)); } catch (e) { /* storage unavailable */ }
   }
 
-  reset() { this.cfg = defaults(); this.thrActive = false; this.save(); }
+  reset() { this.cfg = this.xinput ? xinputDefaults() : defaults(); this.thrActive = false; this.save(); }
 
   calibrated() { return !!(this.cfg && this.cfg.thr && this.cfg.brk); }
 
-  static pedal(ax, p) {
-    if (!p || ax[p.axis] === undefined) return 0;
+  // a pedal: an analogue button (XInput trigger) or an axis between its rest and full values
+  static pedal(gp, p) {
+    if (!p) return 0;
+    if (p.btn != null) return Math.min(1, Math.max(0, gp.buttons[p.btn]?.value || 0));
+    const ax = gp.axes;
+    if (ax[p.axis] === undefined) return 0;
     const d = p.full - p.rest;
     return Math.abs(d) < 0.2 ? 0 : Math.min(1, Math.max(0, (ax[p.axis] - p.rest) / d));
   }
@@ -88,9 +121,9 @@ export class Wheel {
     let st = ax[c.steer.axis] || 0;
     if (c.steer.inv) st = -st;
     S.steer = st;
-    S.thr = Wheel.pedal(ax, c.thr);
-    S.brk = Wheel.pedal(ax, c.brk);
-    S.clu = Wheel.pedal(ax, c.clu);
+    S.thr = Wheel.pedal(gp, c.thr);
+    S.brk = Wheel.pedal(gp, c.brk);
+    S.clu = Wheel.pedal(gp, c.clu);
     S.hat = this.hat(gp);
     if (S.thr > 0.05) this.thrActive = true;
     if (this.cal) { this._calStep(gp); return S; }
@@ -113,7 +146,8 @@ export class Wheel {
   // ---------------------------------------------------------------- calibration
   // what: 'steer' (turn right), 'thr' / 'brk' / 'clu' (press fully and release)
   calibrate(what, gp, done) {
-    this.cal = { what, base: [...gp.axes], ext: [...gp.axes], t0: performance.now(), done, peak: -1, axis: -1 };
+    const bv = gp.buttons.map((b) => b?.value || 0);
+    this.cal = { what, base: [...gp.axes], ext: [...gp.axes], bmax: bv.slice(), b0: bv, t0: performance.now(), done, axis: -1 };
   }
 
   cancelCal() { if (this.cal) { const d = this.cal.done; this.cal = null; d?.(false); } }
@@ -133,6 +167,22 @@ export class Wheel {
       if (d > bd) { bd = d; best = i; }
     }
     const age = performance.now() - C.t0;
+    // pedals that are analogue buttons (XInput triggers): pressed past half and let go again
+    if (C.what !== 'steer') {
+      const taken = new Set([c.thr?.btn, c.brk?.btn, c.clu?.btn].filter((x) => x != null));
+      taken.delete(c[C.what]?.btn);
+      gp.buttons.forEach((b, i) => {
+        const v = b?.value || 0;
+        if (taken.has(i) || C.b0[i] > 0.2) return;
+        if (v > C.bmax[i]) C.bmax[i] = v;
+        if (C.bmax[i] > 0.6 && v < 0.15 && bd < 0.5 && age > 300) {
+          c[C.what] = { btn: i };
+          if (C.what === 'thr') this.thrActive = false;
+          this._finish(true);
+        }
+      });
+      if (!this.cal) return;
+    }
     if (C.what === 'steer') {
       // the axis that moved most while turning right
       if (bd > 0.25) {
@@ -166,7 +216,13 @@ export class Wheel {
 export function bindWheelUI(wheel, $) {
   const root = $('wheelCfg');
   if (!root) return;
-  const name = $('wheelName'), msg = $('wheelMsg'), gain = $('wheelGain'), mode = $('wheelThrMode');
+  const name = $('wheelName'), msg = $('wheelMsg'), gain = $('wheelGain'), mode = $('wheelThrMode'), kind = $('wheelKind');
+  kind.value = xinputWheel() ? 'xinput' : 'auto';
+  kind.addEventListener('change', () => {
+    xinputWheel(kind.value === 'xinput');
+    wheel.id = null; lastId = undefined;             // re-detect with the new choice
+    msg.textContent = kind.value === 'xinput' ? 'XInput のパッドをハンコンとして使います（ハンドル＝左スティック、アクセル＝右トリガー、ブレーキ＝左トリガー、パドル＝LB／RB）' : '';
+  });
   const bars = {};
   root.querySelectorAll('.wBar').forEach((b) => { bars[b.dataset.k] = b; });
   const PROMPT = { steer: 'ハンドルを右に回してください', thr: 'アクセルを奥まで踏んで、離してください',
@@ -185,7 +241,8 @@ export function bindWheelUI(wheel, $) {
     msg.textContent = PROMPT[what] + '（12 秒以内）';
     wheel.calibrate(what, gp, (ok) => {
       btn.classList.remove('on');
-      msg.textContent = ok ? `${LABEL[what]}を割り当てました（軸 ${what === 'steer' ? wheel.cfg.steer.axis : wheel.cfg[what].axis}）` :
+      const a = what === 'steer' ? wheel.cfg.steer : wheel.cfg[what];
+      msg.textContent = ok ? `${LABEL[what]}を割り当てました（${a.btn != null ? 'ボタン ' + a.btn : '軸 ' + a.axis}）` :
         `${LABEL[what]}の割り当てを中止しました（動きを検出できませんでした）`;
     });
   }));
@@ -196,7 +253,7 @@ export function bindWheelUI(wheel, $) {
     if (!root.offsetParent) return;                 // options not on screen
     const gp = wheel.find(pads());
     if (!gp) { if (lastId !== null) { name.textContent = '未接続 — つないでハンドルを少し回してください'; lastId = null; } return; }
-    if (gp.id !== lastId) { lastId = gp.id; name.textContent = gp.id.replace(/\s*\(.*?\)\s*/g, ' ').trim().slice(0, 60); syncSelects(); }
+    if (gp.id !== lastId) { lastId = gp.id; name.textContent = gp.id.replace(/\s*\(.*?\)\s*/g, ' ').trim().slice(0, 60) + (wheel.xinput ? '（XInput ハンコンとして使用）' : ''); syncSelects(); }
     const S = wheel.read(gp, () => {});
     const c = wheel.cfg;
     const set = (k, v, on) => { const b = bars[k]; if (!b) return; b.classList.toggle('off', !on); const i = b.firstChild;
