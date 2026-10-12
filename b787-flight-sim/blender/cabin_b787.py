@@ -288,10 +288,11 @@ def fabric_texture(W=512):
 
 
 def lining_texture(W=512):
-    """Sidewall / bin / ceiling laminate (1 m tile): a fine stipple grain, near white."""
-    v = 0.95 + 0.05 * (_tile_noise(W, [(64, 1.0), (256, 1.0)], 21) - 0.5) * 2
+    """Sidewall / bin / ceiling laminate (1 m tile): a fine stipple grain, near white.  Only the
+    millimetre-scale stipple: the coarser (1.5 cm) mottle read as clouds on the big ceiling panels."""
+    v = 0.97 + 0.012 * (_tile_noise(W, [(256, 1.0)], 21) - 0.5) * 2
     rng = np.random.default_rng(22)
-    v *= 0.985 + 0.03 * rng.random((W, W)).astype(np.float32)
+    v *= 0.992 + 0.016 * rng.random((W, W)).astype(np.float32)
     col = np.stack([v, v, v], -1)
     Image.fromarray((np.clip(col, 0, 1) * 255 + 0.5).astype(np.uint8), "RGB").save(
         os.path.join(TEX, "cabin_grain.jpg"), quality=85)
@@ -1515,7 +1516,26 @@ def cabin_light_info():
 
 
 # --------------------------------------------------------------------------- baked ambient occlusion
-def bake_vertex_ao(targets, occluders, distance, samples=48, lo=0.36):
+def _smooth_vertex_values(me, v, iters):
+    """average each vertex with its edge neighbours (the per-vertex AO is noisy and the cabin
+    panels are coarse grids: the noise came out as large blotchy triangles)"""
+    if iters <= 0 or not len(me.edges):
+        return v
+    e = np.empty(len(me.edges) * 2, np.int64)
+    me.edges.foreach_get("vertices", e)
+    e = e.reshape(-1, 2)
+    for _ in range(iters):
+        acc = v.copy()
+        cnt = np.ones_like(v)
+        np.add.at(acc, e[:, 0], v[e[:, 1]])
+        np.add.at(acc, e[:, 1], v[e[:, 0]])
+        np.add.at(cnt, e[:, 0], 1.0)
+        np.add.at(cnt, e[:, 1], 1.0)
+        v = acc / cnt
+    return v
+
+
+def bake_vertex_ao(targets, occluders, distance, samples=48, lo=0.36, smooth=0):
     """Cycles AO into a vertex colour attribute 'AO' (exported as COLOR_0, multiplies the albedo).
     Only targets + occluders are renderable during the bake."""
     import bpy
@@ -1548,6 +1568,8 @@ def bake_vertex_ao(targets, occluders, distance, samples=48, lo=0.36):
         a.data.foreach_get("color", buf)
         b4 = buf.reshape(-1, 4)
         v = lo + (1 - lo) * np.clip((b4[:, 0] - 0.04) / 0.92, 0, 1) ** 0.85
+        if smooth and a.domain == "POINT" and len(v) == len(o.data.vertices):
+            v = _smooth_vertex_values(o.data, v, smooth)
         b4[:, 0] = b4[:, 1] = b4[:, 2] = v
         b4[:, 3] = 1.0
         a.data.foreach_set("color", buf)
@@ -1574,7 +1596,7 @@ def bake_cabin(root, protos, seats):
         ob.matrix_world = Matrix.Translation(tuple(d)) @ pr.matrix_world
         root.users_collection[0].objects.link(ob)
         tmp.append(ob)
-    bake_vertex_ao(statics, tmp, 0.9, samples=40, lo=0.30)
+    bake_vertex_ao(statics, tmp, 0.9, samples=64, lo=0.30, smooth=3)
     for ob in tmp:
         bpy.data.objects.remove(ob)
     pax = [o for n, o in P.items() if n.startswith("Proto_Pax")]
