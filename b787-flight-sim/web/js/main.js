@@ -32,6 +32,7 @@ import { MCP3D } from './mcp3d.js';
 import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
 import { ARFF, Evacuation } from './emergency.js';
+import { Terminal, patchShellClip } from './terminal.js';
 import { UISound } from './uisound.js';
 import { bindWheelUI } from './wheel.js';
 import { configureObstacles } from './obstacles.js';
@@ -82,7 +83,7 @@ const MODES = [
     desc: '離陸から着陸までを、実際に操縦しながら覚えます（約 5 分）。はじめての人はここから。', slides: [], scen: null, preset: {} },
   { id: 'beginner', icon: '🔰', name: '初心者モード', en: 'Beginner', badge: 'おすすめ', img: 'mode_beginner.jpg',
     desc: '管制の指示を日本語に訳し、次にやる操作を画面でガイド。羽田のゲートから出発します。',
-    slides: ['type', 'env', 'opts'], scen: ['gate', 'rwy27', 'final'], preset: { scenario: 'gate', beginner: true, weather: 'clear', wind: 5, turb: 0, tod: 10 } },
+    slides: ['type', 'env', 'opts'], scen: ['gate', 'terminal', 'rwy27', 'final'], preset: { scenario: 'gate', beginner: true, weather: 'clear', wind: 5, turb: 0, tod: 10 } },
   { id: 'free', icon: '✈', name: 'フリーフライト', en: 'Free flight', img: 'mode_free.jpg',
     desc: 'すべての設定を自由に。離陸・進入・遊覧から選び、機種・重量・塗装・天候まで細かく決めます。',
     slides: ['flight', 'type', 'load', 'env', 'opts'], scen: null, preset: { beginner: false } },
@@ -106,7 +107,7 @@ const MODES = [
 // for the current scenario
 const SETTINGS_MODE = { id: 'settings', icon: '⚙', name: '詳細設定', en: 'Settings', slides: ['load', 'opts'], scen: null, preset: {} };
 // options remembered in this browser
-const SAVED_OPTS = ['traffic', 'atcVoice', 'atcNoise', 'sound', 'menuMusic', 'quality', 'frameGen'];
+const SAVED_OPTS = ['traffic', 'atcVoice', 'atcNoise', 'sound', 'menuMusic', 'quality', 'frameGen', 'termStyle'];
 const FAILS = [
   { id: 'engineFire', icon: '🔥', name: 'エンジン火災', en: 'Engine fire' },
   { id: 'engineFail', icon: '⚙', name: 'エンジン停止', en: 'Engine failure' },
@@ -179,6 +180,7 @@ const SCENARIOS = [
   { id: 'rwy27', name: '滑走路27 離陸 / Takeoff RWY 27', note: 'Flaps 5 · Shift+R で TOGA、VR で ↓ で機首上げ' },
   { id: 'rwy09', name: '滑走路09 離陸 / Takeoff RWY 09', note: '市街地方向へ離陸 (towards the port)' },
   { id: 'gate', name: 'ゲート7 プッシュバック / Gate 7', note: 'J でプッシュバック、P でパーキングブレーキ解除' },
+  { id: 'terminal', name: 'ターミナルから出発 / From the terminal', note: 'チェックイン → 保安検査 → 搭乗口まで歩いて搭乗（WASD で歩く・Enter で手続き）。海外の空港仕様はオプションで' },
   { id: 'ils27', name: 'ILS 27 進入 12nm / ILS approach', note: 'AP が LOC/GS を捕捉。ギア・フラップを出して着陸' },
   { id: 'final', name: 'ショートファイナル 4nm / Short final', note: '手動着陸。PAPI を見て 3° パスを維持' },
   { id: 'apt2', name: '目的地ファイナル 5nm / Destination final', note: 'フライト設定で選んだ目的地空港への最終進入（ILS あり）' },
@@ -265,6 +267,8 @@ class App {
     const lodGltf = this.types.b789.lod ? { scene: this.types.b789.lod } : null;
     setLoad(0.92, 'building scene…');
     this.world.attachWorldGLB(worldGltf);
+    // the terminal interior cuts the stairwell out of the shell's fill boxes (terminal.js)
+    this.world.worldRoot?.getObjectByName('Terminal')?.traverse((o) => { if (o.isMesh) [].concat(o.material).forEach(patchShellClip); });
     this.world.signAnchors = world.signs || null;
     this.airports = loadAirportNames();
     setAirportNames(this.airports);
@@ -305,6 +309,8 @@ class App {
     this.livery = loadSavedLivery();
     this.instruments = new Instruments($('pfd'), $('nd'), $('eicas'), $('hud'), world);
     this.rig = new CameraRig(this.camera, canvas, meta, world);
+    this.terminal = this.rig.terminal = new Terminal(this);
+    $('termStyle')?.addEventListener('change', () => this.terminal.setStyle($('termStyle').value));
     this.installType(sel);
     this.mishap = new Mishap(this);
     this.arff = new ARFF(this, () => loadGLB(this.loader, ASSET + 'arff' + MODEL_EXT, () => {}));
@@ -1046,7 +1052,7 @@ class App {
     sys.ap.on = false; sys.at.on = false;
     sys.flapLever = 0; fm.ctl.flapAngle = 0; fm.ctl.slat = 0;
     sys.gearLever = true; fm.ctl.gearPos = 0;
-    if (['gate', 'rwy27', 'rwy09', 'auto'].includes(id)) {
+    if (['gate', 'terminal', 'rwy27', 'rwy09', 'auto'].includes(id)) {
       const r = id === 'rwy09' ? r09 : r27, d = runwayDir(r);
       fm.reset(new V3(r.threshold[0] + d.x * 300, gy, r.threshold[2] + d.z * 300), r.heading, 0, 0, true);
       fm.ctl.parkingBrake = true;
@@ -1125,7 +1131,7 @@ class App {
         this.autoFlight = new AutoFlight(fm, sys, { dep: r, dest, name: aptName(dap.id) });
         this.autoFlight.onMessage = (m) => this.toast('🛫 ' + m, 4000);
       }
-    } else if (id === 'gate') {
+    } else if (id === 'gate' || id === 'terminal') {
       const st = W.stands[6];
       skipStand = st.id;
       // (twin fuselage: the left fuselage on the stand centre line, at the jet bridge)
@@ -1135,6 +1141,8 @@ class App {
       sys.selectRunway(r27);
       this.rig.setView('orbit');
       this.rig.orbitYaw = 0.9; this.rig.dist = 120;
+      // from the terminal: start at the departures entrance, walk to gate 7 and board
+      if (id === 'terminal') { this.terminal.leave(); this.rig.setView('terminal'); this._termFresh = true; }
     } else if (id === 'ils27' || id === 'final') {
       const r = r27;
       const d = runwayDir(r);
@@ -1285,7 +1293,7 @@ class App {
     this.panelOn = this.ui.panel;
     const b = document.body.classList;
     b.toggle('noMcp', !this.ui.mcp); b.toggle('noInfo', !this.ui.info); b.toggle('noRadio', !this.ui.radio);
-    $('panel').classList.toggle('hidden', !this.panelOn || this.rig.view === 'cockpit' || this.rig.view === 'ife');
+    $('panel').classList.toggle('hidden', !this.panelOn || this.rig.view === 'cockpit' || this.rig.view === 'ife' || this.rig.view === 'terminal');
     const on = { btnPanel: this.panelOn, btnMcp: this.ui.mcp, btnInfo: this.ui.info, btnRadio: this.ui.radio };
     for (const [id, v] of Object.entries(on)) $(id)?.classList.toggle('on', !!v);
   }
@@ -1293,6 +1301,7 @@ class App {
   // ------------------------------------------------------------------- commands
   command(c) {
     const sys = this.sys, fm = this.fm, o = fm.out;
+    if (c === 'interact') { this.terminal.interact(); return; }
     if (c === 'fids' || c === 'fidsArr') {
       // the board of the airport you are nearest to (departures / arrivals)
       const na = nearestAirport(this.fm.pos.x, this.fm.pos.z), kind = c === 'fids' ? 'dep' : 'arr';
@@ -1355,7 +1364,7 @@ class App {
       case 'view': {
         const v = this.rig.next();
         if ((v === 'cabin' || v === 'walk' || v === 'wing' || v === 'ife') && !this.cabin.group && this.cabin.available) this.toast('機内を読み込み中… Loading cabin');
-        $('panel').classList.toggle('hidden', !this.panelOn || v === 'cockpit' || v === 'ife');
+        $('panel').classList.toggle('hidden', !this.panelOn || v === 'cockpit' || v === 'ife' || v === 'terminal');
         this.toast('視点 ' + VIEW_NAMES[v]);
         break;
       }
@@ -1613,6 +1622,23 @@ class App {
     } else if (!burning) this._sprayT = 0;
   }
 
+  // boarding at the gate (terminal.js): into the cabin at the forward door, walking
+  boardFromTerminal(F) {
+    const C = this.meta.cabin;
+    if (!C) { this.rig.setView('cockpit'); this.toast(`ご搭乗ありがとうございます Welcome aboard ${F.flight}`, 4000); return; }
+    this.rig.setView('walk');
+    // standing in the aisle beside your seat, facing it
+    const me = C.seats[C.mySeat ?? -1], aisles = C.aisles || [-0.955];
+    if (me) {
+      const az = aisles.reduce((b, z) => (Math.abs(z - me.p[2]) < Math.abs(b - me.p[2]) ? z : b), aisles[0]);
+      this.rig.walk = { C, x: me.p[0], z: az };
+      this.rig.yaw = me.p[2] < az ? Math.PI / 2 : -Math.PI / 2;
+      this.rig.pitch = -0.25;
+    } else this.rig.walk = null;
+    if (!this.cabin.group && this.cabin.available) this.toast('機内を読み込み中… Loading cabin');
+    this.toast(this.terminal.style === 'intl' ? `Welcome aboard ${F.flight} to ${F.dest}. Your seat is ${F.seat}.` : `ご搭乗ありがとうございます。${F.flight} ${F.dest}行き、お座席は ${F.seat} です`, 5000);
+  }
+
   toast(msg, ms = 2200) {
     const t = $('toast');
     t.textContent = msg;
@@ -1769,9 +1795,20 @@ class App {
         this.cabin.ife.setSafetyAudio(this.audio.enabled ? g : 0, cut, this.paused);
       }
     }
-    this.input.walk = this.rig.view === 'walk';
+    // the terminal: in when its view is chosen (at the home airport), out otherwise
+    if (this.rig.view === 'terminal') {
+      if (!this.terminal.available()) this.rig.setView('chase');
+      else if (!this.terminal.active || this._termFresh) {
+        this.terminal.setStyle($('termStyle')?.value);
+        this.terminal.enter(!!this._termFresh); this._termFresh = false;
+      }
+    } else if (this.terminal.active) this.terminal.leave();
+    document.body.classList.toggle('inTerminal', this.terminal.active);
+    this.input.walk = this.rig.view === 'walk' || this.rig.view === 'terminal';
+    this.input.terminal = this.rig.view === 'terminal' && !this.paused;
     this.rig.walkInput = this.input.walk && !this.paused ? this.input.walkAxes() : null;
     this.rig.update(dt, fm, this.visual.root);
+    this.terminal.update(this.paused ? 0 : dt);
     this.world.update(dt, this.camera, (this._wfoc || (this._wfoc = new THREE.Vector3())).set(fm.pos.x, fm.pos.y, fm.pos.z));
     this.updateAirports();
     this.fids?.update(dt);
@@ -1818,7 +1855,7 @@ class App {
     this.vapor.update(dt, fm, { camera: this.camera, humidity: this.world.weather.hum ?? 0.5, light: 1 - this.world.night,
       emit: (p, v, life, size, grow, alpha) => this.visual.emit(p, v, life, size, grow, alpha) });
     this.rain.update(dt, { camera: this.camera, amount: this.world.rain || 0, wind: fm.wind, camVel: this.camVel,
-      inside: cockpit || ['cabin', 'walk', 'wing', 'ife'].includes(this.rig.view), night: this.world.night });
+      inside: cockpit || ['cabin', 'walk', 'wing', 'ife', 'terminal'].includes(this.rig.view), night: this.world.night });
     this.dynamicResolution(dt);
     const hdr = !!this.post && this.quality !== 'low';
     this.world.aerial = hdr && !!this.post.aerial;

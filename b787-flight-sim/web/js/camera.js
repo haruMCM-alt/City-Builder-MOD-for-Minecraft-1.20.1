@@ -22,10 +22,10 @@ function walkable(C, x, z) {
   return true;
 }
 
-export const VIEWS = ['cockpit', 'chase', 'orbit', 'wing', 'ife', 'cabin', 'walk', 'tower', 'flyby', 'traffic'];
-const INSIDE = new Set(['cockpit', 'wing', 'ife', 'cabin', 'walk']);
+export const VIEWS = ['cockpit', 'chase', 'orbit', 'wing', 'ife', 'cabin', 'walk', 'terminal', 'tower', 'flyby', 'traffic'];
+const INSIDE = new Set(['cockpit', 'wing', 'ife', 'cabin', 'walk', 'terminal']);
 export const VIEW_NAMES = {
-  cockpit: 'コックピット Cockpit', chase: '追尾 Chase', orbit: '外部 Orbit', wing: '客室窓 Cabin window', ife: '座席モニター My seat (IFE)', cabin: '機内 Cabin', walk: '機内を歩く Walk (WASD)',
+  cockpit: 'コックピット Cockpit', chase: '追尾 Chase', orbit: '外部 Orbit', wing: '客室窓 Cabin window', ife: '座席モニター My seat (IFE)', cabin: '機内 Cabin', walk: '機内を歩く Walk (WASD)', terminal: 'ターミナルを歩く Terminal (WASD)',
   tower: '管制塔 Tower', flyby: 'フライバイ Fly-by', traffic: 'AI交通 Traffic (B: 切替)',
 };
 
@@ -54,7 +54,7 @@ export class CameraRig {
       const dx = e.clientX - this._drag.x, dy = e.clientY - this._drag.y;
       this._drag = { x: e.clientX, y: e.clientY };
       if (INSIDE.has(this.view)) {
-        this.yaw = this.view === 'walk' ? this.yaw - dx * 0.004 : clamp(this.yaw - dx * 0.004, -2.6, 2.6);
+        this.yaw = this.view === 'walk' || this.view === 'terminal' ? this.yaw - dx * 0.004 : clamp(this.yaw - dx * 0.004, -2.6, 2.6);
         this.pitch = clamp(this.pitch - dy * 0.004, -1.2, 1.45);
       } else {
         this.orbitYaw -= dx * 0.005;
@@ -77,15 +77,17 @@ export class CameraRig {
   setView(v) {
     this.view = v;
     this.yaw = 0; this.pitch = v === 'cockpit' ? -0.10 : 0;
-    this.fov = v === 'cockpit' ? 62 : v === 'wing' ? 60 : v === 'ife' ? 44 : v === 'cabin' || v === 'walk' ? 70 : v === 'tower' ? 30 : 55;
+    this.fov = v === 'cockpit' ? 62 : v === 'wing' ? 60 : v === 'ife' ? 44 : v === 'cabin' || v === 'walk' || v === 'terminal' ? 70 : v === 'tower' ? 30 : 55;
     if (v === 'traffic') { this.dist = 110; this.orbitPitch = 0.25; }
     this.flybyPos = null;
     this._init = false;
   }
 
   next() {
-    const i = VIEWS.indexOf(this.view);
-    this.setView(VIEWS[(i + 1) % VIEWS.length]);
+    let i = VIEWS.indexOf(this.view);
+    // the terminal only at the home airport
+    do i = (i + 1) % VIEWS.length; while (VIEWS[i] === 'terminal' && !this.terminal?.available());
+    this.setView(VIEWS[i]);
     return this.view;
   }
 
@@ -155,6 +157,12 @@ export class CameraRig {
         const qp = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.pitch);
         cam.quaternion.copy(q).multiply(qy).multiply(qp);
         cam.near = 0.05;
+        break;
+      }
+      case 'terminal': {
+        // walking through the terminal (terminal.js): world frame
+        if (!this.terminal) { this.setView('chase'); break; }
+        this.terminal.place(cam, dt, this);
         break;
       }
       case 'cabin': {
@@ -244,7 +252,7 @@ export class CameraRig {
   _shake(dt, fm) {
     const inside = INSIDE.has(this.view);
     const chase = this.view === 'chase';
-    if (!inside && !chase) return;
+    if ((!inside && !chase) || this.view === 'terminal') return;
     this._t = (this._t || 0) + dt;
     this._jolt = (this._jolt || 0) * Math.exp(-dt * 5);
     const wow = fm.gear.some((g) => g.onGround);

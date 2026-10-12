@@ -73,6 +73,8 @@ export class Input {
       c: 'view', i: 'panel', u: 'hud', l: 'lights', t: 'time', j: 'pushback', Escape: 'menu', Backspace: 'reset',
       '0': 'direct', m: 'mute', o: 'service', v: 'view', b: 'trafficNext', '9': 'atcVoice', y: 'atc',
     };
+    // walking through the terminal: Enter / Space use the counter, gate ... in front of you
+    if (this.terminal && (k === 'Enter' || k === ' ')) return this.onCommand('interact');
     if (e.shiftKey && k === 'r') return this.onCommand('toga');
     if (e.shiftKey && k === 'f') return this.onCommand('idle');
     if (e.shiftKey && k === 'x') return this.onCommand('extinguish');

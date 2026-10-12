@@ -613,6 +613,7 @@
   #panel { border-radius: 4px 4px 0 0; }
   /* windows closed from the toolbar */
   body.noMcp #mcp, body.noInfo #status, body.noRadio #atc { display: none !important; }
+  body.inTerminal #mcp, body.inTerminal #panel, body.inTerminal #status, body.inTerminal #atc { display: none !important; }
   @media (max-width: 900px) {
     .modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .msTabs { display: none; }
@@ -777,6 +778,12 @@
                 <option value="high">高 High (shadows)</option>
                 <option value="medium">中 Medium</option>
                 <option value="low">低 Low (fast)</option>
+              </select>
+            </label>
+            <label class="inl">ターミナル Terminal
+              <select id="termStyle">
+                <option value="jp" selected>日本の空港 Japanese airport</option>
+                <option value="intl">海外の空港 Overseas airport（出国審査・免税店）</option>
               </select>
             </label>
             <label class="inl">フレーム生成 Frame gen
