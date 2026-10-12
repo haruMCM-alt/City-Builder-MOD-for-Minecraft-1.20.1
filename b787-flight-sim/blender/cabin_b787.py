@@ -51,7 +51,14 @@ CABIN = {
                 aisle_y=1.20),
     "at76": dict(S0=3.95, S1=20.45, BAND=(-0.49, 0.73), CEIL=1.20, BIN_BOT=0.80, BIN_FRONT=0.50, centre=False,
                  aisle_y=0.0),
-}[G.TYPE]
+    # MA-BW: a wide, windowless theatre cabin (no centre bins: an open ceiling over 16 abreast);
+    # the window band carries "virtual window" screens showing the outside
+    "mabw": dict(S0=7.25, S1=31.6, BAND=(-0.95, 0.45), CEIL=1.10, BIN_BOT=0.55, BIN_FRONT=4.0, centre=False,
+                 aisle_y=2.9),
+    # MA-AS gondola: a sightseeing lounge - big panoramic windows, low sills, slim bins
+    "maas": dict(S0=5.8, S1=27.6, BAND=(-0.55, 0.80), CEIL=1.15, BIN_BOT=0.95, BIN_FRONT=1.20, centre=False,
+                 aisle_y=0.0),
+}[G.BASE]
 FL = G.FLOOR_Z                  # cabin floor (design z)
 S0, S1 = CABIN["S0"], CABIN["S1"]
 LINE = 0.13                     # lining inset from the skin
@@ -420,6 +427,8 @@ def materials(tex):
         "mirror": P("Cabin_Mirror", color=h("#dfe6ee"), roughness=0.02, metallic=1.0),
         "porcelain": P("Cabin_Porcelain", color=h("#f7f7f5"), roughness=0.15),
         "glass": P("Cabin_WindowPane", color=h("#9fb6c9"), roughness=0.05, alpha=0.18, blend=True),
+        # virtual window screen (the simulator replaces it with the live outside view)
+        "vwin": P("Cabin_VWin", color=h("#0b0d10"), roughness=0.08, emission=h("#4a6d93"), emission_strength=0.6),
         "screen": P("Cabin_Screen", color=h("#111418"), roughness=0.2, base_tex=tex("cabin_screen.jpg"),
                     emissive_tex=tex("cabin_screen.jpg"), emission_strength=1.2),
         # seats (fabric colours are tinted per airline in the simulator)
@@ -483,6 +492,8 @@ def build_lining(M, parent, col):
         mb.add_grid(P, np.stack([P[..., 0], P[..., 2]], -1), mat=1, outward=("dir", (0, -side, 0)))
     ob = mb.build("Cabin_Lining", [M["wall"], M["lining"], M["dado"]], col=col)
     C.set_parent(ob, parent)
+    if G.NO_WIN:
+        build_virtual_windows(M, parent, col)
 
     # window reveals: rounded-rect tunnels from the lining opening to the skin, plus a tinted pane,
     # framed by a slightly raised bezel that overlaps the edge of the cut-out in the sidewall
@@ -524,6 +535,41 @@ def build_lining(M, parent, col):
                             outward=("dir", (0, -side, 0)))
                 rv.add_box((wc, yy - side * 0.006, zb + 0.008), (0.06, 0.01, 0.014), mat=3)     # pull tab
     ob = rv.build("Cabin_Reveals", [M["lining"], M["glass"], M["shade"], M["dark"], M["reveal"]], col=col)
+    if ob is not None:              # (windowless cabin: no reveals)
+        C.set_parent(ob, parent)
+
+
+def build_virtual_windows(M, parent, col):
+    """windowless cabin: screen panels along the window band (both sides, between the doors) and
+    two on the forward bulkhead; the simulator draws the outside view on them"""
+    mb = C.MeshBuilder(TB)
+    z0, z1 = BAND[0] + 0.12, BAND[1] - 0.06
+    zs = np.linspace(z0, z1, 6)
+    for side in (1, -1):
+        s = S0 + 1.15
+        while s < S1 - 3.2:
+            L = 2.2
+            if any(abs(s + L / 2 - d) < 1.6 for d in DOORS):
+                s += 0.5
+                continue
+            ss = np.linspace(s, s + L, 12)
+            P = np.array([[lining_pt(a, z, side, 0.018) for z in zs] for a in ss])
+            mb.add_grid(P, mat=0, outward=("dir", (0, -side, 0)))
+            # dark bezel just behind the glass edge (following the curved lining like the glass)
+            zb = np.linspace(z0 - 0.04, z1 + 0.04, 8)
+            Pb = np.array([[lining_pt(a, z, side, 0.010) for z in zb] for a in np.linspace(s - 0.04, s + L + 0.04, 12)])
+            mb.add_grid(Pb, mat=1, outward=("dir", (0, -side, 0)))
+            s += L + 0.12
+    # forward bulkhead: a wide screen either side of the flight-deck door
+    for side in (1, -1):
+        ya, yb = side * 0.75, side * 3.6
+        za, zb = FL + 0.95, FL + 2.05
+        q = [(S0 + 0.035, ya, za), (S0 + 0.035, yb, za), (S0 + 0.035, yb, zb), (S0 + 0.035, ya, zb)]
+        mb.add_poly(q, mat=0, outward=("dir", (1, 0, 0)))
+        qb = [(S0 + 0.03, ya - side * 0.04, za - 0.04), (S0 + 0.03, yb + side * 0.04, za - 0.04),
+              (S0 + 0.03, yb + side * 0.04, zb + 0.04), (S0 + 0.03, ya - side * 0.04, zb + 0.04)]
+        mb.add_poly(qb, mat=1, outward=("dir", (1, 0, 0)))
+    ob = mb.build("Cabin_VirtualWindows", [M["vwin"], M["dark"]], col=col)
     C.set_parent(ob, parent)
 
 
@@ -780,8 +826,8 @@ def build_monuments(M, parent, col):
         lavatory(mb, 45.05, 46.15, 1)
         lavatory(mb, 45.05, 46.15, -1)
         galley(mb, 47.8, 48.9, -1.2, 1.2, -1)
-    elif G.TYPE in MONUMENTS:
-        monuments_table(mb, MONUMENTS[G.TYPE])
+    elif G.BASE in MONUMENTS:
+        monuments_table(mb, MONUMENTS[G.BASE])
     else:
         monuments_787(mb)
     finish_monuments(mb)
@@ -842,6 +888,11 @@ MONUMENTS = {
             ("lav", 25.7, 26.5, 1), ("lav", 25.7, 26.5, -1),
             ("lav", 63.1, 63.9, 1), ("lav", 63.1, 63.9, -1), ("gal", 64.1, 64.8, (-1.2, 1.2, -1))],
     "at76": [("gal", 4.0, 4.7, (-0.3, -1.1, +1)), ("lav", 19.4, 20.3, -1)],
+    "maas": [("gal", 5.85, 6.0, (-0.5, -1.6, +1)), ("lav", 24.55, 25.25, 1), ("gal", 27.0, 27.55, (-0.9, 0.9, -1))],
+    "mabw": [("gal", 7.3, 7.75, (0.85, 3.3, +1)), ("gal", 7.3, 7.75, (-0.85, -3.3, +1)),
+             ("div", 9.5, None, [(2.75, 4.6), (0.45, 2.55), (-2.55, -0.45), (-4.6, -2.75)]),
+             ("div", 15.25, None, [(3.2, 4.7), (0.4, 2.6), (-2.6, -0.4), (-4.7, -3.2)]),
+             ("lav", 30.1, 31.1, 1), ("lav", 30.1, 31.1, -1), ("gal", 30.9, 31.5, (-1.6, 1.6, -1))],
 }
 
 
@@ -938,11 +989,23 @@ ZONES = {
     "at76": [
         ("Y", 5.2, 0.76, 19, [(0.70, 2, 0.43), (-0.70, 2, 0.43)], "AC" "DF"),
     ],
-}[G.TYPE]
+    # MA-AS gondola lounge: 2-2 armchairs, one row per panoramic window
+    "maas": [
+        ("J", 8.52, 1.12, 15, [(1.30, 2, 0.62), (-1.30, 2, 0.62)], "AC" "DF"),
+    ],
+    # MA-BW theatre cabin: business 2-3-3-2, economy 3-5-5-3, three aisles
+    "mabw": [
+        ("J", 9.8, 1.25, 4, [(3.795, 2, 0.62), (1.205, 3, 0.62), (-1.205, 3, 0.62), (-3.795, 2, 0.62)],
+         "AC" "DEF" "GHJ" "KL"),
+        ("Y", 15.8, 0.81, 18, [(3.88, 3, 0.47), (1.45, 5, 0.47), (-1.45, 5, 0.47), (-3.88, 3, 0.47)],
+         "ABC" "DEFGH" "JKLMN" "PQR"),
+    ],
+}[G.BASE]
 AISLES = {"b789": [0.955, -0.955], "b738": [0.0], "b763": [0.985, -0.985],
-          "ma3": [0.0], "ma7": [0.955, -0.955], "ma9": [1.30, -1.30], "b744": [1.20, -1.20], "at76": [0.0], "maw": [1.20, -1.20]}[G.TYPE]   # aisle centres (design y)
+          "ma3": [0.0], "ma7": [0.955, -0.955], "ma9": [1.30, -1.30], "b744": [1.20, -1.20], "at76": [0.0], "maw": [1.20, -1.20],
+          "mabw": [2.9, 0.0, -2.9], "maas": [0.0]}[G.BASE]   # aisle centres (design y)
 MY_SEAT_S = {"b789": 36.2, "b738": 20.57, "b763": 30.27, "ma3": 22.0, "ma7": 37.28, "ma9": 34.16,
-             "b744": 36.53, "at76": 11.28, "maw": 43.3}[G.TYPE]
+             "b744": 36.53, "at76": 11.28, "maw": 43.3, "mabw": 20.66, "maas": 14.12}[G.BASE]
 
 
 def seat_map():
@@ -978,6 +1041,8 @@ def zones_for_bins():
 # the first window (the simulator lights the cabin through the same open part of each window)
 def shade_map():
     st = windows()
+    if not st:
+        return S0, {1: {}, -1: {}}
     x0 = float(st[0])
     rng = np.random.default_rng(1234 + len(st))
     out = {1: {}, -1: {}}
@@ -1440,7 +1505,7 @@ def cabin_light_info():
     ceiling / bin heights, the sidewall at the windows, the window band and the shade state of every
     window (index k counted in pitches from the first window; 1 = closed or no window)"""
     st = windows()
-    nk = int(round((st[-1] - SHADE_X0) / WIN_PITCH)) + 1
+    nk = int(round((st[-1] - SHADE_X0) / WIN_PITCH)) + 1 if st else 0
     r3 = lambda v: round(float(v), 3)          # noqa: E731
     return dict(floor=r3(FL), ceil=r3(CEIL), binBot=r3(BIN_BOT), binFront=r3(BIN_FRONT),
                 wall=r3(lining_y(MY_SEAT_S, WIN_Z)), winY=[r3(WIN_Z - WIN_H / 2), r3(WIN_Z + WIN_H / 2)],
@@ -1557,7 +1622,8 @@ def build_cabin(col, tex, bake=True):
     my = next((i for i, st in enumerate(seats) if st["l"] == "A" and abs(st["s"] - MY_SEAT_S) < 0.2), None)
     y_win = seats[my]["y"] - 0.07 if my is not None else 1.0
     # the window beside your seat: the eye sits at its height, close to the reveal, a little aft
-    win_s = float(min(windows(), key=lambda w: abs(w - MY_SEAT_S)))
+    # (windowless cabin: the "window" is the virtual-window screen beside your seat)
+    win_s = float(min(windows(), key=lambda w: abs(w - MY_SEAT_S))) if windows() else MY_SEAT_S + 0.1
     if G.TYPE != "b789":
         # small windows: put the eye close to the window reveal so the wing is in view
         y_win = max(y_win, lining_y(win_s, WIN_Z) - 0.22)

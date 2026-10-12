@@ -27,9 +27,11 @@ const CAB_U = {
   uCabSun: { value: new THREE.Vector4(0, 1, 0, 0) },               // sun direction (cabin frame), strength
   uCabL: { value: new THREE.Vector4(1, 1, 0, 0) },                 // LED level, daylight, mood, -
   uShL: { value: new Float32Array(NSH).fill(1) }, uShR: { value: new Float32Array(NSH).fill(1) },
+  uCabFold: { value: 0 },                                          // twin fuselage: |z| offset of each cabin
 };
 const CAB_VERT_PARS = `
 uniform mat4 uCabInv;
+uniform float uCabFold;
 varying vec3 vCabP;
 #ifdef CAB_VARIANT
 attribute float aHide;
@@ -44,6 +46,7 @@ transformed *= 1.0 - aHide;
   cw = instanceMatrix * cw;
   #endif
   vCabP = (uCabInv * (modelMatrix * cw)).xyz;
+  if (uCabFold > 0.0) vCabP.z -= sign(vCabP.z) * uCabFold;
 }`;
 const CAB_FRAG_PARS = `
 uniform mat3 uCabV2C;
@@ -198,6 +201,7 @@ export class Cabin {
     const L = this.info.light;
     if (!L) return;
     CAB_U.uCabG.value.set(L.floor, L.ceil, L.binBot, L.wall);
+    CAB_U.uCabFold.value = L.fold || 0;
     CAB_U.uCabB.value.set(L.binFront, L.winY[0], L.winY[1], L.winW / 2);
     const n = Math.min(NSH, L.shadeL.length);
     CAB_U.uCabWin.value.set(L.winX0, L.winDX, n, 0);
@@ -226,6 +230,7 @@ export class Cabin {
     root.traverse((o) => {
       if (!o.isMesh) return;
       o.castShadow = false; o.receiveShadow = false;
+      if (o.material && o.material.name === 'Cabin_VWin') { o.material = this._vwinMaterial(); return; }
       this._prepMat(o.material);
     });
     this.group = new THREE.Group();
@@ -276,6 +281,59 @@ export class Cabin {
     if (this._livery) this.setLivery(this._livery);
     this.setPassengers(this.pax, this._seed || 1);
     return this;
+  }
+
+  // windowless cabin (blended wing body): the "virtual window" screens show the outside - a
+  // low-resolution cube view rendered from the cabin a few times a second (without the aircraft),
+  // looked up along the view ray as if the screen were a window
+  _vwinMaterial() {
+    if (!this.vwRT) {
+      this.vwRT = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
+      this.vwCam = new THREE.CubeCamera(2, 500000, this.vwRT);      // (the sky box is 200 km across)
+    }
+    return this.vwMat || (this.vwMat = new THREE.ShaderMaterial({
+      name: 'Cabin_VWinLive',
+      uniforms: { uCube: { value: this.vwRT.texture }, uGain: { value: 1.0 } },
+      vertexShader: /* glsl */`
+        #include <common>
+        #include <logdepthbuf_pars_vertex>
+        varying vec3 vW;
+        void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w;
+          #include <logdepthbuf_vertex>
+        }`,
+      fragmentShader: /* glsl */`
+        #include <common>
+        #include <logdepthbuf_pars_fragment>
+        uniform samplerCube uCube; uniform float uGain; varying vec3 vW;
+        void main() {
+          #include <logdepthbuf_fragment>
+          vec3 d = normalize(vW - cameraPosition);
+          vec3 c = textureCube(uCube, d).rgb * uGain;
+          // faint display structure: row lines and a slight cool cast
+          c *= 0.96 + 0.04 * step(0.5, fract(gl_FragCoord.y * 0.5));
+          gl_FragColor = vec4(c * vec3(0.97, 1.0, 1.04), 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+    }));
+  }
+
+  _updateVirtual(dt) {
+    if (!this.vwRT || !this.renderer || !this.scene) return;
+    this._vwT = (this._vwT || 0) - dt;
+    if (this._vwT > 0 && this._vwDone) return;
+    this._vwT = 0.25; this._vwDone = true;
+    const root = this.visual.root, R = this.renderer;
+    // (the aircraft and what trails it - tyre smoke, wing-tip vapour - stay out of the view)
+    const hide = [root, this.visual.particles, ...(this.vwHide || [])].filter(Boolean);
+    const vis = hide.map((o) => o.visible), sm = R.shadowMap.autoUpdate;
+    for (const o of hide) o.visible = false;
+    R.shadowMap.autoUpdate = false;
+    root.updateMatrixWorld();
+    this.vwCam.position.set(0, 1.5, 0).applyMatrix4(root.matrixWorld);
+    this.vwCam.update(R, this.scene);
+    hide.forEach((o, i) => { o.visible = vis[i]; });
+    R.shadowMap.autoUpdate = sm;
   }
 
   _prepMat(m) {
@@ -445,6 +503,7 @@ export class Cabin {
       this.ife.update(dt, inside, ifeView, data || {});
     }
     if (!inside) return;
+    this._updateVirtual(dt);
     // cabin frame: the aircraft group's inverse, and view -> cabin for the normals
     const g = this.group;
     g.updateMatrixWorld();

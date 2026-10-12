@@ -8,6 +8,8 @@ import { patchWeathering, weatherKind, upgradeAircraftMaterials } from './shadin
 const COCKPIT_PARTS = ['CockpitShell', 'CockpitInterior', 'CockpitDetail', 'HUD_Combiner', 'Throttle_L', 'Throttle_R', 'Yoke_L', 'Yoke_R',
   'Display_PFD_L', 'Display_ND_L', 'Display_EICAS', 'Display_ND_R', 'Display_PFD_R'];
 
+const AX_X = new THREE.Vector3(1, 0, 0);
+
 const LIGHTS = {
   NavLight_L: { color: 0xff2020, kind: 'nav', size: 1.6 },
   NavLight_R: { color: 0x20ff50, kind: 'nav', size: 1.6 },
@@ -34,7 +36,8 @@ export class AircraftVisual {
     this.quality = quality;
     // wing flex law (787-9: bends outboard of 3 m, ~ (y/27 m)^2, everything ahead of x = -15.5 m)
     const kS = (meta.span || 60.12) / 60.12, kL = (meta.length || 62.81) / 62.81, kW = (meta.fusW || 5.77) / 5.77;
-    this.flexR = 3.0 * kW; this.flexD = (27 * kS) ** 2; this.flexX = -15.5 * kL;
+    // (twin fuselage: the wing bends only outboard of the fuselages)
+    this.flexR = meta.flexRoot || 3.0 * kW; this.flexD = (27 * kS) ** 2; this.flexX = -15.5 * kL;
     // wing flex / broken-wing cut apply forward of flexX: between the wing tip trailing edge
     // (incl. a swept winglet: 747) and the horizontal tail, from the model's light positions
     const Lp = meta.lights;
@@ -60,6 +63,8 @@ export class AircraftVisual {
       .map((p) => [p.name, p.name.startsWith('MainGear_L') ? 1 : 2]);
     this.mainDoors = meta.parts.filter((p) => p.kind === 'door' && p.name.startsWith('MainDoor_')).map((p) => p.name);
     this.fanParts = meta.parts.filter((p) => p.kind === 'fan').map((p) => [p.name, p.name.startsWith('Fan_R') ? 1 : 0]);
+    // airship: ducted propellers tilting for vectored thrust
+    this.vectorParts = meta.parts.filter((p) => p.kind === 'vector').map((p) => p.name);
     const wr = (g) => (meta.parts.find((p) => p.kind === 'wheel' && p.gear === g) || { radius: 0.6 }).radius;
     this.wheelR = [wr(0), wr(1)];
     this.cockpit = COCKPIT_PARTS.map((n) => this.root.getObjectByName(n)).filter(Boolean);
@@ -150,8 +155,10 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
             .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
   if (vDmgP.x > uFlexK.z && (vDmgP.z < -uCut.x || vDmgP.z > uCut.y)) discard;
   if (vDmgP.y > uCut.z && vDmgP.x < uCut.w) discard;`);
-          if (m.name === 'B787_Fuselage' && self.livU) patchLiveryShader(sh, self.livU, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
-          if (m.name === 'B787_Tail' && self.finU) patchFinShader(sh, self.finU, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
+          // (twin fuselage: each fuselage paints in its own frame - the mesh is shared, centred)
+          if (m.name === 'B787_Fuselage' && self.livU) patchLiveryShader(sh, self.livU, meta.fusY ? 'position' : '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
+          // (twin fuselage / wing-tip fins: each fin is a copy of one centred mesh, painted in its own frame)
+          if (m.name === 'B787_Tail' && self.finU) patchFinShader(sh, self.finU, meta.fusY || meta.tipFins ? 'position' : '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
           if (wx) patchWeathering(sh, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz', wx);
         };
         const wx = weatherKind(m.name);
@@ -208,7 +215,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
   // show structural damage (see FlightModel.dmg): lost outer wings, fin, separated engines
   setDamage(D) {
     const m = this.meta;
-    const half = (m.span || 60) / 2, root = (m.fusW || 5.77) / 2 + 0.3;
+    const half = (m.span || 60) / 2, root = m.flexRoot || (m.fusW || 5.77) / 2 + 0.3;
     const cut = (f) => (f > 0 ? root + (half - root) * (1 - f) : 1e5);
     const u = this.flexUniforms.uCut.value;
     const finTop = (m.height || 17) + m.groundY, base = (m.fusH || 5.97) / 2;
@@ -324,8 +331,12 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
   setPart(name, angleRad) {
     const p = this.parts[name];
     if (!p) return;
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angleRad);
+    const q = this._q || (this._q = new THREE.Quaternion());
+    q.setFromAxisAngle(AX_X, angleRad);
     p.obj.quaternion.copy(p.rest).multiply(q);
+    // twin fuselage: the right fuselage's copy ("..._B") moves with it
+    const t = this.parts[name + '_B'];
+    if (t) t.obj.quaternion.copy(t.rest).multiply(q);
   }
 
   update(dt, fm, sys, env) {
@@ -355,8 +366,14 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     this.setPart('Flaperon_L', clamp(droop + ail * 0.8, -20 * DEG, 30 * DEG));
     this.setPart('Flaperon_R', clamp(droop - ail * 0.8, -20 * DEG, 30 * DEG));
     const aDroop = Math.min(fa * 0.2, 5) * DEG;
-    this.setPart('Aileron_L', clamp(aDroop + ail, -25 * DEG, 25 * DEG));
-    this.setPart('Aileron_R', clamp(aDroop - ail, -25 * DEG, 25 * DEG));
+    // tailless (blended wing body): the ailerons and flaperons are elevons - pitch on both sides
+    const elv = this.meta.elevons ? clamp(ctl.elevator * 0.9 - ctl.stab * 0.5, -18 * DEG, 18 * DEG) : 0;
+    if (elv) {
+      this.setPart('Flaperon_L', clamp(droop + ail * 0.8 + elv, -25 * DEG, 30 * DEG));
+      this.setPart('Flaperon_R', clamp(droop - ail * 0.8 + elv, -25 * DEG, 30 * DEG));
+    }
+    this.setPart('Aileron_L', clamp(aDroop + ail + elv, -25 * DEG, 25 * DEG));
+    this.setPart('Aileron_R', clamp(aDroop - ail + elv, -25 * DEG, 25 * DEG));
     const sbDeg = ctl.speedbrake * 32 + ctl.groundSpoiler * 60;
     const rs = ctl.rollSpoiler;
     for (let i = 1; i <= 7; i++) {
@@ -372,6 +389,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     this.setPart('HStab', -ctl.stab * 0.6);
     this.setPart('Elevator_L', ctl.elevator); this.setPart('Elevator_R', ctl.elevator);
     this.setPart('Rudder', ctl.rudder);
+    for (const n of this.vectorParts) this.setPart(n, ctl.vector || 0);
     // ---- gear: doors open in transit, legs swing, struts compress ------------------
     const gp = ctl.gearPos;
     const legT = smoothstep(0.18, 0.86, gp);
@@ -381,7 +399,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     this.setPart('NoseDoor_L', doorT * 88 * DEG); this.setPart('NoseDoor_R', doorT * 88 * DEG);
     for (const n of this.mainDoors) this.setPart(n, doorT * 85 * DEG);
     const gearVis = gp < 0.97;
-    const strut = this._strut || (this._strut = [['NoseGear', 0], ...this.mainLegs]);
+    const strut = this._strut || (this._strut = [['NoseGear', 0], ['NoseGear_B', 0], ...this.mainLegs]);
     // main gear: in the last part of the swing the leg also moves up / inboard so the
     // bogie (axles vertical, tyres flat) tucks into the belly wheel well instead of
     // poking out beside the fuselage
@@ -394,9 +412,9 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
       const ext = gp < 0.05 ? (g.compression - fm.gearExt) : 0;
       p.obj.position.copy(p.pos);
       p.obj.position.y += ext;
-      if (n !== 'NoseGear') {
+      if (gi !== 0) {
         p.obj.position.y += 0.55 * stow;
-        p.obj.position.z -= Math.sign(p.pos.z) * 1.0 * stow;
+        p.obj.position.z -= (p.info.stowSide ?? Math.sign(p.pos.z)) * 1.0 * stow;
       }
     }
     // ---- wheels roll with the ground speed, spin down after lift-off ----------------

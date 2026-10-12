@@ -743,7 +743,7 @@ def build_engine(M, root, col, side, tag=""):
     PARTS.append(dict(name="Fan_" + L, kind="fan", max=0))
 
     # ---- pylon ------------------------------------------------------------------
-    build_pylon(M, root, col, side, cen, tag)
+    (build_pylon_top if G.BWB else build_pylon)(M, root, col, side, cen, tag)
 
 
 def build_sponsons(M, root, col):
@@ -888,6 +888,78 @@ def build_pylon(M, root, col, side, cen, tag=""):
     mb.add_poly(P[-1, :-1], mat=0, outward=("dir", (1, 0, 0)))
     ob = mb.build("Pylon_" + L, [M["wing"]], col=col)
     C.set_parent(ob, root)
+
+
+def build_pylon_top(M, root, col, side, cen, tag=""):
+    """blended wing body: a short strut from the centre body's upper surface up into the fan cowl"""
+    L = ("L" if side > 0 else "R") + tag
+    y = G.ENG_Y
+    ka, kr = G.ENG_KA, G.ENG_KR
+    le, c = float(G.wing_le(y)), float(G.wing_chord(y))
+    s0, s1 = cen[0] + 0.85 * ka, cen[0] + 4.3 * ka
+    ns = RS(40, 12)
+    ss = np.linspace(s0 - 1.6 * ka, s1 + 1.0 * ka, ns)
+    xs = np.clip((ss - le) / c, 0, 1)
+    zup = G.wing_point(np.full(ns, y), xs, np.ones(ns, bool), 1)[:, 2]
+    t = np.clip((ss - ss[0]) / (ss[-1] - ss[0]), 0, 1)
+    # inside the cowl over its middle, sloping down to fair into the upper surface at both ends
+    top = np.minimum(cen[2] - 1.30 * kr, zup + 0.05 + (cen[2] - 1.30 * kr - zup) * np.sin(t * math.pi) ** 0.35)
+    bottom = zup - 0.12
+    halfw = 0.30 * kr * np.sin(t ** 0.6 * math.pi) ** 0.5 + 0.015
+    na = RS(40, 10)
+    ang = np.linspace(0, 2 * math.pi, na + 1)
+    P = np.zeros((ns, na + 1, 3))
+    ex = 2 / 4.0
+    for i in range(ns):
+        zc, hz = 0.5 * (top[i] + bottom[i]), 0.5 * (top[i] - bottom[i])
+        ca, sa = np.cos(ang), np.sin(ang)
+        P[i, :, 0] = ss[i]
+        P[i, :, 1] = side * y + halfw[i] * np.sign(sa) * np.abs(sa) ** ex
+        P[i, :, 2] = zc - hz * np.sign(ca) * np.abs(ca) ** ex
+    mb = C.MeshBuilder(TB)
+    N, _ = mb.grid_normals(P, wrap_v=True)
+    ctr = np.stack([P[..., 0], np.full(P.shape[:2], side * y), P[..., 2].mean(1, keepdims=True).repeat(na + 1, 1)], -1)
+    if np.sum(N * (P - ctr)) < 0:
+        N = -N
+    mb.add_grid(P, N=N, mat=0)
+    mb.add_poly(P[0, :-1], mat=0, outward=("dir", (-1, 0, 0)))
+    mb.add_poly(P[-1, :-1], mat=0, outward=("dir", (1, 0, 0)))
+    ob = mb.build("Pylon_" + L, [M["wing"]], col=col)
+    C.set_parent(ob, root)
+
+
+def bwb_fins(root, col):
+    """blended wing body: the fin (built on the centre line) is moved to each wing tip, canted out
+    12 deg; the right one is a linked copy ("..._B")"""
+    from mathutils import Matrix
+    yt = G.Y_TIP - 0.05
+    zt = float(G.wing_z(yt))
+    r0 = TB(np.array([G.VT_S_LE0, 0.0, G.VT_Z0]))
+    names = {p["name"]: p for p in PARTS}
+    obs = [bpy.data.objects[n] for n in ("VTail", "Rudder")]
+    copies = []
+    for ob in obs:
+        c = _linked_copy(ob, "_B", root, col)
+        copies.append(c)
+        if ob.name in names:
+            PARTS.append(dict(names[ob.name], name=c.name))
+    for side, group in ((1, obs), (-1, copies)):
+        tip = TB(np.array([G.VT_S_LE0, side * yt, zt]))
+        Mx = Matrix.Translation(tuple(tip)) @ Matrix.Rotation(math.radians(-12.0 * side), 4, "X") @ \
+            Matrix.Translation(tuple(-r0))
+        for ob in group:
+            ob.matrix_basis = Mx @ ob.matrix_basis
+
+
+def bwb_meta(meta):
+    yt = G.Y_TIP - 0.05
+    zt = float(G.wing_z(yt))
+    te0 = float(G.wing_te(0.0))
+    zl = float(G.wing_point(np.array(0.0), np.array(0.97), np.array(False), 1)[2])
+    meta["tailStrike"] = G.to_three([te0 - 0.6, 0, zl])
+    meta["height"] = round(zt + (G.VT_ZTIP - G.VT_Z0) * math.cos(math.radians(12)) - G.GROUND_Z, 2)
+    meta["tipFins"] = True
+    meta["elevons"] = True
 
 
 # ---------------------------------------------------------------------------
@@ -1156,6 +1228,8 @@ def build_gear(M, root, col):
         test = P[:, 0]
         add_part("NoseDoor_" + L, "door", mbd, [M["fuselage"], M["bay"]], h0, h1, test, TE_DOWN, 88, root, col)
 
+    if G.AIRSHIP:
+        return                  # (the airship's main "gear" are its landing pads: airship_b787)
     build_main_gear(M, root, col)
     # body gear (747): a second pair of main legs inboard and aft of the wing gear
     if G.BODY_GEAR:
@@ -1464,14 +1538,22 @@ def build_details(M, root, col):
                          p + np.array([0.05, 0, 0]) + nrm * 0.14, p - np.array([0.02, 0, 0]) + nrm * 0.14])
         mb.add_poly(vane, mat=1)
         mb.add_poly(vane[::-1], mat=1)
-    # static wicks on ailerons, elevators, rudder, wing tips
-    for side in (1, -1):
+    # static wicks on ailerons, elevators, rudder, wing tips (twin fuselage: their own object, the
+    # fuselage details are copied onto both fuselages)
+    mb_fus = mb
+    if G.TWIN:
+        mb = C.MeshBuilder(TB)
+    for side in ((1, -1) if not G.AIRSHIP else ()):
         for yy in G.WY([23.0, 24.8, 26.5, 28.5, 29.6]):
             te = G.wing_point(np.array(yy), np.array(1.0), np.array(True), side)
             cyl(mb, te, te + np.array([0.42, 0, -0.01]), 0.008, 1, n=5, caps=False)
-        for yy in np.array([6.0, 8.0, 9.4]) * G.HT_SEMI / 9.72:
+        for yy in (np.array([6.0, 8.0, 9.4]) * G.HT_SEMI / 9.72 if not G.BWB else []):
             te = G.ht_point(np.array(yy), np.array(1.0), np.array(True), side)
             cyl(mb, te, te + np.array([0.36, 0, 0]), 0.008, 1, n=5, caps=False)
+    if G.TWIN:
+        ob = mb.build("WingDetails", [M["antenna"], M["chrome"], M["black"], M["wiper"]], col=col)
+        C.set_parent(ob, root)
+        mb = mb_fus
     build_skin_details(mb, SM, CS)
     ob = mb.build("Details", [M["antenna"], M["chrome"], M["black"], M["wiper"]], col=col)
     C.set_parent(ob, root)
@@ -1483,6 +1565,10 @@ def build_details(M, root, col):
         ob = lb.build(name, [mat], col=col)
         C.set_parent(ob, root)
         return ob
+    if G.AIRSHIP:
+        import airship_b787
+        airship_b787.lights(M, root, col, light)
+        return
     for side, mat in ((1, M["red"]), (-1, M["green"])):
         L = "L" if side > 0 else "R"
         tip_le = G.wing_point(np.array(G.Y_TIP - 0.05), np.array(0.25), np.array(True), side)
@@ -1496,13 +1582,24 @@ def build_details(M, root, col):
         # runway turn-off light
         lp2 = G.wing_point(G.WY(3.7), np.array(0.03), np.array(False), side)
         light("TurnoffLight_" + L, lp2, (-1, side * 0.5, -0.1), 0.09, M["landing"], h=0.04)
-    light("Beacon_Top", fus_point(SM(29.5), 0) + np.array([0, 0, -0.03]), (0, 0, 1), 0.14, M["beacon"], h=0.10)
-    light("Beacon_Bottom", fus_point(SM(37.0), 180) + np.array([0, 0, 0.03]), (0, 0, -1), 0.14, M["beacon"], h=0.10)
+    if G.BWB:
+        # on the centre body skin (the fuselage crown and belly are inside it)
+        pu = G.wing_point(np.array(0.0), np.array(0.42), np.array(True), 1)
+        pl = G.wing_point(np.array(0.0), np.array(0.55), np.array(False), 1)
+        light("Beacon_Top", pu + np.array([0, 0, -0.03]), (0, 0, 1), 0.14, M["beacon"], h=0.10)
+        light("Beacon_Bottom", pl + np.array([0, 0, 0.03]), (0, 0, -1), 0.14, M["beacon"], h=0.10)
+    else:
+        light("Beacon_Top", fus_point(SM(29.5), 0) + np.array([0, 0, -0.03]), (0, 0, 1), 0.14, M["beacon"], h=0.10)
+        light("Beacon_Bottom", fus_point(SM(37.0), 180) + np.array([0, 0, 0.03]), (0, 0, -1), 0.14, M["beacon"], h=0.10)
     light("Strobe_Tail", np.array([G.LENGTH - 0.02, 0, G.fus_profile(G.LENGTH)[0] - 0.05]), (1, 0, 0), 0.05,
           M["strobe"])
     # logo lights on the stabiliser (pointing at the fin)
     for side in (1, -1):
         L = "L" if side > 0 else "R"
+        if G.BWB:
+            p = G.wing_point(np.array(G.Y_TIP - 1.6), np.array(0.55), np.array(True), side)
+            light("LogoLight_" + L, p, (0, side * 0.6, 1), 0.07, M["landing"], h=0.03)
+            continue
         p = G.ht_point(np.array(3.8 * G.HT_SEMI / 9.72), np.array(0.35), np.array(True), side)
         light("LogoLight_" + L, p, (0, 0, 1), 0.07, M["landing"], h=0.03)
 
@@ -1794,6 +1891,8 @@ def build_cabin_only():
     C.reset_scene()
     ccol = C.collection("B787-9_Cabin")
     cabin_root, cabin = cabin_b787.build_cabin(ccol, tex, bake="--no-bake" not in sys.argv)
+    if G.TWIN:
+        twin_cabin(cabin_root, cabin)
     export_cabin(cabin_root)
     jp = os.path.join(C.WEB_ASSETS, G.ASSET + ".json")
     meta = json.load(open(jp))
@@ -1802,7 +1901,130 @@ def build_cabin_only():
         json.dump(meta, fh, indent=1)
 
 
+# ---------------------------------------------------------------------------
+# Twin fuselage (MA-TW): everything built on the centre line that belongs to a fuselage is moved
+# to the left fuselage (design +YF) and a linked copy ("..._B", sharing the mesh data) goes to the
+# right one.  The flight deck stays in the left fuselage only; the right one gets its windshield
+# painted over.
+# ---------------------------------------------------------------------------
+TWIN_GROUP = ("Fuselage", "VTail", "Rudder", "NoseGear", "NoseDoor_L", "NoseDoor_R", "MainGear_L", "MainGear_R",
+              "MainDoor_L", "MainDoor_R", "Details", "Beacon_Top", "Beacon_Bottom", "Strobe_Tail")
+TWIN_COCKPIT = ("Cockpit", "Display_", "HUD_", "Throttle_", "Yoke_")
+
+
+def _shift(ob, dy):
+    from mathutils import Matrix
+    ob.matrix_basis = Matrix.Translation((0.0, dy, 0.0)) @ ob.matrix_basis
+
+
+def _linked_copy(ob, suffix, parent, col):
+    c = ob.copy()                      # shares the mesh data (one mesh in the glTF, two nodes)
+    c.name = ob.name + suffix
+    col.objects.link(c)
+    c.parent = parent
+    c.matrix_parent_inverse = ob.matrix_parent_inverse.copy()
+    for ch in ob.children:
+        _linked_copy(ch, suffix, c, col)
+    return c
+
+
+def twin_fuselages(M, root, col):
+    YF = G.TWIN["YF"]
+    names = {p["name"]: p for p in PARTS}
+    for ob in list(root.children):
+        n = ob.name
+        if n in TWIN_GROUP:
+            dup = _linked_copy(ob, "_B", root, col)
+            _shift(ob, YF)
+            _shift(dup, -YF)
+            for o in [ob] + list(ob.children_recursive):
+                if o.name in names:
+                    PARTS.append(dict(names[o.name], name=o.name + "_B"))
+        elif n.startswith(TWIN_COCKPIT):
+            _shift(ob, YF)
+        elif n.startswith("LogoLight_"):
+            # on the bridging tailplane, just inboard of each fin
+            from mathutils import Vector
+            c = sum((ob.matrix_world @ Vector(v) for v in ob.bound_box), Vector()) / 8
+            sg = 1.0 if c.y > 0 else -1.0
+            _shift(ob, sg * (YF - 1.25) - c.y)
+    # main legs retract towards their own fuselage's centre line
+    for p in PARTS:
+        if p["name"].startswith("MainGear_"):
+            p["stowSide"] = -1 if p["name"].startswith("MainGear_L") else 1
+    if not LOD:
+        windshield_cap(M, root, col, -YF)
+
+
+def windshield_cap(M, root, col, dy):
+    """paint over the flight-deck glass of the right fuselage: a skin patch 6 mm proud of the nose
+    (fuselage paint sampled from a plain spot on the crown)"""
+    CS = lambda s: float(G.ck(np.array([s, 0, 0]))[0])  # noqa: E731
+    ss = np.linspace(CS(1.15), CS(5.75), 40)
+    phi = math.pi + np.linspace(-2.05, 2.05, 64)    # (phi = pi: crown) both sides down past the side windows
+    P = np.zeros((len(ss), len(phi), 3))
+    for i, s_ in enumerate(ss):
+        y, z = G.fus_section(s_, phi)
+        zc = float(G.fus_profile(s_)[3])
+        r = np.hypot(y, z - zc)
+        k = (r + 0.006) / np.maximum(r, 1e-6)
+        P[i, :, 0] = s_
+        P[i, :, 1] = y * k + dy
+        P[i, :, 2] = zc + (z - zc) * k
+    UV = np.zeros(P.shape[:2] + (2,))
+    UV[..., 0] = 0.46
+    UV[..., 1] = 0.49
+    mb = C.MeshBuilder(TB)
+    mb.add_grid(P, UV, outward=("dir", (0, 0, 1)), mat=0)
+    ob = mb.build("WindshieldCap_B", [M["fuselage"]], col=col)
+    C.set_parent(ob, root)
+
+
+def twin_cabin(cabin_root, info):
+    """two cabins: the shell is linked into both fuselages, the seat map doubled.  Your seat is a
+    left-window seat of the right fuselage, so the window looks across at the other fuselage."""
+    YF = G.TWIN["YF"]
+    ccol = cabin_root.users_collection[0]
+    for ob in list(cabin_root.children):
+        if ob.name.startswith("Cabin_Prototypes"):
+            continue
+        dup = _linked_copy(ob, "_B", cabin_root, ccol)
+        _shift(ob, YF)
+        _shift(dup, -YF)
+    seats = info["seats"]
+    sh = lambda p, dz: [p[0], p[1], round(p[2] + dz, 3)]  # noqa: E731  (three.js z = -design y)
+    info["seats"] = [dict(st, p=sh(st["p"], -YF)) for st in seats] + [dict(st, p=sh(st["p"], YF)) for st in seats]
+    if info.get("mySeat") is not None:
+        info["mySeat"] += len(seats)
+    info["views"] = {k: sh(v, YF) for k, v in info["views"].items()}
+    # (your own cabin's aisle first: walking starts there)
+    info["aisles"] = [round(a + YF, 3) for a in info["aisles"]] + [round(a - YF, 3) for a in info["aisles"]]
+    info["counts"] = {k: 2 * v for k, v in info["counts"].items()}
+    info["total"] = 2 * info["total"]
+    # the cabin light model works in one fuselage's frame: |z| is folded by fusY
+    info["light"]["fold"] = YF
+    info["fold"] = YF
+
+
+def twin_meta(meta):
+    """flight model / ground handling see the twin as one airframe: main gear under each fuselage,
+    flight deck eye in the left one, wing flex only outboard of the fuselages"""
+    YF = G.TWIN["YF"]
+    meta["fusY"] = YF
+    meta["flexRoot"] = round(YF + G.FUS_W / 2 + 0.5, 3)
+    meta["eye"] = G.to_three([G.EYE[0], G.EYE[1] + YF, G.EYE[2]])
+    meta["mainGearL"] = G.to_three([G.S_MAIN, YF, G.GROUND_Z])
+    meta["mainGearR"] = G.to_three([G.S_MAIN, -YF, G.GROUND_Z])
+    meta["noseTip"] = G.to_three([0, YF, float(G.fus_profile(0.0)[3])])
+
+
+AIRSHIP_HELPERS = None
+
+
 def main():
+    global AIRSHIP_HELPERS
+    AIRSHIP_HELPERS = dict(add_part=add_part, cyl=cyl, dome=dome, TB=TB, RS=RS, LOD=LOD, QUICK=QUICK,
+                           TE_RIGHT=TE_RIGHT, TE_DOWN=TE_DOWN)
     if "--cabin" in sys.argv:
         build_cabin_only()
         return
@@ -1814,17 +2036,26 @@ def main():
     root = C.empty("B787-9", col=col)
     M = make_materials()
     build_fuselage(M, root, col)
-    for side in (1, -1):
+    if G.AIRSHIP:
+        import airship_b787
+        airship_b787.build(M, root, col, AIRSHIP_HELPERS)
+    for side in ((1, -1) if not G.AIRSHIP else ()):
         build_wing(M, root, col, side)
         # one or two engines per side (four-engine types: ENG2 = the outboard pair)
         for k, eng in enumerate(G.engine_set()):
             with G.engine_at(eng):
                 (build_prop_engine if G.PROP else build_engine)(M, root, col, side, "" if k == 0 else str(k + 1))
-    build_htail(M, root, col)
-    build_vtail(M, root, col)
+    if not G.BWB and not G.AIRSHIP:
+        build_htail(M, root, col)
+    if not G.AIRSHIP:
+        build_vtail(M, root, col)
+    if G.BWB:
+        bwb_fins(root, col)
     if G.SPONSON:
         build_sponsons(M, root, col)
     build_gear(M, root, col)
+    if G.TWIN and LOD:
+        twin_fuselages(M, root, col)
     if LOD:
         # parked-aircraft level of detail: no cockpit / antennas / lights
         C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + "-lod.glb"), draco=True)
@@ -1833,6 +2064,8 @@ def main():
         return
     build_details(M, root, col)
     build_cockpit(M, root, col)
+    if G.TWIN:
+        twin_fuselages(M, root, col)
     if "--bake" in sys.argv and G.TYPE == "b789":
         bake_ao()
 
@@ -1875,6 +2108,13 @@ def main():
         parts=PARTS,
         **COCKPIT_META,
     )
+    if G.TWIN:
+        twin_meta(meta)
+    if G.BWB:
+        bwb_meta(meta)
+    if G.AIRSHIP:
+        import airship_b787
+        airship_b787.meta(meta, AIRSHIP_HELPERS)
     import textures_b787
     meta["liveryLayout"] = textures_b787.livery_layout()
     C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + ".glb"), draco=True)
@@ -1885,6 +2125,8 @@ def main():
     import cabin_b787
     ccol = C.collection("B787-9_Cabin")
     cabin_root, cabin = cabin_b787.build_cabin(ccol, tex)
+    if G.TWIN:
+        twin_cabin(cabin_root, cabin)
     meta["cabin"] = cabin
     export_cabin(cabin_root)
     meta.pop("seats")

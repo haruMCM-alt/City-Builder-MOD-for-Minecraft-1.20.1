@@ -68,7 +68,7 @@ export class Engine {
   // tla: 0 idle .. 1 max takeoff.  reverseCmd: 0..1 reverse lever
   update(dt, tla, reverseCmd, atm, mach, onGround) {
     const idle = onGround ? 21.5 : 27;       // approach idle in flight
-    const revActive = reverseCmd > 0.02 && onGround;
+    const revActive = reverseCmd > 0.02 && (onGround || this.airReverse);
     this.reverse = approach(this.reverse, revActive ? 1 : 0, revActive ? 0.5 : 0.7, dt);
     const lever = this.reverse > 0.5 ? 0.25 + 0.55 * reverseCmd : tla;
     let target = this.running ? idle + (100.5 - idle) * Math.pow(clamp(lever, 0, 1), 0.85) : 0;
@@ -136,8 +136,12 @@ export class FlightModel {
     this.wingRootZ = (meta.fusW || 5.77) / 2;
     this.resetDamage();
     this.engAxis = [P(meta.engineAxisL), P(meta.engineAxisR)];
+    this.air = meta.airship || null;          // hybrid airship parameters (Blender metadata)
+    this.airLift = 0;
     this.engines = [new Engine(-1), new Engine(1)];
     for (const e of this.engines) e.prop = !!meta.prop;
+    // airship: the ducted propellers also reverse in the air (to stop and hover)
+    if (meta.airship) for (const e of this.engines) e.airReverse = true;
 
     // ---- state ------------------------------------------------------------------
     this.pos = new V3();
@@ -283,6 +287,8 @@ export class FlightModel {
 
   inertia() {
     const m = this.mass;
+    // airship: the hull's long radii of gyration plus the air it carries along (added mass)
+    if (this.air) return new V3(m * this.air.kx ** 2, m * this.air.ky ** 2, m * this.air.ky ** 2);
     // radii of gyration scale with span (roll) and length (pitch / yaw)
     const s2 = this.kS * this.kS, l2 = this.kL * this.kL;
     return new V3(85.5 * m * s2, 199 * m * (0.5 * s2 + 0.5 * l2), 122 * m * l2);     // roll (x), yaw (y), pitch (z)
@@ -290,6 +296,8 @@ export class FlightModel {
 
   reset(pos, hdg, speedMS, pitchDeg = 0, onGround = true) {
     this.resetDamage();
+    // airship: the ballonets are set for a slightly heavy take-off (lighter as fuel burns)
+    if (this.air) this.airLift = this.mass * (1 - this.air.heavy);
     this.pos.copy(pos);
     this.q = Quat.fromHPB(hdg, pitchDeg, 0, pos.x, pos.z);
     const fwd = this.q.rotate(new V3(1, 0, 0));
@@ -315,6 +323,7 @@ export class FlightModel {
     const alt = this.pos.y;
     const atm = isa(alt);
     const ctl = this.ctl;
+    if (this.air) ctl.gearPos = 0;          // (airship: fixed landing gear / cushions)
 
     // air-relative velocity in body axes
     const air = V3.sub(this.vel, V3.add(this.wind, this.gust));
@@ -430,10 +439,24 @@ export class FlightModel {
     // (leak rates are the 787's: smaller tanks, smaller pipes)
     if (this.dmg.leak) this.fuel = Math.max(0, this.fuel - this.dmg.leak * Math.min(1, SPEC.fuelCapacity / 101100) * dt);
 
+    // hybrid airship: the hull, fins and vectored propellers replace the wing aerodynamics
+    if (this.air) { this._dt = dt; this._airship(F, M, vb, V, alpha, beta, atm); }
+
     // ---- to world, gravity ----------------------------------------------------------
     const Fw = q.rotate(F);
     Fw.y -= m * G0;
     const Mb = M;
+    if (this.air) {
+      // buoyancy (at the centre of buoyancy, above the CG: the pendulum keeps the hull level)
+      // (below the pressure height, ~2000 m, the helium expands into the ballonets' space and
+      // the lift stays the same; above it the hull is full and the lift falls with the density)
+      const B = this.airLift * G0 * Math.min(1, atm.rho / 1.0066);
+      Fw.y += B;
+      M.add(V3.cross(new V3(0, this.air.hcb, 0), q.invRotate(new V3(0, B, 0))));
+      // moored (parking brake on the ground): the mast / ground crew hold it down
+      if (ctl.parkingBrake && (this.out.gearHeight ?? 9) < 1.0) Fw.y -= 0.05 * m * G0;
+      this.out.lift = B;
+    }
 
     // ---- landing gear & ground contact ----------------------------------------------
     const up = new V3(0, 1, 0);
@@ -565,6 +588,9 @@ export class FlightModel {
     this.w.z += (Mb.z - gyro.z) / I.z * dt;
     // ground friction damping of yaw/roll at rest to avoid creeping
     if (wow && this.vel.len() < 0.3) this.w.scale(0.98);
+    // airship on the ground with the parking brake: held by the mooring / ground crew (it is
+    // nearly weightless, the wheels alone would not hold it in the wind)
+    if (this.air && wow && ctl.parkingBrake) { this.vel.x *= 0.97; this.vel.z *= 0.97; this.w.y *= 0.97; }
     this.q.integrate(this.w, dt);
 
     // ---- events -------------------------------------------------------------------
@@ -584,10 +610,50 @@ export class FlightModel {
     const o = this.out;
     o.alpha = alpha; o.beta = beta; o.mach = mach; o.tas = V; o.qbar = qbar;
     o.ias = tas2cas(V, atm) / KT;
-    o.CL = CL; o.CLmax = CLmax; o.aStall = aLin + dA; o.stalled = stalled;
+    o.CL = CL; o.CLmax = CLmax; o.aStall = this.air ? 0.8 : aLin + dA; o.stalled = this.air ? false : stalled;
     o.gearHeight = gearHeight; o.wow = wow; o.atm = atm;
     o.nz = q.invRotate(new V3(Fw.x, Fw.y + m * G0, Fw.z)).y / (m * G0);
     o.liftN = qbar * S * CL;
+  }
+
+  // hybrid airship aerodynamics in body axes (x fwd, y up, z right): hull drag / lift / side force,
+  // fin moments, rotary damping (added mass), and the four vectored propellers: the flap lever
+  // tilts them from forward thrust (UP) to straight up (30); the roll input yaws (differential
+  // thrust and rudders) - the hull does not bank
+  _airship(F, M, vb, V, alpha, beta, atm) {
+    const A = this.air, ctl = this.ctl;
+    F.set(0, 0, 0); M.set(0, 0, 0);
+    const qb = 0.5 * atm.rho * V * V, S = A.sref, L = A.lref;
+    const vhat = new V3(vb.x / V, vb.y / V, vb.z / V);
+    const aC = clamp(alpha, -0.6, 0.6), bC = clamp(beta, -0.6, 0.6);
+    // hull: drag, lifting-body lift (stalls gently past ~15 deg), side force
+    // (lifting-body lift needs the air to come from ahead: none when rising / sinking straight)
+    const fwd = Math.max(0, vb.x / V) ** 2;
+    const CL = A.cla * Math.sin(2 * aC) / 2 * (1 - 0.5 * smoothstep(0.25, 0.6, Math.abs(aC))) * fwd;
+    const CD = A.cd0 + 0.9 * Math.sin(aC) ** 2 + 0.9 * Math.sin(bC) ** 2;
+    const CY = -A.cla * 0.8 * Math.sin(2 * bC) / 2;
+    let Ld = V3.cross(new V3(0, 0, 1), vhat);
+    if (Ld.len() < 1e-6) Ld = new V3(0, 1, 0); else Ld.norm();
+    F.addScaled(Ld, qb * S * CL);
+    F.addScaled(vhat, -qb * S * CD);
+    F.add(new V3(0, 0, qb * S * CY));
+    // moments: fins (slightly stable), controls, damping (still air resists rotation too)
+    const p = this.w.x, r = -this.w.y, qq = this.w.z;
+    const yawIn = clamp(ctl.rudder / (27 * DEG) + ctl.aileron / (25 * DEG), -1.4, 1.4);
+    const Cm = -0.04 * aC - 0.55 * ctl.elevator + 0.25 * ctl.stab;
+    const Cn = 0.03 * bC + 0.10 * yawIn;
+    const kd = 0.5 * atm.rho * Math.max(V, 4) * S * L * L * 0.18;
+    M.add(new V3(-kd * 0.5 * p, -(qb * S * L * Cn - kd * r), qb * S * L * Cm - kd * qq));
+    // propellers: thrust tilted up by the vectoring angle; differential thrust for yaw at low speed
+    // (the ducts swing at ~20 deg/s, much faster than flaps run)
+    const vecT = (FLAPS[ctl.flapLever] || FLAPS[0]).angle / 30 * Math.PI / 2;
+    const vec = this._vec = approach(this._vec || 0, vecT, 20 * DEG, this._dt || 0);
+    ctl.vector = vec;
+    const T = this.engines[0].thrust + this.engines[1].thrust;
+    F.add(new V3(T * Math.cos(vec), T * Math.sin(vec), 0));
+    const dT = 0.25 * Math.abs(T) * clamp(yawIn, -1, 1) * (1 - smoothstep(8, 25, V));
+    M.add(new V3(0, -dT * A.engArm, 0));
+    this.out.CLhull = CL;
   }
 
   crash(reason) {

@@ -71,6 +71,9 @@ const TYPES = [
   { id: 'b744', asset: 'b747-400', weight: 0.5, maker: 'Boeing', short: '747-400 MA-Custom', cls: 'ジャンボ 4発・マイコムソフト改修 Jumbo quad, Micomsoft custom' },
   { id: 'at76', asset: 'atr72-600', weight: 0.8, maker: 'ATR', short: '72-600', cls: 'ターボプロップ Turboprop' },
   { id: 'maw', asset: 'ma-w8', weight: 0.4, maker: 'Micomsoft', short: 'MA-W8 Ootaka', cls: '8発 Eight-engine long-haul' },
+  { id: 'matw', asset: 'ma-tw', weight: 0.25, maker: 'Micomsoft', short: 'MA-TW Hiyoku', cls: '双胴 Twin-fuselage' },
+  { id: 'mabw', asset: 'ma-bw', weight: 0.25, maker: 'Micomsoft', short: 'MA-BW Ei', cls: '全翼 Blended wing body' },
+  { id: 'maas', asset: 'ma-as', weight: 0, maker: 'Micomsoft', short: 'MA-AS Kujira', cls: '飛行船 Hybrid airship' },
 ];
 // play modes on the menu's first screen: each opens a compact slide show with only the
 // slides it needs (keys of the <section data-key> slides) and presets its scenario
@@ -253,8 +256,9 @@ class App {
       loadGLB(loader, ASSET + 'world' + MODEL_EXT, (p) => { prog.world = p; upd(); }),
       loadGLB(loader, ASSET + 'gse' + MODEL_EXT, (p) => { prog.gse = p; upd(); }).catch(() => null),
       fetchJSON(ASSET + 'gse.json').catch(() => null),
-      ...typeIds.map((k) => loadGLB(loader, ASSET + this.types[k].asset + '-lod' + MODEL_EXT, (p) => { prog.lod[k] = p; upd(); })
-        .catch(() => null)),
+      // (types that never fly in the AI fleet - the airship - have no parked model)
+      ...typeIds.map((k) => (this.types[k].weight > 0 ? loadGLB(loader, ASSET + this.types[k].asset + '-lod' + MODEL_EXT, (p) => { prog.lod[k] = p; upd(); })
+        .catch(() => null) : (prog.lod[k] = 1, Promise.resolve(null)))),
     ]);
     this.types[sel].gltf = acGltf;
     typeIds.forEach((k, i) => { this.types[k].lod = lods[i] ? lods[i].scene : null; });
@@ -1034,6 +1038,38 @@ class App {
   }
 
   // ------------------------------------------------------------------- scenario setup
+  // hybrid airship: a 150 m hull does not fit a stand - the ground scenarios start on the runway
+  // (moored); the air scenarios low and slow, with the autopilot holding height and heading
+  _airshipStart(id, gy, r27, r09) {
+    const fm = this.fm, sys = this.sys;
+    this.autoFlight = null;
+    sys.ap.on = false; sys.at.on = false;
+    sys.flapLever = 0; fm.ctl.flapAngle = 0; fm.ctl.slat = 0;
+    sys.gearLever = true; fm.ctl.gearPos = 0;
+    if (['gate', 'rwy27', 'rwy09', 'auto'].includes(id)) {
+      const r = id === 'rwy09' ? r09 : r27, d = runwayDir(r);
+      fm.reset(new V3(r.threshold[0] + d.x * 300, gy, r.threshold[2] + d.z * 300), r.heading, 0, 0, true);
+      fm.ctl.parkingBrake = true;
+      sys.mcp = { spd: 45, hdg: Math.round(r.heading), alt: 1500, vs: 300 };
+      this.rig.setView('chase');
+    } else {
+      const p = fm.pos.clone(), hdg = fm.out.hdg;
+      const ground = terrainHeight(p.x, p.z);
+      p.y = Math.min(p.y, ground + (['final', 'apt2'].includes(id) ? 600 : 1500) * FT);
+      fm.reset(p, hdg, 22, 0, false);
+      sys.mcp = { spd: 45, hdg: Math.round(hdg), alt: Math.round(p.y / FT / 100) * 100, vs: 0 };
+      sys.ap.roll = 'HDG'; sys.ap.pitch = 'ALT'; sys.ap.on = true;
+      sys.at.on = true; sys.at.mode = 'SPD';
+      sys.gammaT = 0; sys.phiT = 0;
+      for (const e of fm.engines) e.n1 = 70;
+      sys.tla[0] = sys.tla[1] = sys.pilot.throttle = 0.6;
+      sys.airTime = 10; sys.groundTime = 0;
+      this.rig.setView('chase');
+    }
+    this.rig.dist = 330;
+    this.toast('🐋 飛行船クジラ: フラップレバー＝推力偏向（30 で真上）・スロットル＝推力・操縦桿 前後＝昇降・左右＝旋回。P（駐機ブレーキ）で係留を解除', 10000);
+  }
+
   startScenario(id, run) {
     const fm = this.fm, sys = this.sys, W = this.worldData;
     this._drCool = Math.max(this._drCool || 0, 10); this._drSlow = 0;     // (shader compiles / loading right after the start)
@@ -1092,7 +1128,8 @@ class App {
     } else if (id === 'gate') {
       const st = W.stands[6];
       skipStand = st.id;
-      fm.reset(new V3(st.cg[0], gy, st.cg[2] - (STAND_NOSE - this.meta.noseGear[0])), northAt(st.cg[0], st.cg[2]), 0, 0, true);   // nose to the terminal (world -z)
+      // (twin fuselage: the left fuselage on the stand centre line, at the jet bridge)
+      fm.reset(new V3(st.cg[0] + (this.meta.fusY || 0), gy, st.cg[2] - (STAND_NOSE - this.meta.noseGear[0])), northAt(st.cg[0], st.cg[2]), 0, 0, true);   // nose to the terminal (world -z)
       fm.ctl.parkingBrake = true;
       sys.mcp = { spd: 160, hdg: Math.round(r27.heading), alt: 5000, vs: 2000 };
       sys.selectRunway(r27);
@@ -1184,6 +1221,7 @@ class App {
       this.fm.step(0); this.fm.update();
       sys.mcp.spd = Math.round(this.fm.out.ias);
     }
+    if (this.meta.airship) this._airshipStart(id, gy, r27, r09);
     this.input.axes = { pitch: 0, roll: 0, yaw: 0 };
     // parked / AI aircraft and ground vehicles
     if (this.traffic) {
@@ -1285,7 +1323,7 @@ class App {
       }
       case 'parking': fm.ctl.parkingBrake = !fm.ctl.parkingBrake; this.toast('パーキングブレーキ Parking brake ' + (fm.ctl.parkingBrake ? 'SET' : 'OFF')); break;
       case 'autobrake': sys.autobrake = (sys.autobrake + 1) % AUTOBRAKE.length; this.toast('オートブレーキ Autobrake ' + AUTOBRAKE[sys.autobrake]); break;
-      case 'reverse': sys.pilot.reverse = sys.pilot.reverse > 0 ? 0 : (o.wow ? 1 : 0); if (sys.pilot.reverse) { sys.pilot.throttle = 0; } this.toast('逆噴射 Reverse ' + (sys.pilot.reverse ? 'ON' : 'OFF')); break;
+      case 'reverse': sys.pilot.reverse = sys.pilot.reverse > 0 ? 0 : (o.wow || this.meta.airship ? 1 : 0);   // (airship: also in the air) if (sys.pilot.reverse) { sys.pilot.throttle = 0; } this.toast('逆噴射 Reverse ' + (sys.pilot.reverse ? 'ON' : 'OFF')); break;
       case 'toga':
         sys.pilot.throttle = 1;
         if (sys.at.on || o.wow) { sys.at.on = true; sys.at.mode = 'TOGA'; }
@@ -1701,6 +1739,8 @@ class App {
       const dap = remoteById(this.dest) || REMOTES[0];
       const dist = Math.hypot(fm.pos.x - dap.x, fm.pos.z - dap.z) / 1000;
       this.cabin.camera = this.camera;
+      this.cabin.renderer = this.renderer; this.cabin.scene = this.scene;
+      this.cabin.vwHide = this.cur?.vapor?.trails?.map((t) => t.mesh);
       this.cabin.setSun(this.world.sunDir, this.world.sunT ?? 1);
       this.cabin.update(inside, this.world.night, this.paused ? 0 : dt, {
         altFt: o.altFt || 0, gs: o.gs || 0, hdg: o.hdg || 0, oat: 15 - 1.98 * (o.altFt || 0) / 1000, x: fm.pos.x, z: fm.pos.z, dist,

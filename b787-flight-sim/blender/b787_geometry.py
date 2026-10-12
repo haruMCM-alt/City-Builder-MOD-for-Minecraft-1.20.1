@@ -27,10 +27,15 @@ from scipy.interpolate import PchipInterpolator
 # ---------------------------------------------------------------------------
 TYPE = os.environ.get("AC_TYPE", "b789")
 ASSET = {"b789": "b787-9", "b738": "b737-800", "b763": "b767-300er",
-         "ma3": "ma-300", "ma7": "ma-700", "ma9": "ma-900", "b744": "b747-400", "at76": "atr72-600", "maw": "ma-w8"}[TYPE]
+         "ma3": "ma-300", "ma7": "ma-700", "ma9": "ma-900", "b744": "b747-400", "at76": "atr72-600", "maw": "ma-w8",
+         "matw": "ma-tw", "mabw": "ma-bw", "maas": "ma-as"}[TYPE]
 NAME = {"b789": "Boeing 787-9", "b738": "Boeing 737-800", "b763": "Boeing 767-300ER",
         "ma3": "Micomsoft MA-300 Tsubame", "ma7": "Micomsoft MA-700 Hayabusa", "ma9": "Micomsoft MA-900 Otori",
-        "b744": "Boeing 747-400 MA-Custom", "at76": "ATR 72-600", "maw": "Micomsoft MA-W8 Ootaka"}[TYPE]
+        "b744": "Boeing 747-400 MA-Custom", "at76": "ATR 72-600", "maw": "Micomsoft MA-W8 Ootaka",
+        "matw": "Micomsoft MA-TW Hiyoku", "mabw": "Micomsoft MA-BW Ei",
+        "maas": "Micomsoft MA-AS Kujira"}[TYPE]
+# twin-fuselage types are built from a single-fuselage base type's fuselage, cabin and cockpit tables
+BASE = {"matw": "ma3"}.get(TYPE, TYPE)
 
 # ---------------------------------------------------------------------------
 # Global figures
@@ -88,6 +93,8 @@ WIN_RUNS = None    # [(s0, s1), ...]: main-deck window runs as on the aircraft (
 
 def window_stations(skip_exits=True):
     """main-deck window centres"""
+    if NO_WIN:
+        return []
     if WIN_RUNS:
         out = []
         for a, b in WIN_RUNS:
@@ -298,23 +305,41 @@ TC_Y = (3.0, 20.0)
 TC = [0.150, 0.140, 0.113, 0.098, 0.092]
 TWIST = [4.2, 3.8, 1.6, -1.2, -2.0]
 WINGLET = None             # blended winglet (737): dict(r, theta, h, c_tip, sweep)
+WING_Y0 = 0.0              # unswept, flat centre section half span (twin fuselage)
+LE_KINK = None             # (y, sweep rad): leading-edge kink (blended wing body centre body)
+NO_WIN = False             # windowless cabin (blended wing body)
+TWIN = None                # twin fuselage: dict(YF = lateral offset of each fuselage centre)
+BWB = None                 # blended wing body: dict(fins=wing-tip fins, eng_top=engines above the centre body)
+AIRSHIP = None             # hybrid airship: hull / fins / ducts (airship_b787.py); the gondola is the fuselage
+
+
+def _ye(y):
+    """span measured from the end of the unswept centre section (twin fuselage: WING_Y0 > 0)"""
+    return np.maximum(np.abs(np.asarray(y, dtype=np.float64)) - WING_Y0, 0.0)
 
 
 def wing_le(y):
-    y = np.abs(np.asarray(y, dtype=np.float64))
-    le = WING_S_LE0 + np.minimum(y, Y_RAKE) * TAN(LE_SWEEP)
-    le = le + np.maximum(y - Y_RAKE, 0) * TAN(RAKE_LE_SWEEP)
+    y = _ye(y)
+    yr = Y_RAKE - WING_Y0
+    if LE_KINK:
+        # blended wing body: a highly swept centre-body leading edge, then the outer wing
+        yk, a_in = LE_KINK
+        le = WING_S_LE0 + np.minimum(y, yk) * TAN(a_in) + np.clip(y - yk, 0, yr - yk) * TAN(LE_SWEEP)
+    else:
+        le = WING_S_LE0 + np.minimum(y, yr) * TAN(LE_SWEEP)
+    le = le + np.maximum(y - yr, 0) * TAN(RAKE_LE_SWEEP)
     return le
 
 
 def wing_te(y):
-    y = np.abs(np.asarray(y, dtype=np.float64))
+    y = _ye(y)
+    yk, yr = Y_KINK - WING_Y0, Y_RAKE - WING_Y0
     te0 = WING_S_LE0 + WING_C0
-    te = te0 + np.minimum(y, Y_KINK) * TAN(TE_IN_SWEEP)
-    te = te + np.clip(y - Y_KINK, 0, Y_RAKE - Y_KINK) * TAN(TE_OUT_SWEEP)
-    te = te + np.maximum(y - Y_RAKE, 0) * TAN(RAKE_TE_SWEEP)
+    te = te0 + np.minimum(y, yk) * TAN(TE_IN_SWEEP)
+    te = te + np.clip(y - yk, 0, yr - yk) * TAN(TE_OUT_SWEEP)
+    te = te + np.maximum(y - yr, 0) * TAN(RAKE_TE_SWEEP)
     # soften the TE kink a little (yehudi fillet)
-    k = np.exp(-((y - Y_KINK) / FILLET_W) ** 2) * 0.10
+    k = np.exp(-((y - yk) / FILLET_W) ** 2) * 0.10
     return te + k
 
 
@@ -324,7 +349,7 @@ def wing_chord(y):
 
 def wing_z(y):
     """Chord-plane height (static, 1g on ground) incl. slight upward curve."""
-    y = np.abs(np.asarray(y, dtype=np.float64))
+    y = _ye(y)
     return WING_Z0 + y * TAN(DIHEDRAL) + 0.00085 * y ** 2
 
 
@@ -529,9 +554,12 @@ def SUNMAP(s):
     return np.interp(s, _SNEW, _S787)
 
 
+WY_ROOT = None
+
+
 def WY(y787):
     """Map a 787-9 spanwise position (y) to this type's wing."""
-    r0, r1 = 2.9, 2.9 * WR
+    r0, r1 = 2.9, WY_ROOT if WY_ROOT else 2.9 * WR
     return r1 + (np.asarray(y787, dtype=np.float64) - r0) * (Y_TIP - r1) / (30.06 - r0)
 
 
@@ -652,6 +680,91 @@ TYPES = {
         SPEC=dict(S=589.8, b=74.8, c=9.53, OEW=175000, MTOW=362000, MLW=262000, MZFW=246000,
                   fuelCapacity=150000, thrustSL=520000, VMO=355, MMO=0.88),
         ENGINE="Micomsoft MX-6 high-bypass turbofan", CHEVRONS=0,
+    ),
+    # MA-TW "Hiyoku" (比翼, "wings side by side"): two MA-300 fuselages 16 m apart joined by an
+    # unswept centre wing and a bridging tailplane.  The flight deck is in the left fuselage only;
+    # each fuselage carries its own fin and gear.  Four geared fans: two under the centre wing
+    # between the fuselages, two outboard.  (The flight model sees one airframe: thrustSL per side.)
+    "matw": dict(
+        LENGTH=44.20, SPAN=64.00, HEIGHT=13.20, FUS_W=4.10, FUS_H=4.30, NL=8.6, T0=31.2,
+        GROUND_Z=-3.62, FLOOR_Z=-0.70, S_NOSE=5.0, WHEELBASE=17.60, TRACK=3.2,
+        WING_C0=8.2, Y_KINK=13.6, Y_TIP=32.0, Y_RAKE=29.5, LE=27.0, TE_IN=0.0, TE_OUT=15.0, WING_Z0=-1.45,
+        TC=[0.140, 0.140, 0.112, 0.095, 0.088], TWIST=[2.6, 2.6, 1.5, -1.2, -1.8],
+        WINGLET=None, WING_Y0=9.8, WING_ROOT_Y=0.02, WY_ROOT=10.6, DIHEDRAL=5.0,
+        TWIN=dict(YF=8.0),
+        ENG_Y=3.4, ENG_Z=-1.80, ENG_FWD=3.0, ENG_KA=0.66, ENG_KR=0.74, FAN_BLADES=18, ENG_FLAT=0.0,
+        ENG2=dict(Y=15.8, Z=-1.30, FWD=2.6),
+        # the tailplane bridges the two tail cones (its tips end on the fuselage centre lines)
+        HT_S_LE0=37.9, HT_C0=4.3, HT_SEMI=8.0, HT_LE=6.0, HT_TIP_C=3.3, HT_Z0=0.55, HT_DIH=0.0,
+        ELEV_Y=(0.25, 7.05),
+        VT_Z0=1.40, VT_S_LE0=34.2, VT_C0=6.8, VT_TIP_C=2.2, VT_LE=38.0, VT_FIL=(1.4, 3.6),
+        NOSE_TIRE=(0.76, 0.24, 0.20), MAIN_TIRE=(1.17, 0.43, 0.45), MAIN_AXLE_DS=0.0,
+        DOORS=[5.6, 39.2], DOOR=(0.86, -0.64, 1.28), DOOR_GAP=0.62,
+        EXITS=[(19.0, 0.51, 0.0, 0.98), (19.9, 0.51, 0.0, 0.98)],
+        WIN=(0.47, 0.28, 0.46, 0.52), WIN_S=(7.0, 37.6),
+        CARGO=[(9.6, 1.22, -2.10, -1.12), (31.0, 1.22, -2.05, -1.12)],
+        LABEL="MA-TW", REG="JA202M", CK=(0.80, 0.10, 0.90, 0.90, -0.30),
+        SPEC=dict(S=361.0, b=64.0, c=6.6, OEW=99000, MTOW=192000, MLW=158000, MZFW=146000,
+                  fuelCapacity=52000, thrustSL=250000, VMO=340, MMO=0.82, rollK=1.15),
+        ENGINE="Micomsoft MX-1G geared turbofan", CHEVRONS=0,
+    ),
+    # MA-BW "Ei" (エイ, ray): a blended wing body.  The flattened 11 m wide cabin is buried in a
+    # 40 m chord, 16 % thick centre body (60 deg leading edge) that blends into a 37 deg outer
+    # wing; no tailplane (elevons), a fin on each wing tip, two large fans on struts above the
+    # aft centre body, a windowless theatre-style cabin.
+    "mabw": dict(
+        LENGTH=45.6, SPAN=72.0, HEIGHT=11.0, FUS_W=11.0, FUS_H=5.4, NL=11.0, T0=30.0,
+        GROUND_Z=-5.30, FLOOR_Z=-1.40, S_NOSE=6.2, WHEELBASE=24.4, TRACK=10.0,
+        WING_C0=40.0, Y_KINK=10.0, Y_TIP=36.0, Y_RAKE=33.5, LE=37.0, TE_IN=-28.0, TE_OUT=11.0, WING_Z0=-0.60,
+        LE_KINK=(10.0, 60.0), WY_ROOT=10.4, WING_ROOT_Y=0.02, DIHEDRAL=3.0, BUMP_D=0.0,
+        TC=[0.160, 0.155, 0.125, 0.100, 0.090], TWIST=[1.5, 1.5, 1.0, -1.0, -2.0],
+        WINGLET=None, NO_WIN=True,
+        TAIL=dict(top=([28.0, 30.0, 32.0, 34.0, 37.0, 40.0, 43.0, 45.6], [2.70, 2.55, 2.05, 1.45, 0.85, 0.2, -0.55, -1.0]),
+                  bot=([26.0, 30.0, 34.0, 38.0, 42.0, 45.6], [-2.70, -2.62, -2.30, -1.85, -1.45, -1.25]),
+                  hw=([28.0, 32.0, 36.0, 40.0, 43.0, 45.6], [5.60, 5.3, 4.5, 3.2, 1.9, 0.45]),
+                  zw=([26.0, 34.0, 40.0, 45.6], [0.0, -0.2, -0.5, -1.1])),
+        BWB=dict(fins=True, eng_top=True),
+        ENG_Y=4.4, ENG_Z=3.75, ENG_FWD=-18.6, ENG_KA=0.92, ENG_KR=0.95, FAN_BLADES=18, ENG_FLAT=0.0,
+        # (no tailplane: HT values unused) wing-tip fins: built on the centre line from z = 0, then
+        # moved to the tips
+        HT_S_LE0=40.0, HT_C0=1.0, HT_SEMI=1.0, HT_LE=30.0, HT_TIP_C=0.5, HT_Z0=0.0,
+        VT_Z0=0.0, VT_S_LE0=42.1, VT_C0=6.2, VT_TIP_C=2.4, VT_LE=42.0, VT_FIL=(0.05, 0.4),
+        NOSE_TIRE=(1.07, 0.42, 0.36), MAIN_TIRE=(1.40, 0.54, 0.76), MAIN_AXLE_DS=0.9,
+        DOORS=[7.4, 12.6], DOOR=(1.07, -1.33, 0.60), DOOR_GAP=0.95,
+        EXITS=[],
+        WIN=(0.0, 0.29, 0.50, 0.965), WIN_S=(9.0, 30.0),
+        CARGO=[(10.2, 1.7, -2.45, -1.55)],
+        LABEL="MA-BW", REG="JA303M", CK=(1.0, 0.0, 1.0, 0.92, -0.25),
+        SPEC=dict(S=680.0, b=72.0, c=21.4, OEW=150000, MTOW=300000, MLW=220000, MZFW=205000,
+                  fuelCapacity=110000, thrustSL=400000, VMO=340, MMO=0.86, rollK=1.0),
+        ENGINE="Micomsoft MX-12 ultra-high-bypass turbofan", CHEVRONS=0,
+    ),
+    # MA-AS "Kujira" (クジラ, whale): a 150 m hybrid airship - a tri-lobe helium hull (the centre
+    # lobe higher), an X tail, four vectored ducted propellers, air-cushion landing pads.  It flies
+    # ~97 % on buoyancy; the rest comes from the lifting hull in forward flight or the tilted
+    # propellers.  The aeroplane parts below describe its gondola (flight deck, panoramic
+    # lounge cabin); the wing / tail values are placeholders (not built).
+    "maas": dict(
+        LENGTH=30.0, SPAN=58.0, HEIGHT=35.0, FUS_W=4.8, FUS_H=3.6, NL=5.5, T0=23.0,
+        GROUND_Z=-2.70, FLOOR_Z=-1.00, S_NOSE=4.5, WHEELBASE=27.1, TRACK=33.0,
+        WING_C0=4.0, Y_KINK=3.0, Y_TIP=6.0, LE=10.0, TE_IN=0.0, TE_OUT=0.0, WING_Z0=0.0,
+        TC=[0.12, 0.12, 0.12, 0.12, 0.12], TWIST=[0, 0, 0, 0, 0], WINGLET=None,
+        ENG_Y=28.0, ENG_Z=8.0, ENG_FWD=1.0, ENG_KA=0.4, ENG_KR=0.4, FAN_BLADES=5, ENG_FLAT=0.0,
+        HT_S_LE0=27.0, HT_C0=1.0, HT_SEMI=1.0, HT_LE=10.0, HT_TIP_C=0.5, HT_Z0=0.0,
+        VT_Z0=0.0, VT_S_LE0=27.0, VT_C0=1.0, VT_TIP_C=0.5, VT_LE=10.0, VT_FIL=(0.05, 0.2),
+        NOSE_TIRE=(0.66, 0.22, 0.18), MAIN_TIRE=(1.0, 0.36, 0.40), MAIN_AXLE_DS=0.0,
+        DOORS=[6.7, 26.0], DOOR=(0.90, -0.97, 0.86), DOOR_GAP=0.68,
+        EXITS=[],
+        WIN=(0.12, 0.72, 0.95, 1.12), WIN_S=(7.4, 25.6),
+        CARGO=[],
+        LABEL="MA-AS", REG="JA505M", CK=(0.80, 0.10, 0.86, 0.78, -0.62),
+        SPEC=dict(S=2600.0, b=58.0, c=30.0, OEW=118000, MTOW=150000, MLW=150000, MZFW=142000,
+                  fuelCapacity=9000, thrustSL=44000, VMO=70, MMO=0.2, rollK=1.0),
+        ENGINE="Micomsoft MXD-1 vectored ducted propeller", CHEVRONS=0,
+        AIRSHIP=dict(L=150.0, s0=-27.0, Rc=15.5, Rs=12.5, ys=16.5, dzs=-5.0, zc=17.3, ds_side=2.0, k_side=0.95,
+                     fin=dict(s_root=97.0, c_root=24.0, c_tip=10.0, span=19.0, sweep=35.0, hinge=0.70),
+                     duct_s=(13.0, 86.0), duct_R=2.3, duct_L=3.0, duct_out=4.2,
+                     cd0=0.05, cla=1.1, heavy=0.015, hcb=9.0, kx=15.0, ky=44.0),
     ),
     # ---- Boeing 747-400: the upper-deck hump, four CF6-80C2 under a 64 m wing with canted
     # winglets, wing and body gear (16 main wheels).  thrustSL is per side (two engines).
@@ -829,6 +942,9 @@ NACELLES = {
 }
 NACELLES["b744"] = NACELLES["b763"]
 NACELLES["maw"] = NACELLES["ma3"]      # eight small geared fans
+NACELLES["matw"] = NACELLES["ma3"]
+NACELLES["mabw"] = NACELLES["ma9"]
+NACELLES["maas"] = NACELLES["ma3"]          # (unused: ducted propellers)
 WS_ZONES = {"b738": ((1.3, 1.6, 2.45, 3.0), 1.62), "b763": ((1.54, 1.79, 2.39, 3.04), 1.72)}
 # side windows (No. 2 / No. 3) length scale: the 767's window band is ~2.4 m long in photos
 
@@ -870,6 +986,10 @@ def apply_type(t):
         keep = f.x < ts[0] - 1.0
         g["_" + key] = PchipInterpolator(np.r_[f.x[keep], ts], np.r_[f(f.x[keep]), tv])
     # --- wing -----------------------------------------------------------------
+    g["WING_Y0"] = T.get("WING_Y0", 0.0)
+    g["LE_KINK"] = (T["LE_KINK"][0], T["LE_KINK"][1] * D2R) if "LE_KINK" in T else None
+    g["NO_WIN"] = T.get("NO_WIN", False)
+    g["WY_ROOT"] = T.get("WY_ROOT")
     g["LE_SWEEP"] = T["LE"] * D2R
     g["TE_IN_SWEEP"] = T["TE_IN"] * D2R
     g["TE_OUT_SWEEP"] = T["TE_OUT"] * D2R
@@ -927,8 +1047,10 @@ def apply_type(t):
     g["WIN_Z"], g["WIN_W"], g["WIN_H"], g["WIN_PITCH"] = T["WIN"]
     g["EYE"] = tuple(float(v) for v in ck(EYE))
     # --- optional features ---------------------------------------------------------
-    for k in ("HUMP", "ENG2", "PROP", "BODY_GEAR", "WIN2", "SPONSON", "WIN_RUNS"):
+    for k in ("HUMP", "ENG2", "PROP", "BODY_GEAR", "WIN2", "SPONSON", "WIN_RUNS", "TWIN", "WY_ROOT", "BWB", "AIRSHIP"):
         g[k] = T.get(k)
+    if "ELEV_Y" in T:
+        g["ELEV"] = dict(g["ELEV"], y0=T["ELEV_Y"][0], y1=T["ELEV_Y"][1])
     g["WING_ROOT_Y"] = T.get("WING_ROOT_Y", 1.2)
     if T.get("DORSAL"):
         le_d, te_d = float(wing_le(g["WING_ROOT_Y"])), float(wing_te(g["WING_ROOT_Y"]))

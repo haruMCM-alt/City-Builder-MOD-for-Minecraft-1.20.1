@@ -127,6 +127,7 @@ export class Systems {
   // ---------------------------------------------------------------------------
   fbw(dt, mainWow, anyWow) {
     const fm = this.fm, o = fm.out, ctl = fm.ctl, P = this.pilot;
+    if (fm.air) { this.airshipLaw(dt, mainWow, anyWow); return; }
     const qbar = Math.max(o.qbar, 200);
     const sched = clamp(9000 / qbar, 0.25, 6);
     const V = Math.max(o.tas, 30);
@@ -224,6 +225,44 @@ export class Systems {
     ctl.aileron = this.ail;
     ctl.rudder = this.rud;
     ctl.rollSpoiler = clamp(this.ail / (25 * DEG), -1, 1);
+  }
+
+  // hybrid airship: the stick (or the autopilot's flight-path target) commands a vertical speed,
+  // flown with the elevators; roll input (or the autopilot's bank target, as a turn rate) yaws
+  // the hull - it does not bank.  The flap lever is the propeller vectoring (systems: flaps).
+  airshipLaw(dt, mainWow, anyWow) {
+    const fm = this.fm, o = fm.out, ctl = fm.ctl, P = this.pilot;
+    const V = Math.max(o.tas, 3);
+    const flightMode = !mainWow && this.airTime > 0.6;
+    this.mode = flightMode ? 'AIRSHIP' : 'GROUND';
+    let vsT;
+    if (this.ap.on) vsT = clamp(V * Math.tan(clamp(this.gammaT, -20, 20) * DEG), -6, 6);
+    else { vsT = P.pitch * 5; this.gammaT = o.gammaAir; }
+    // vertical speed -> pitch attitude (the lifting hull climbs nose up), limited to +-10 deg;
+    // slow (vectored / hovering) the hull is just kept level
+    const ev = vsT - o.vs;
+    const fV = smoothstep(6, 18, V);
+    if (flightMode) this.ivs = clamp((this.ivs || 0) + ev * dt * 0.5 * fV, -6, 6);
+    else this.ivs = 0;
+    const pitchT = clamp(2.5 * ev + this.ivs, -10, 10) * fV;
+    const sched = clamp(480 / Math.max(o.qbar, 30), 0.3, 4);
+    const elevCmd = flightMode || Math.abs(P.pitch) > 0.02 ? -(0.3 * (pitchT - o.pitch) * DEG - 1.0 * fm.w.z) * sched : 0;
+    this.elev = approach(this.elev, clamp(elevCmd, -25 * DEG, 25 * DEG), 20 * DEG, dt);
+    // yaw: turn rate from the roll input / autopilot bank target (max ~4 deg/s)
+    const r = -fm.w.y;
+    let rT;
+    if (this.ap.on) rT = clamp((G0 / Math.max(V, 12)) * Math.tan(clamp(this.phiT, -30, 30) * DEG), -0.07, 0.07);
+    else { rT = P.roll * 0.07; this.phiT = 0; }
+    rT += P.yaw * 0.05;
+    const er = rT - r;
+    this.ir = clamp((this.ir || 0) + er * dt * 2.0, -0.5, 0.5);
+    this.ail = approach(this.ail, clamp((er * 8 + this.ir) * 25 * DEG, -25 * DEG, 25 * DEG), 40 * DEG, dt);
+    this.rud = approach(this.rud, clamp(P.yaw * 27 * DEG, -27 * DEG, 27 * DEG), 50 * DEG, dt);
+    this.iq = 0; this.ip = 0;
+    ctl.elevator = this.elev;
+    ctl.aileron = this.ail;
+    ctl.rudder = this.rud;
+    ctl.rollSpoiler = 0;
   }
 
   // ---------------------------------------------------------------------------

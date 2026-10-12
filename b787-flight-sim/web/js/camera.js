@@ -9,12 +9,14 @@ import { terrainHeight } from './terrain.js';
 const _wk = new WeakMap();
 function walkable(C, x, z) {
   let W = _wk.get(C);
+  // twin fuselage: each cabin is checked in its own frame (|z| folded by the fuselage offset)
+  const fold = (v) => (C.fold ? v - Math.sign(v) * C.fold : v);
   if (!W) {
-    const xs = C.seats.map((s) => s.p[0]), zs = C.seats.map((s) => Math.abs(s.p[2]) + s.w / 2);
+    const xs = C.seats.map((s) => s.p[0]), zs = C.seats.map((s) => Math.abs(fold(s.p[2])) + s.w / 2);
     W = { x0: Math.min(...xs) - 2.2, x1: Math.max(...xs) + 3.0, zMax: Math.max(...zs) - 0.15 };
     _wk.set(C, W);
   }
-  if (x < W.x0 || x > W.x1 || Math.abs(z) > W.zMax) return false;
+  if (x < W.x0 || x > W.x1 || Math.abs(fold(z)) > W.zMax) return false;
   for (const a of C.aisles || []) if (Math.abs(z - a) < 0.3) return true;
   for (const s of C.seats) if (Math.abs(s.p[0] - x) < 0.62 && Math.abs(s.p[2] - z) < s.w / 2 + 0.22) return false;
   return true;
