@@ -190,10 +190,42 @@ def repack_glb(data, strip, shared=None, shared_out=None):
             + struct.pack("<II", len(nb), 0x004E4942) + bytes(nb))
 
 
+GLTF_TRANSFORM = None      # --gltf-transform: re-encode the Draco geometry tighter for this build
+# (position, normal, texcoord bits): aircraft and their parked models at 13 / 9 / 11 bits (1 cm
+# on a 75 m fuselage, the web build keeps 14 / 10 / 12); cabins, the airports and the world keep
+# their own precision and are only recompressed at the slowest / smallest Draco setting
+DRACO_TIGHT = (13, 9, 11)
+DRACO_KEEP = re.compile(r"(-cabin|cabin-protos|world|airport\d+|arff|gse)\.glb$")
+
+
+def redraco(data, key):
+    if not GLTF_TRANSFORM:
+        return data
+    import tempfile
+    q = None if DRACO_KEEP.search(key) else DRACO_TIGHT
+    with tempfile.TemporaryDirectory() as td:
+        a, b = os.path.join(td, "in.glb"), os.path.join(td, "out.glb")
+        open(a, "wb").write(data)
+        cmd = [GLTF_TRANSFORM, "draco", a, b, "--encode-speed", "0", "--decode-speed", "5"]
+        if q:
+            cmd += ["--quantize-position", str(q[0]), "--quantize-normal", str(q[1]), "--quantize-texcoord", str(q[2]),
+                    "--quantize-color", "8"]
+        else:
+            cmd += ["--quantize-position", "14", "--quantize-normal", "10", "--quantize-texcoord", "12",
+                    "--quantize-color", "8"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode or not os.path.exists(b):
+            print("gltf-transform failed on", key, r.stderr[-300:])
+            return data
+        out = open(b, "rb").read()
+    return out if len(out) < len(data) else data
+
+
 def pack_asset(key, path, video_kbps, shared=None, shared_out=None):
     """bytes to embed + whether they are gzip-compressed"""
     data = open(path, "rb").read() if path else shared_out[key]
     if key.endswith(".glb"):
+        data = redraco(data, key)
         strip = bool(STRIP_TEX.search(key))
         data = repack_glb(data, strip, None if strip else shared, shared_out)
     if key.endswith("terrain_layers.jpg"):
@@ -252,7 +284,10 @@ def main():
     ap.add_argument("-o", "--out", default=os.path.join(ROOT, "dist", "MicomsoftFrightSimulator.html"))
     ap.add_argument("--video-kbps", type=int, default=0, help="re-encode the safety video at this bitrate (needs ffmpeg)")
     ap.add_argument("--no-video", action="store_true")
+    ap.add_argument("--gltf-transform", help="gltf-transform CLI: tighter Draco geometry (see DRACO_TIGHT)")
     args = ap.parse_args()
+    global GLTF_TRANSFORM
+    GLTF_TRANSFORM = args.gltf_transform
     js = bundle(find_esbuild(args.esbuild)).replace("</script", "<\\/script")
 
     html = open(os.path.join(WEB, "index.html"), encoding="utf-8").read()
