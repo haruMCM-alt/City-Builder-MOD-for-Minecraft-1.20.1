@@ -33,6 +33,8 @@ import { FX } from './fx.js';
 import { Mishap } from './mishap.js';
 import { ARFF, Evacuation } from './emergency.js';
 import { Terminal, patchShellClip } from './terminal.js';
+import { RadioSet } from './radio.js';
+import { FlightCrew } from './crew.js';
 import { UISound } from './uisound.js';
 import { bindWheelUI } from './wheel.js';
 import { configureObstacles } from './obstacles.js';
@@ -320,6 +322,11 @@ class App {
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     if (this.isTouch) this.input.bindTouch($('touch'));
     this.audio = new Audio();
+    // broadcast radio (FM music / news, air-band ATIS); ATC calls take priority over it
+    this.tuner = new RadioSet(this);
+    // captain and first officer in the cockpit (the shared cabin prototypes file)
+    this.crew = new FlightCrew(() => (this._cabinProtos ||= loadGLB(this.loader, ASSET + 'cabin-protos' + MODEL_EXT, () => {})));
+    this.radio.preempt = () => this.tuner.preempt();
     // button clicks and the menu music (the single-file build embeds a lighter encode)
     this.uiSound = new UISound({
       url: assetURL(ASSET + (EMBEDDED ? 'menu_bgm_lite.mp3' : 'menu_bgm.mp3')),
@@ -503,6 +510,7 @@ class App {
     $('btnMenu').onclick = () => this.command('menu');
     this.fids = new FIDS(this, $('fids'));
     $('btnFids').onclick = () => this.command('fids');
+    if ($('btnTuner')) $('btnTuner').onclick = () => this.command('tuner');
     if ($('btnFidsArr')) $('btnFidsArr').onclick = () => this.command('fidsArr');
     $('resumeBtn').onclick = () => this.resume();
     document.addEventListener('visibilitychange', () => {
@@ -1302,6 +1310,9 @@ class App {
   command(c) {
     const sys = this.sys, fm = this.fm, o = fm.out;
     if (c === 'interact') { this.terminal.interact(); return; }
+    if (c === 'tuner') { this.tuner.toggle(); return; }
+    if (c === 'tuneUp' || c === 'tuneDown') { if (!this.tuner.on) this.tuner.power(true); this.tuner.tune((c === 'tuneUp' ? 1 : -1) * this.tuner.B.step); this.toast('📻 ' + this.tuner.freq[this.tuner.band].toFixed(this.tuner.band === 'FM' ? 1 : 3) + ' MHz', 900); return; }
+    if (c === 'seekUp' || c === 'seekDown') { if (!this.tuner.on) this.tuner.power(true); this.tuner.seek(c === 'seekUp' ? 1 : -1); this.toast('📻 ' + this.tuner.freq[this.tuner.band].toFixed(this.tuner.band === 'FM' ? 1 : 3) + ' MHz', 900); return; }
     if (c === 'fids' || c === 'fidsArr') {
       // the board of the airport you are nearest to (departures / arrivals)
       const na = nearestAirport(this.fm.pos.x, this.fm.pos.z), kind = c === 'fids' ? 'dep' : 'arr';
@@ -1757,6 +1768,7 @@ class App {
     const cockpit = this.rig.view === 'cockpit';
     fm.wet = this.world.wet || 0;
     this.visual.update(dt, fm, sys, { night: this.world.night, camera: this.camera, cockpitView: cockpit, events, wet: fm.wet });
+    this.crew?.update(this.visual, this.meta, { view: this.rig.view, ctl: fm.ctl, dt: this.paused ? 0 : dt });
     {
       // cabin: passengers, crew and the IFE (live flight data for the maps / info channels)
       const v = this.rig.view, o = fm.out;
@@ -1812,6 +1824,7 @@ class App {
     this.world.update(dt, this.camera, (this._wfoc || (this._wfoc = new THREE.Vector3())).set(fm.pos.x, fm.pos.y, fm.pos.z));
     this.updateAirports();
     this.fids?.update(dt);
+    this.tuner?.update(dt);
     // emergency training: the failure picked in the menu
     if (this._failAt != null && !this.paused && !this.fm.crashed) {
       this._failAt -= dt;

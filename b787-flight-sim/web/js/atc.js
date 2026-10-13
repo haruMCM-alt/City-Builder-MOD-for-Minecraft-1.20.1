@@ -171,6 +171,7 @@ export class Radio {
       this.speaking = false; setTimeout(() => this._next(), 450);
     };
     u.onend = done; u.onerror = done;
+    this.preempt?.();                 // the broadcast radio's talk stops for the call
     try { this.synth.speak(u); } catch (e) { done(); }
     // safety: some engines never fire onend
     setTimeout(() => { if (!closed) done(); }, 14000);

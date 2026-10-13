@@ -467,3 +467,113 @@ def build_crew(M, col, parent):
         sh2.ellipsoid((0.03, sy * 0.084, 0.055), 0.03, (0.9, 0.8, 1.4))
         sh2.limb((0.045, sy * 0.084, 0.04), (0.05, sy * 0.084, 0.0), 0.009, 0.007)   # low heel
         join("Proto_CrewLeg" + L, [lg.mesh("cl" + L, 650, M["crewskin"]), sh2.mesh("cf" + L, 300, M["shoes"])], parent, col)
+
+
+# --------------------------------------------------------------------------- flight crew
+# seated pilot: upright (6 degrees), feet forward on the rudder pedals, hands on the controls;
+# white short-sleeved shirt with black epaulettes (captain 4 gold bars, first officer 3), black
+# tie, wings, dark trousers, a headset with the boom microphone. Parts: Proto_Pilot (captain
+# body), Proto_PilotFO, Proto_PilotHead, Proto_PilotArmL / R (pivot at the shoulder).
+PILOT_PIVOTS = dict(neck=(0.13, 0.0, 1.13), shoulderL=(0.118, 0.15, 1.05), shoulderR=(0.118, -0.15, 1.05))
+
+
+def build_pilot(M, col, parent):
+    from cabin_b787 import cyl
+    lean = math.radians(6)
+    ax = np.array([math.sin(lean), 0, math.cos(lean)])
+    fwd = np.array([math.cos(lean), 0, -math.sin(lean)])
+    hip = np.array([0.06, 0.0, 0.50])
+    at = lambda t, ds=0.0: hip + ax * t + fwd * ds   # noqa: E731
+
+    def body(name, bars):
+        shirt = Family("PShirt", 0.006)
+        shirt.ellipsoid(at(0.19), 0.115, (0.8, 0.155 / 0.115 * 0.84, 1.0), tilt=lean)
+        shirt.ellipsoid(at(0.36, -0.012), 0.125, (0.84, 0.168 / 0.125, 1.0), tilt=lean)
+        shirt.ellipsoid(at(0.5), 0.088, (0.95, 0.19 / 0.088 * 0.93, 0.72), tilt=lean)
+        for sy in (-1, 1):
+            shirt.ball(at(0.555) + np.array([0, sy * 0.15, 0]), 0.052)
+            shirt.ellipsoid(at(0.58, 0.012) + np.array([0, sy * 0.07, 0]), 0.042, (0.9, 1.5, 0.62), tilt=lean)
+        shirt.limb(at(0.57, 0.014), at(0.6, 0.016), 0.056, 0.052)
+        pants = Family("PPants", 0.006)
+        pants.ellipsoid(at(0.04), 0.12, (1.05, 0.155 / 0.12, 0.8), tilt=lean)
+        for sy in (-1, 1):
+            pants.ball((0.1, sy * 0.085, 0.53), 0.095)
+            pants.limb((0.03, sy * 0.1, 0.535), (-0.40, sy * 0.11, 0.55), 0.09, 0.062)        # thigh
+            pants.ball((-0.415, sy * 0.11, 0.54), 0.06)                                       # knee
+            pants.limb((-0.42, sy * 0.115, 0.53), (-0.6, sy * 0.12, 0.17), 0.056, 0.04)       # shin, to the pedals
+            pants.ball((-0.48, sy * 0.115, 0.4), 0.055)                                       # calf
+        shoes = Family("PShoes", 0.005)
+        for sy in (-1, 1):
+            shoes.ellipsoid((-0.68, sy * 0.12, 0.1), 0.065, (2.0, 0.78, 0.62))
+            shoes.ellipsoid((-0.62, sy * 0.12, 0.12), 0.045, (1.0, 1.0, 0.9))
+        tie = Family("PTie", 0.004)
+        for t, wdt in ((0.585, 0.022), (0.55, 0.02), (0.48, 0.026), (0.40, 0.03), (0.33, 0.032), (0.28, 0.026)):
+            ds = -(0.07 + 0.075 * (0.585 - t) / 0.3 if t > 0.5 else 0.122)
+            tie.ellipsoid(at(t, ds if t > 0.5 else -0.118), wdt, (0.35, 1.0, 1.4), tilt=lean)
+        obs = [shirt.mesh(name + "_shirt", 1500, M["pilotshirt"]), pants.mesh(name + "_pants", 1300, M["pilotpants"]),
+               shoes.mesh(name + "_shoes", 400, M["shoes"]), tie.mesh(name + "_tie", 200, M["pilottie"])]
+        # epaulettes with the gold bars, the wings over the left pocket
+        ep = C.MeshBuilder(G.to_blender)
+        gold = C.MeshBuilder(G.to_blender)
+        for sy in (-1, 1):
+            c0 = at(0.585) + np.array([0.0, sy * 0.115, 0.012])
+            ep.add_box(tuple(c0), (0.028, 0.06, 0.006), mat=0)
+            for k in range(bars):
+                gold.add_box((c0[0], c0[1] + sy * (0.034 - k * 0.016), c0[2] + 0.004), (0.029, 0.0045, 0.004), mat=0)
+        wc = at(0.44, -0.122) + np.array([0, 0.07, 0])
+        gold.add_box(tuple(wc), (0.004, 0.03, 0.006), mat=0)
+        gold.add_box(tuple(wc + np.array([0, 0, -0.008])), (0.004, 0.012, 0.004), mat=0)
+        obs.append(ep.build(name + "_ep", [M["epaulette"]]))
+        obs.append(gold.build(name + "_gold", [M["gold"]]))
+        return join(name, obs, parent, col)
+
+    body("Proto_Pilot", 4)
+    body("Proto_PilotFO", 3)
+    # head: face, short hair, the headset
+    c = (0.13, 0.0, 1.255)
+    nk = Family("PNeck", 0.004)
+    nk.limb((0.125, 0, 1.09), (0.135, 0, 1.19), 0.05, 0.043)
+    nk.ellipsoid((0.145, 0, 1.11), 0.055, (0.75, 1.2, 0.45))
+    obs = [head_skin(c, False).mesh("ph_skin", 2000, M["skin"]), nk.mesh("ph_neck", 400, M["skin"])]
+    for sy in (-1, 1):
+        e = (c[0] - 0.0795, sy * 0.032, c[2] + 0.011)
+        obs.append(sphere_object("ph_eye", e, (0.0115, 0.0115, 0.0115), M["eyewhite"], (8, 12)))
+        obs.append(sphere_object("ph_iris", (e[0] - 0.0093, e[1], e[2]), (0.0035, 0.0062, 0.0062), M["eye"], (6, 10)))
+    obs.append(brows(c, M["brow"], "ph_brow"))
+    ml = C.MeshBuilder(G.to_blender)
+    mouth_line(ml, c, 0)
+    obs.append(ml.build("ph_mouth", [M["eye"]]))
+    obs.append(grid_object("ph_hair", hair_cap(c, 31, "short", False), M["hair"], outward=(c[0], 0, c[2])))
+    hs = C.MeshBuilder(G.to_blender)
+    band = [(c[0] + 0.012, 0.097 * math.cos(a), c[2] + 0.003 + 0.118 * math.sin(a)) for a in np.linspace(0.12, math.pi - 0.12, 12)]
+    for p0, p1 in zip(band[:-1], band[1:]):
+        cyl(hs, p0, p1, 0.007, 0, n=8)
+    mic = [(c[0] + 0.0, 0.1, c[2] - 0.03), (c[0] - 0.05, 0.085, c[2] - 0.06), (c[0] - 0.095, 0.05, c[2] - 0.07), (c[0] - 0.11, 0.022, c[2] - 0.063)]
+    for p0, p1 in zip(mic[:-1], mic[1:]):
+        cyl(hs, p0, p1, 0.0028, 0, n=6)
+    obs.append(hs.build("ph_band", [M["headset"]]))
+    cups = Family("PCups", 0.004)
+    for sy in (-1, 1):
+        cups.ellipsoid((c[0] + 0.008, sy * 0.093, c[2] - 0.012), 0.042, (1.0, 0.5, 1.15))
+    obs.append(cups.mesh("ph_cups", 500, M["headset"]))
+    pads = Family("PPads", 0.003)
+    pads.ball((c[0] - 0.112, 0.02, c[2] - 0.064), 0.011)
+    obs.append(pads.mesh("ph_micpad", 120, M["headsetpad"]))
+    join("Proto_PilotHead", obs, parent, col)
+    # arms: short sleeves, forearms and hands forward on the yoke / side stick
+    for sy, L in ((1, "L"), (-1, "R")):
+        sh = np.array(PILOT_PIVOTS["shoulder" + L])
+        el = np.array([-0.07, sy * 0.21, 0.84])
+        wr = np.array([-0.33, sy * 0.19, 0.87])
+        sl = Family("PSleeve" + L, 0.005)
+        sl.ball(sh + np.array([0.0, -sy * 0.008, -0.02]), 0.052)
+        sl.limb(sh + np.array([0, 0, -0.035]), sh + (el - sh) * 0.55, 0.047, 0.044)
+        arm = Family("PArm" + L, 0.005)
+        arm.limb(sh + (el - sh) * 0.5, el, 0.038, 0.037)
+        arm.limb(el, wr, 0.037, 0.03)
+        hand = Family("PHand" + L, 0.0035)
+        hand.limb(wr, wr + np.array([-0.03, 0, -0.004]), 0.025, 0.027)
+        hand.ellipsoid(tuple(wr + np.array([-0.06, 0, -0.008])), 0.042, (1.0, 0.7, 0.62))      # fist round the grip
+        hand.limb(tuple(wr + np.array([-0.04, -sy * 0.03, 0.0])), tuple(wr + np.array([-0.075, -sy * 0.028, 0.01])), 0.011, 0.009, n=4)   # thumb
+        join("Proto_PilotArm" + L, [sl.mesh("psl" + L, 500, M["pilotshirt"]), arm.mesh("pa" + L, 600, M["skin"]),
+                                    hand.mesh("phd" + L, 500, M["skin"])], parent, col)

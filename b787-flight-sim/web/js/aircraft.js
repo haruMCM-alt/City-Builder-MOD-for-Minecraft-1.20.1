@@ -160,6 +160,17 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
           // (twin fuselage / wing-tip fins: each fin is a copy of one centred mesh, painted in its own frame)
           if (m.name === 'B787_Tail' && self.finU) patchFinShader(sh, self.finU, meta.fusY || meta.tipFins ? 'position' : '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz');
           if (wx) patchWeathering(sh, '(uRootInv * modelMatrix * vec4(position, 1.0)).xyz', wx);
+          // flight-deck glass (the low-roughness panes of the nose): cut out of the paint while
+          // the cockpit interior is shown, the tinted overlay below draws the glass instead
+          if (m.name === 'B787_Fuselage' && self.ckGlassU) {
+            sh.uniforms.uCkGlass = self.ckGlassU;
+            sh.fragmentShader = sh.fragmentShader
+              .replace('#include <common>', '#include <common>\nuniform vec4 uCkGlass;')
+              .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+#ifdef USE_ROUGHNESSMAP
+  if (uCkGlass.w > 0.5 && vDmgP.x > uCkGlass.x && abs(vDmgP.z - uCkGlass.y) < uCkGlass.z && texelRoughness.g < 0.075) discard;
+#endif`);
+          }
         };
         const wx = weatherKind(m.name);
         m.customProgramCacheKey = () => (m.name === 'B787_Fuselage' ? 'flex-livery' : m.name === 'B787_Tail' ? 'flex-fin' : 'flex') + (wx || '');
@@ -167,6 +178,7 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
         if (m.name === 'B787_Navy' || m.name === 'B787_Nacelle') (this.paintMats ||= []).push(m);
       }
     });
+    this._cockpitGlass(meta);
     // glow sprites for the aircraft lights
     const gt = glowTexture();
     this.lights = [];
@@ -210,6 +222,70 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     this._initParticles();
     this.lightsOn = { nav: true, beacon: true, strobe: false, landing: false, taxi: false, logo: true };
     this.cockpitVisible = true;
+  }
+
+  // see-through flight-deck windows: from 2.6 m behind the pilots' eyes forward and within the
+  // cockpit's width, the fuselage's glass panes (roughness map < 0.075) become a tinted overlay
+  // (darker and more reflective at grazing angles), so the crew and the panel show faintly
+  _cockpitGlass(meta) {
+    const e = meta.eye, fus = this.fuselageMat;
+    if (!e || !fus || !fus.roughnessMap || meta.airship) return;
+    this.root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(this.root.matrixWorld).invert();
+    let zc = 0, hw = (meta.fusW || 5.77) / 2 + 0.4;
+    const ck = this.cockpit[0];
+    if (ck) {
+      const b = new THREE.Box3().setFromObject(ck).applyMatrix4(inv);
+      zc = (b.min.z + b.max.z) / 2; hw = (b.max.z - b.min.z) / 2 + 0.5;
+    }
+    const x0 = e[0] - 2.6;
+    this.ckGlassU = { value: new THREE.Vector4(x0, zc, hw, 0) };
+    const U = this.ckGlassU, rootInv = this.flexUniforms.uRootInv;
+    const gm = new THREE.MeshStandardMaterial({ color: 0x0b1117, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.5,
+      envMapIntensity: 1.6, roughnessMap: fus.roughnessMap, depthWrite: false, name: 'Cockpit_Windshield' });
+    gm.onBeforeCompile = (sh) => {
+      sh.uniforms.uCkGlass = U; sh.uniforms.uRootInv = rootInv;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform mat4 uRootInv; varying vec3 vCkP;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvCkP = (uRootInv * modelMatrix * vec4(position, 1.0)).xyz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec4 uCkGlass; varying vec3 vCkP;')
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+#ifdef USE_ROUGHNESSMAP
+  if (texelRoughness.g >= 0.075 || vCkP.x < uCkGlass.x || abs(vCkP.z - uCkGlass.y) > uCkGlass.z) discard;
+#endif
+  roughnessFactor = 0.04;`)
+        .replace('#include <opaque_fragment>', `{
+  float fr = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 3.0);
+  diffuseColor.a = mix(0.46, 0.93, fr);
+}
+#include <opaque_fragment>`);
+    };
+    gm.customProgramCacheKey = () => 'ck-windshield';
+    this.glassMeshes = [];
+    this.root.traverse((o) => {
+      if (!o.isMesh || o.material !== fus || o.userData.ckGlass) return;
+      const g = o.geometry, P = g.attributes.position, idx = g.index;
+      const m = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
+      const v = new THREE.Vector3();
+      const near = new Uint8Array(P.count);
+      for (let i = 0; i < P.count; i++) { v.fromBufferAttribute(P, i).applyMatrix4(m); near[i] = v.x > x0 - 0.3 && Math.abs(v.z - zc) < hw ? 1 : 0; }
+      const tri = [];
+      const n = idx ? idx.count : P.count;
+      for (let t = 0; t < n; t += 3) {
+        const a = idx ? idx.getX(t) : t, b = idx ? idx.getX(t + 1) : t + 1, c = idx ? idx.getX(t + 2) : t + 2;
+        if (near[a] || near[b] || near[c]) tri.push(a, b, c);
+      }
+      if (!tri.length) return;
+      const ng = new THREE.BufferGeometry();
+      for (const k of ['position', 'normal', 'uv']) if (g.attributes[k]) ng.setAttribute(k, g.attributes[k]);
+      ng.setIndex(tri);
+      const gmesh = new THREE.Mesh(ng, gm);
+      gmesh.userData.ckGlass = true; gmesh.renderOrder = 3; gmesh.castShadow = false; gmesh.receiveShadow = false;
+      gmesh.visible = false;
+      o.add(gmesh);
+      this.glassMeshes.push(gmesh);
+    });
   }
 
   // show structural damage (see FlightModel.dmg): lost outer wings, fin, separated engines
@@ -495,10 +571,16 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     }
     // ---- cockpit interior only when close ------------------------------------------
     const dCam = camPos.distanceTo(this.root.position);
-    const wantCockpit = env.cockpitView || dCam < 45;
+    // (outside: up to ~150 m, the crew and the panel are seen through the windshield)
+    const wantCockpit = env.cockpitView || dCam < (this.ckGlassU ? 150 : 45);
     if (wantCockpit !== this.cockpitVisible) {
       this.cockpitVisible = wantCockpit;
       for (const o of this.cockpit) o.visible = wantCockpit;
+    }
+    if (this.ckGlassU) {
+      const see = wantCockpit && !env.cockpitView;
+      this.ckGlassU.value.w = wantCockpit ? 1 : 0;
+      for (const g of this.glassMeshes) g.visible = see;
     }
     // ---- particles: tyre smoke on touchdown, contrails at altitude -------------------
     for (const e of env.events || []) {

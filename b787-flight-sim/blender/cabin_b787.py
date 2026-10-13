@@ -456,6 +456,14 @@ def materials(tex):
         "hairbun": P("Pax_HairBun", color=h("#ffffff"), roughness=0.7),
         "glasses": P("Pax_Glasses", color=h("#1a1b1e"), roughness=0.3),
         "eye": P("Pax_Eye", color=h("#17120f"), roughness=0.2),
+        # flight crew (cockpit, seen through the windshield)
+        "pilotshirt": P("Pilot_Shirt", color=h("#f3f4f6"), roughness=0.85),
+        "pilotpants": P("Pilot_Pants", color=h("#1a1e28"), roughness=0.8),
+        "pilottie": P("Pilot_Tie", color=h("#14171f"), roughness=0.55),
+        "epaulette": P("Pilot_Epaulette", color=h("#101114"), roughness=0.6),
+        "gold": P("Pilot_Gold", color=h("#caa045"), roughness=0.35, metallic=0.8),
+        "headset": P("Pilot_Headset", color=h("#2a2d32"), roughness=0.45),
+        "headsetpad": P("Pilot_Pad", color=h("#111214"), roughness=0.9),
         # cabin crew (uniform tinted with the airline colour in the simulator), trolley, meal tray
         "uniform": P("Crew_Uniform", color=h("#ffffff"), roughness=0.8),
         "crewpants": P("Crew_Pants", color=h("#1f2633"), roughness=0.8),
@@ -1636,6 +1644,7 @@ def build_cabin(col, tex, bake=True):
     import pax_meta
     pax_meta.build_pax(M, col, protos, PAX_PIVOTS)
     pax_meta.build_crew(M, col, protos)
+    pax_meta.build_pilot(M, col, protos)
     proto_cart(M, col, protos)
     proto_tray(M, col, protos)
     seats = seat_map()

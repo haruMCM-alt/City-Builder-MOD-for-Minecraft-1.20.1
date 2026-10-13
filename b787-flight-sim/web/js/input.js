@@ -75,6 +75,10 @@ export class Input {
     };
     // walking through the terminal: Enter / Space use the counter, gate ... in front of you
     if (this.terminal && (k === 'Enter' || k === ' ')) return this.onCommand('interact');
+    // broadcast radio: 8 opens the set, [ ] tune, Shift+[ ] seek the next station
+    if (k === '8') return this.onCommand('tuner');
+    if (k === '[' || k === '{') return this.onCommand(e.shiftKey ? 'seekDown' : 'tuneDown');
+    if (k === ']' || k === '}') return this.onCommand(e.shiftKey ? 'seekUp' : 'tuneUp');
     if (e.shiftKey && k === 'r') return this.onCommand('toga');
     if (e.shiftKey && k === 'f') return this.onCommand('idle');
     if (e.shiftKey && k === 'x') return this.onCommand('extinguish');
