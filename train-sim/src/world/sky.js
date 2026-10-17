@@ -219,8 +219,33 @@ export class Environment {
           mapN.xy *= normalScale;
           normal = normalize( tbn * mapN );`);
     };
-    const g = new THREE.PlaneGeometry(26000, 26000, 1, 1);
-    g.rotateX(-Math.PI / 2);
+    // radial grid, fine near the camera: huge triangles interpolate depth too
+    // coarsely and would poke through the track bed close to the viewer
+    const radii = [0];
+    for (let r = 6; r < 13000; r *= 1.35) radii.push(r);
+    radii.push(13000);
+    const SEG = 64;
+    const pos = [0, 0, 0], idx = [];
+    for (let i = 1; i < radii.length; i++) {
+      for (let j = 0; j < SEG; j++) {
+        const a = (j / SEG) * Math.PI * 2;
+        pos.push(Math.cos(a) * radii[i], 0, Math.sin(a) * radii[i]);
+      }
+    }
+    for (let j = 0; j < SEG; j++) idx.push(0, 1 + ((j + 1) % SEG), 1 + j);
+    for (let i = 1; i < radii.length - 1; i++) {
+      const b0 = 1 + (i - 1) * SEG, b1 = 1 + i * SEG;
+      for (let j = 0; j < SEG; j++) {
+        const j2 = (j + 1) % SEG;
+        idx.push(b0 + j, b0 + j2, b1 + j, b0 + j2, b1 + j2, b1 + j);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    const nrm = new Float32Array(pos.length); for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1;
+    g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((pos.length / 3) * 2), 2));
+    g.setIndex(idx);
     this.ground = new THREE.Mesh(g, mat);
     // a little below GROUND_Y so paddies, roads and water laid just above GROUND_Y never z-fight with it
     this.ground.position.y = GROUND_Y - 0.07;
