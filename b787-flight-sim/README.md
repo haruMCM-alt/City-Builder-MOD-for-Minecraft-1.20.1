@@ -26,6 +26,8 @@ python3 -m http.server 8000
 
 WebGL2 対応ブラウザ（Chrome / Edge / Firefox / Safari 最新版）で動きます。three.js は `web/vendor/` に同梱しているのでオフラインでも動作します。
 
+**本命はフル画質版**（`web/` をそのまま配信したもの。公開中のアーティファクト版も同じ）：機体の外板テクスチャ・法線・粗さマップは 8192 × 2048、翼 4096 × 4096、尾翼 4096 × 3072、全機種に Cycles で焼いた陰影（AO）。ファイルサイズの上限はありません。下の「単一 HTML 版」は、チャットで送れる 30 MB 以内に収めるための**軽量版**です（テクスチャを縮小し、AO を省略）。
+
 ## 中身 / What's inside
 
 ### 1. Boeing 787-9（`blender/build_b787.py`）
@@ -267,7 +269,7 @@ cd blender && AC_TYPE=b789 python3 render_wallpaper.py takeoff   # または lan
 ```
 `blender/render_wallpaper.py` が機体の .blend に滑走路（標示をテクスチャに描画）・芝生・遠くの丘と空港ビル・雲・大気のもやを足して、Cycles のパストレーシングで 3840×2160 を書き出します（`dist/wallpapers/`）。takeoff は夕方の低い太陽の中で機首を上げた瞬間、landing は日没後のブルーアワーに着陸灯・航法灯・ストロボ・滑走路灯を点けた最終進入。`--res`・`--samples`・`--exposure` で調整。`--livery jal` / `--livery ana` でゲームと同じ JAL・ANA 塗装（胴体の帯・タイトル、垂直尾翼のロゴ、エンジン色）。塗装の素材はゲームの `livery.js` から `node tools/export_livery.mjs` で書き出します（web/ をポート 8787 で配信中に実行）。
 
-## 単一 HTML 版 / Single-file build
+## 単一 HTML 版（軽量版）/ Single-file lite build
 
 ```bash
 npm i esbuild                       # 初回のみ

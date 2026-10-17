@@ -601,6 +601,21 @@ def fuselage_textures(W=8192, H=2048):
         height[sl] -= 0.0015 * a
         blend(col[sl], srgb("#7b838c"), a * 0.25)
 
+    # --- skin quilting ---------------------------------------------------------------
+    # the thin skin bulges very slightly between the frames (~0.6 m apart) and the stringers
+    # (~0.22 m round the section): invisible in diffuse light, it shows as a faint rippling of
+    # the reflections along the fuselage, as on every real airliner
+    print("skin quilting ...")
+    fr = np.sin(np.pi * (S - 0.3) / 0.61) ** 2
+    st = np.sin(np.pi * A / 0.225) ** 2
+    nose = np.clip((S - 6.0) / 3.0, 0, 1) * np.clip((G.LENGTH - 6.0 - S) / 4.0, 0, 1)
+    height += (0.00045 * fr * st + 0.00018 * fr).astype(np.float32) * nose
+    # rivet rows on the frames: a fine, soft seam (a dotted row aliases into moire at distance)
+    dfr = np.abs(((S - 0.3) / 0.61) - np.round((S - 0.3) / 0.61)) * 0.61
+    rv = aa(dfr - 0.003, px).astype(np.float32) * nose
+    height -= 0.00012 * rv
+    blend(col, srgb("#d6dadf"), rv * 0.1)
+
     # --- cockpit windows ------------------------------------------------------------
     print("cockpit ...")
     i1 = fm.col(CS(5.6))
@@ -655,10 +670,8 @@ def fuselage_textures(W=8192, H=2048):
     orm = np.zeros((H, W, 3), np.uint8)
     orm[..., 0] = 255
     orm[..., 1] = (np.clip(rough, 0, 1) * 255).astype(np.uint8)
-    Image.fromarray(orm, "RGB").resize((W // 2, H // 2), Image.LANCZOS).save(
-        os.path.join(TEX, "fuselage_orm.jpg"), quality=92)
-    write_normal(height, fm.du, float(np.mean(fm.dv)), os.path.join(TEX, "fuselage_normal.png"),
-                 size=(W // 2, H // 2))
+    Image.fromarray(orm, "RGB").save(os.path.join(TEX, "fuselage_orm.jpg"), quality=94)
+    write_normal(height, fm.du, float(np.mean(fm.dv)), os.path.join(TEX, "fuselage_normal.png"))
     em = Image.fromarray((np.clip(emis, 0, 1) * 255).astype(np.uint8), "RGB")
     em = em.resize((W // 2, H // 2), Image.LANCZOS)
     em.save(os.path.join(TEX, "fuselage_emissive.jpg"), quality=90)
@@ -683,7 +696,7 @@ def write_normal(height, du, dv, path, size=None, strength=1.0):
 # ---------------------------------------------------------------------------
 # Tail (fin + rudder) - planar side projection s in [46, L], z in [2, 11.77]
 # ---------------------------------------------------------------------------
-def tail_texture(W=2048, H=1536):
+def tail_texture(W=4096, H=3072):
     s0, s1, z0, z1 = TAIL["s0"], G.LENGTH, G.VT_Z0, G.VT_ZTIP
     u = (np.arange(W) + 0.5) / W
     v = 1 - (np.arange(H) + 0.5) / H
@@ -747,7 +760,7 @@ def tail_texture(W=2048, H=1536):
 # ---------------------------------------------------------------------------
 # Wing: u = span / semi-span, v = 0.5 + 0.5*x (upper) / 0.5 - 0.5*x (lower)
 # ---------------------------------------------------------------------------
-def wing_textures(W=2048, H=2048):
+def wing_textures(W=4096, H=4096):
     u = (np.arange(W) + 0.5) / W
     v = 1 - (np.arange(H) + 0.5) / H
     U, V = np.meshgrid(u, v)

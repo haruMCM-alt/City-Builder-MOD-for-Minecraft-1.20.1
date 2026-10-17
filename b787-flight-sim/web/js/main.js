@@ -400,11 +400,11 @@ class App {
         protoFile ? (this._cabinProtos ||= loadGLB(this.loader, ASSET + protoFile + MODEL_EXT, () => {})) : null,
       ]));
       T.vapor = new Vapor(this.scene, m, T.visual);
-      if (m.ao !== false && T.id === 'b789') {
-        // baked ambient occlusion (Blender / Cycles) for the 787 fuselage and wings
+      if (m.ao) {
+        // baked ambient occlusion (Blender / Cycles) for the fuselage and wings of each type
         const tl = new THREE.TextureLoader();
         const ld = (f) => new Promise((res) => tl.load(ASSET + f, (t) => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; res(t); }, undefined, () => res(null)));
-        Promise.all([ld('ao_fuselage.png'), ld('ao_wing.png')]).then(([f, w]) => T.visual.setAO(f, w));
+        Promise.all([ld(T.asset + '-ao_fuselage.png'), ld(T.asset + '-ao_wing.png')]).then(([f, w]) => T.visual.setAO(f, w));
       }
     }
     T.visual.root.visible = true;

@@ -1810,8 +1810,12 @@ def build_cockpit(M, root, col):
 # ---------------------------------------------------------------------------
 # Ambient-occlusion bake (Cycles): fuselage and wings, used as aoMap in the sim
 # ---------------------------------------------------------------------------
-AO_TARGETS = {"Fuselage": ("ao_fuselage.png", 2048, 512, "B787_Fuselage"),
-              "Wing_L": ("ao_wing.png", 1024, 1024, "B787_WingPaint")}
+# (per type: <asset>-ao_fuselage.png / <asset>-ao_wing.png)
+AO_TARGETS = {"Fuselage": ("ao_fuselage.png", 4096, 1024, "B787_Fuselage"),
+              "Wing_L": ("ao_wing.png", 2048, 2048, "B787_WingPaint")}
+
+
+BAKED = set()
 
 
 def bake_ao():
@@ -1847,7 +1851,8 @@ def bake_ao():
         px = np.clip((px - 0.08) / 0.84, 0, 1) ** 0.8
         px = 0.3 + 0.7 * px          # covered coves (under flaps / slats) stay dark grey, not black
         from PIL import Image as _I
-        _I.fromarray((px * 255 + 0.5).astype(np.uint8), "L").save(os.path.join(C.WEB_ASSETS, fn), optimize=True)
+        _I.fromarray((px * 255 + 0.5).astype(np.uint8), "L").save(os.path.join(C.WEB_ASSETS, G.ASSET + "-" + fn), optimize=True)
+        BAKED.add(name)
         for m, node in added:
             m.node_tree.nodes.remove(node)
         bpy.data.images.remove(img)
@@ -2066,7 +2071,7 @@ def main():
     build_cockpit(M, root, col)
     if G.TWIN:
         twin_fuselages(M, root, col)
-    if "--bake" in sys.argv and G.TYPE == "b789":
+    if "--bake" in sys.argv:
         bake_ao()
 
     # --- metadata for the simulator ------------------------------------------
@@ -2074,7 +2079,7 @@ def main():
     meta = dict(
         name=G.NAME, type=G.TYPE, asset=G.ASSET, label=G.MODEL_LABEL, reg=G.REG,
         engineName=G.ENGINE_NAME, fanBlades=G.FAN_BLADES, fanRadius=round(G.FAN_R, 3),
-        spec=G.SPEC, ao=G.TYPE == "b789", sCG=G.S_CG, fusW=G.FUS_W, fusH=G.FUS_H,
+        spec=G.SPEC, ao=("Fuselage" in BAKED) or os.path.exists(os.path.join(C.WEB_ASSETS, G.ASSET + "-ao_fuselage.png")), sCG=G.S_CG, fusW=G.FUS_W, fusH=G.FUS_H,
         doors=[round(G.S_CG - d, 3) for d in G.DOORS],
         # no underfloor hold doors (ATR 72): the belt loader serves the forward (cargo) door
         cargo=[[round(G.S_CG - c[0], 3), c[2], c[3]] for c in G.CARGO] or
@@ -2117,7 +2122,8 @@ def main():
         airship_b787.meta(meta, AIRSHIP_HELPERS)
     import textures_b787
     meta["liveryLayout"] = textures_b787.livery_layout()
-    C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + ".glb"), draco=True)
+    # (finer than the default: 8192-px skins need 14-bit texture coordinates, smooth shading 12-bit normals)
+    C.export_glb(os.path.join(C.WEB_ASSETS, G.ASSET + ".glb"), draco=True, quant=(15, 12, 14, 8))
     tris = sum(len(o.data.polygons) for o in bpy.data.objects if o.type == "MESH")
     print("objects:", len(bpy.data.objects), "polygons:", tris)
 

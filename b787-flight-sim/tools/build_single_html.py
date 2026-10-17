@@ -38,7 +38,7 @@ STRIP_TEX = re.compile(r"airport\d+\.glb$")   # same images as world.glb: the ga
 MAX_TEX = 4096                        # aircraft textures above this are halved
 # secondary maps (and the cabin wall) are halved from 4096 too: keeps the file under the
 # 30 MiB limit with nine aircraft types (the colour map keeps its resolution)
-HALVE_4K = ("fuselage_normal", "fuselage_orm", "fuselage_emissive", "cabin_sidewall", "fuselage_base")
+HALVE_4K = ("fuselage_normal", "fuselage_orm", "fuselage_emissive", "cabin_sidewall", "fuselage_base", "wing_base", "wing_normal")
 # the fin and the flight-deck shell maps are halved from 2048
 HALVE_2K = ("tail_base", "cockpit_shell")
 # (ten aircraft types: the 8192 px fuselage colour map is halved twice, to 2048 px; the
@@ -300,7 +300,8 @@ def main():
     assets = []
     for f in sorted(os.listdir(os.path.join(WEB, "assets"))):
         p = os.path.join(WEB, "assets", f)
-        if f in SKIP or not os.path.isfile(p) or f.endswith(".gltf.json") or (args.no_video and f.endswith(".mp4")):
+        # (the lite single file leaves out the per-type baked AO maps: the artifact build carries them)
+        if f in SKIP or "-ao_" in f or not os.path.isfile(p) or f.endswith(".gltf.json") or (args.no_video and f.endswith(".mp4")):
             continue
         assets.append(("assets/" + f, p))
     for f in sorted(os.listdir(os.path.join(WEB, DRACO))):
