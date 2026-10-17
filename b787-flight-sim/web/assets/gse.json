@@ -1,0 +1,503 @@
+{
+ "Tug": {
+  "name": "Tug",
+  "length": 8.6,
+  "width": 4.0,
+  "height": 2.35,
+  "wheelbase": 5.8,
+  "cradle": [
+   0.6,
+   0.0
+  ],
+  "color": "yellow",
+  "wheels": [
+   {
+    "name": "Tug_W_FL",
+    "x": 2.9,
+    "y": 1.65,
+    "r": 0.55,
+    "steer": true
+   },
+   {
+    "name": "Tug_W_FR",
+    "x": 2.9,
+    "y": -1.65,
+    "r": 0.55,
+    "steer": true
+   },
+   {
+    "name": "Tug_W_RL",
+    "x": -2.9,
+    "y": 1.65,
+    "r": 0.55,
+    "steer": false
+   },
+   {
+    "name": "Tug_W_RR",
+    "x": -2.9,
+    "y": -1.65,
+    "r": 0.55,
+    "steer": false
+   }
+  ],
+  "parts": {},
+  "root": "GSE_Tug"
+ },
+ "BagTractor": {
+  "name": "BagTractor",
+  "length": 3.2,
+  "width": 1.55,
+  "height": 2.1,
+  "wheelbase": 2.0,
+  "hitchRear": [
+   -1.72,
+   0.4
+  ],
+  "color": "blue",
+  "wheels": [
+   {
+    "name": "BagTractor_W_FL",
+    "x": 1.0,
+    "y": 0.62,
+    "r": 0.3,
+    "steer": true
+   },
+   {
+    "name": "BagTractor_W_FR",
+    "x": 1.0,
+    "y": -0.62,
+    "r": 0.3,
+    "steer": true
+   },
+   {
+    "name": "BagTractor_W_RL",
+    "x": -1.0,
+    "y": 0.62,
+    "r": 0.3,
+    "steer": false
+   },
+   {
+    "name": "BagTractor_W_RR",
+    "x": -1.0,
+    "y": -0.62,
+    "r": 0.3,
+    "steer": false
+   }
+  ],
+  "parts": {},
+  "root": "GSE_BagTractor"
+ },
+ "Dolly": {
+  "name": "Dolly",
+  "length": 3.0,
+  "width": 1.9,
+  "height": 2.2,
+  "wheelbase": 1.9,
+  "hitchFront": [
+   2.6,
+   0.42
+  ],
+  "hitchRear": [
+   -1.45,
+   0.4
+  ],
+  "towed": true,
+  "color": "grey",
+  "wheels": [
+   {
+    "name": "Dolly_W_FL",
+    "x": 0.95,
+    "y": 0.7,
+    "r": 0.2,
+    "steer": true
+   },
+   {
+    "name": "Dolly_W_FR",
+    "x": 0.95,
+    "y": -0.7,
+    "r": 0.2,
+    "steer": true
+   },
+   {
+    "name": "Dolly_W_RL",
+    "x": -0.95,
+    "y": 0.7,
+    "r": 0.2,
+    "steer": false
+   },
+   {
+    "name": "Dolly_W_RR",
+    "x": -0.95,
+    "y": -0.7,
+    "r": 0.2,
+    "steer": false
+   }
+  ],
+  "parts": {
+   "ULD": {
+    "name": "Dolly_ULD",
+    "pivot": [
+     0.0,
+     0.0,
+     0.575
+    ]
+   }
+  },
+  "root": "GSE_Dolly"
+ },
+ "BagCart": {
+  "name": "BagCart",
+  "length": 2.8,
+  "width": 1.55,
+  "height": 1.95,
+  "wheelbase": 1.9,
+  "hitchFront": [
+   2.5,
+   0.42
+  ],
+  "hitchRear": [
+   -1.5,
+   0.4
+  ],
+  "towed": true,
+  "color": "white",
+  "wheels": [
+   {
+    "name": "BagCart_W_FL",
+    "x": 0.95,
+    "y": 0.62,
+    "r": 0.2,
+    "steer": true
+   },
+   {
+    "name": "BagCart_W_FR",
+    "x": 0.95,
+    "y": -0.62,
+    "r": 0.2,
+    "steer": true
+   },
+   {
+    "name": "BagCart_W_RL",
+    "x": -0.95,
+    "y": 0.62,
+    "r": 0.2,
+    "steer": false
+   },
+   {
+    "name": "BagCart_W_RR",
+    "x": -0.95,
+    "y": -0.62,
+    "r": 0.2,
+    "steer": false
+   }
+  ],
+  "parts": {},
+  "root": "GSE_BagCart"
+ },
+ "BeltLoader": {
+  "name": "BeltLoader",
+  "length": 7.6,
+  "width": 2.1,
+  "height": 2.0,
+  "wheelbase": 5.2,
+  "beltPivot": [
+   -3.5,
+   1.05
+  ],
+  "beltLen": 7.45,
+  "color": "white",
+  "wheels": [
+   {
+    "name": "BeltLoader_W_FL",
+    "x": 2.6,
+    "y": 0.82,
+    "r": 0.32,
+    "steer": true
+   },
+   {
+    "name": "BeltLoader_W_FR",
+    "x": 2.6,
+    "y": -0.82,
+    "r": 0.32,
+    "steer": true
+   },
+   {
+    "name": "BeltLoader_W_RL",
+    "x": -2.6,
+    "y": 0.82,
+    "r": 0.32,
+    "steer": false
+   },
+   {
+    "name": "BeltLoader_W_RR",
+    "x": -2.6,
+    "y": -0.82,
+    "r": 0.32,
+    "steer": false
+   }
+  ],
+  "parts": {
+   "Belt": {
+    "name": "BeltLoader_Belt",
+    "pivot": [
+     -3.5,
+     0.0,
+     1.05
+    ]
+   }
+  },
+  "root": "GSE_BeltLoader"
+ },
+ "Catering": {
+  "name": "Catering",
+  "length": 9.0,
+  "width": 2.5,
+  "height": 4.4,
+  "wheelbase": 5.9,
+  "boxFloor": 1.6,
+  "platformTip": 4.47,
+  "color": "white",
+  "wheels": [
+   {
+    "name": "Catering_W_FL",
+    "x": 3.3,
+    "y": 1.02,
+    "r": 0.5,
+    "steer": true
+   },
+   {
+    "name": "Catering_W_FR",
+    "x": 3.3,
+    "y": -1.02,
+    "r": 0.5,
+    "steer": true
+   },
+   {
+    "name": "Catering_W_RL",
+    "x": -2.6,
+    "y": 0.92,
+    "r": 0.5,
+    "steer": false
+   },
+   {
+    "name": "Catering_W_RR",
+    "x": -2.6,
+    "y": -0.92,
+    "r": 0.5,
+    "steer": false
+   }
+  ],
+  "parts": {
+   "Scissor": {
+    "name": "Catering_Scissor",
+    "pivot": [
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "Box": {
+    "name": "Catering_Box",
+    "pivot": [
+     0.0,
+     0.0,
+     1.6
+    ]
+   },
+   "Platform": {
+    "name": "Catering_Platform",
+    "pivot": [
+     2.25,
+     0.0,
+     1.6600000000000001
+    ]
+   }
+  },
+  "root": "GSE_Catering"
+ },
+ "Fuel": {
+  "name": "Fuel",
+  "length": 11.15,
+  "width": 2.55,
+  "height": 3.48,
+  "wheelbase": 7.3,
+  "color": "white",
+  "frontX": 5.3,
+  "rearX": -5.9,
+  "wheels": [
+   {
+    "name": "Fuel_W_FL",
+    "x": 4.2,
+    "y": 1.03,
+    "r": 0.52,
+    "steer": true
+   },
+   {
+    "name": "Fuel_W_FR",
+    "x": 4.2,
+    "y": -1.03,
+    "r": 0.52,
+    "steer": true
+   },
+   {
+    "name": "Fuel_W_R1L",
+    "x": -2.4,
+    "y": 0.95,
+    "r": 0.52,
+    "steer": false
+   },
+   {
+    "name": "Fuel_W_R1R",
+    "x": -2.4,
+    "y": -0.95,
+    "r": 0.52,
+    "steer": false
+   },
+   {
+    "name": "Fuel_W_R2L",
+    "x": -3.75,
+    "y": 0.95,
+    "r": 0.52,
+    "steer": false
+   },
+   {
+    "name": "Fuel_W_R2R",
+    "x": -3.75,
+    "y": -0.95,
+    "r": 0.52,
+    "steer": false
+   }
+  ],
+  "parts": {
+   "Deck": {
+    "name": "Fuel_Deck",
+    "pivot": [
+     -5.6,
+     0.0,
+     1.1
+    ]
+   }
+  },
+  "root": "GSE_Fuel"
+ },
+ "FollowMe": {
+  "name": "FollowMe",
+  "length": 4.9,
+  "width": 1.9,
+  "height": 2.3,
+  "wheelbase": 3.1,
+  "color": "yellow",
+  "wheels": [
+   {
+    "name": "FollowMe_W_FL",
+    "x": 1.5,
+    "y": 0.8,
+    "r": 0.37,
+    "steer": true
+   },
+   {
+    "name": "FollowMe_W_FR",
+    "x": 1.5,
+    "y": -0.8,
+    "r": 0.37,
+    "steer": true
+   },
+   {
+    "name": "FollowMe_W_RL",
+    "x": -1.6,
+    "y": 0.8,
+    "r": 0.37,
+    "steer": false
+   },
+   {
+    "name": "FollowMe_W_RR",
+    "x": -1.6,
+    "y": -0.8,
+    "r": 0.37,
+    "steer": false
+   }
+  ],
+  "parts": {},
+  "root": "GSE_FollowMe"
+ },
+ "Van": {
+  "name": "Van",
+  "length": 5.2,
+  "width": 2.0,
+  "height": 2.35,
+  "wheelbase": 3.4,
+  "color": "white",
+  "wheels": [
+   {
+    "name": "Van_W_FL",
+    "x": 1.7,
+    "y": 0.82,
+    "r": 0.36,
+    "steer": true
+   },
+   {
+    "name": "Van_W_FR",
+    "x": 1.7,
+    "y": -0.82,
+    "r": 0.36,
+    "steer": true
+   },
+   {
+    "name": "Van_W_RL",
+    "x": -1.7,
+    "y": 0.82,
+    "r": 0.36,
+    "steer": false
+   },
+   {
+    "name": "Van_W_RR",
+    "x": -1.7,
+    "y": -0.82,
+    "r": 0.36,
+    "steer": false
+   }
+  ],
+  "parts": {},
+  "root": "GSE_Van"
+ },
+ "Bus": {
+  "name": "Bus",
+  "length": 13.9,
+  "width": 3.0,
+  "height": 3.25,
+  "wheelbase": 9.8,
+  "color": "white",
+  "wheels": [
+   {
+    "name": "Bus_W_FL",
+    "x": 4.9,
+    "y": 1.2,
+    "r": 0.45,
+    "steer": true
+   },
+   {
+    "name": "Bus_W_FR",
+    "x": 4.9,
+    "y": -1.2,
+    "r": 0.45,
+    "steer": true
+   },
+   {
+    "name": "Bus_W_RL",
+    "x": -4.9,
+    "y": 1.2,
+    "r": 0.45,
+    "steer": false
+   },
+   {
+    "name": "Bus_W_RR",
+    "x": -4.9,
+    "y": -1.2,
+    "r": 0.45,
+    "steer": false
+   }
+  ],
+  "parts": {},
+  "root": "GSE_Bus"
+ }
+}

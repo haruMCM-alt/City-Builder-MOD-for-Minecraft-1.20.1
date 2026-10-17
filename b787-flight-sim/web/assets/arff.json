@@ -1,0 +1,175 @@
+{
+ "ARFF": {
+  "root": "ARFF",
+  "length": 12.2,
+  "width": 3.0,
+  "height": 3.5,
+  "wheels": [
+   {
+    "name": "ARFF_W_0L",
+    "x": 4.199999999999999,
+    "y": 1.22,
+    "r": 0.62,
+    "steer": true
+   },
+   {
+    "name": "ARFF_W_0R",
+    "x": 4.199999999999999,
+    "y": -1.22,
+    "r": 0.62,
+    "steer": true
+   },
+   {
+    "name": "ARFF_W_1L",
+    "x": -2.8999999999999995,
+    "y": 1.22,
+    "r": 0.62,
+    "steer": false
+   },
+   {
+    "name": "ARFF_W_1R",
+    "x": -2.8999999999999995,
+    "y": -1.22,
+    "r": 0.62,
+    "steer": false
+   },
+   {
+    "name": "ARFF_W_2L",
+    "x": -4.6,
+    "y": 1.22,
+    "r": 0.62,
+    "steer": false
+   },
+   {
+    "name": "ARFF_W_2R",
+    "x": -4.6,
+    "y": -1.22,
+    "r": 0.62,
+    "steer": false
+   }
+  ],
+  "monitor": {
+   "name": "ARFF_Monitor",
+   "pivot": [
+    3.8,
+    0,
+    3.3
+   ],
+   "tip": [
+    1.95,
+    0,
+    0.51
+   ]
+  },
+  "bumper": {
+   "name": "ARFF_Bumper",
+   "pivot": [
+    6.3,
+    0,
+    0.95
+   ],
+   "tip": [
+    0.75,
+    0,
+    0.14
+   ]
+  },
+  "lamps": [
+   "ARFF_LampRed",
+   "ARFF_LampBlue"
+  ],
+  "doors": [
+   [
+    4.3999999999999995,
+    1.55
+   ],
+   [
+    4.3999999999999995,
+    -1.55
+   ],
+   [
+    -6.3999999999999995,
+    0
+   ]
+  ]
+ },
+ "Firefighter": {
+  "root": "Firefighter",
+  "height": 1.7999999999999998,
+  "parts": {
+   "legL": {
+    "name": "Firefighter_LegL",
+    "pivot": [
+     0.0,
+     0.1,
+     0.92
+    ]
+   },
+   "armL": {
+    "name": "Firefighter_ArmL",
+    "pivot": [
+     0.0,
+     0.25,
+     1.4
+    ]
+   },
+   "legR": {
+    "name": "Firefighter_LegR",
+    "pivot": [
+     0.0,
+     -0.1,
+     0.92
+    ]
+   },
+   "armR": {
+    "name": "Firefighter_ArmR",
+    "pivot": [
+     0.0,
+     -0.25,
+     1.4
+    ]
+   }
+  }
+ },
+ "Person": {
+  "root": "Person",
+  "height": 1.7999999999999998,
+  "parts": {
+   "legL": {
+    "name": "Person_LegL",
+    "pivot": [
+     0.0,
+     0.1,
+     0.92
+    ]
+   },
+   "armL": {
+    "name": "Person_ArmL",
+    "pivot": [
+     0.0,
+     0.25,
+     1.4
+    ]
+   },
+   "legR": {
+    "name": "Person_LegR",
+    "pivot": [
+     0.0,
+     -0.1,
+     0.92
+    ]
+   },
+   "armR": {
+    "name": "Person_ArmR",
+    "pivot": [
+     0.0,
+     -0.25,
+     1.4
+    ]
+   }
+  }
+ },
+ "EvacSlide": {
+  "root": "EvacSlide"
+ }
+}
