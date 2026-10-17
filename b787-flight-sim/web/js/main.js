@@ -400,7 +400,8 @@ class App {
         protoFile ? (this._cabinProtos ||= loadGLB(this.loader, ASSET + protoFile + MODEL_EXT, () => {})) : null,
       ]));
       T.vapor = new Vapor(this.scene, m, T.visual);
-      if (m.ao) {
+      // (the lite single file leaves the AO maps out)
+      if (m.ao && (!EMBEDDED || EMBEDDED['assets/' + T.asset + '-ao_fuselage.png'])) {
         // baked ambient occlusion (Blender / Cycles) for the fuselage and wings of each type
         const tl = new THREE.TextureLoader();
         const ld = (f) => new Promise((res) => tl.load(ASSET + f, (t) => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; res(t); }, undefined, () => res(null)));

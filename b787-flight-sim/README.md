@@ -276,7 +276,7 @@ npm i esbuild                       # 初回のみ
 npm i @gltf-transform/cli            # 初回のみ（機体の形状データを強めに再圧縮）
 python3 tools/build_single_html.py --video-kbps 12 --gltf-transform node_modules/.bin/gltf-transform   # → dist/MicomsoftFrightSimulator.html（約 31 MB）
 ```
-JavaScript（three.js 含む）を esbuild で 1 本にまとめ、モデル・データ・テクスチャ・安全ビデオ・Draco デコーダーをすべて base85（`<` `>` `&` を含まない独自の 85 文字。base64 より 6 % 小さい）で埋め込んだ 1 ファイル。サイズを抑えるため、圧縮の効くものは gzip、関西・新千歳・那覇のモデルのテクスチャは world.glb と同じ画像なので除いて実行時に共有、4096 px を超える機体テクスチャと 4096 px の法線・ORM・発光マップ・客室壁は半分に縮小・JPEG 再圧縮、地形テクスチャ配列は 384 px タイル・タイトル画像は再圧縮、安全ビデオは `--video-kbps` で再エンコード（imageio-ffmpeg または ffmpeg）、`--no-video` で省略。`--gltf-transform` を付けると機体と AI 用モデルの Draco 形状を 13 / 9 / 11 bit（位置 / 法線 / UV、全長 75 m で約 1 cm）で最小サイズに再圧縮（客室・空港・街は精度そのままで再圧縮のみ。13 機種を 30 MiB に収めるため）。サーバー不要で、ダブルクリックでブラウザ（Chrome / Edge / Firefox）で開けます。起動時に埋め込みデータをメモリ上の blob URL に展開し（`window.B787_ASSETS`）、`main.js` が fetch と three.js のローダーをそこへ振り向けます。
+JavaScript（three.js 含む）を esbuild で 1 本にまとめ、モデル・データ・テクスチャ・安全ビデオ・Draco デコーダーをすべて base85（`<` `>` `&` を含まない独自の 85 文字。base64 より 6 % 小さい）で埋め込んだ 1 ファイル。サイズを抑えるため、圧縮の効くものは gzip、関西・新千歳・那覇のモデルのテクスチャは world.glb と同じ画像なので除いて実行時に共有、4096 px を超える機体テクスチャと 4096 px の法線・ORM・発光マップ・客室壁は半分に縮小・JPEG 再圧縮（機体の法線マップは PNG ではなく JPEG q86・4:4:4 で格納）、ベイクした AO マップは省略、地形テクスチャ配列は 384 px タイル・タイトル画像は再圧縮、安全ビデオは `--video-kbps` で再エンコード（imageio-ffmpeg または ffmpeg）、`--no-video` で省略。`--gltf-transform` を付けると機体と AI 用モデルの Draco 形状を 13 / 9 / 11 bit（位置 / 法線 / UV、全長 75 m で約 1 cm）で最小サイズに再圧縮（客室・空港・街は精度そのままで再圧縮のみ。13 機種を 30 MiB に収めるため）。サーバー不要で、ダブルクリックでブラウザ（Chrome / Edge / Firefox）で開けます。起動時に埋め込みデータをメモリ上の blob URL に展開し（`window.B787_ASSETS`）、`main.js` が fetch と three.js のローダーをそこへ振り向けます。
 
 ## テスト / Tests
 

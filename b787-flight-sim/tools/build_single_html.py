@@ -39,6 +39,8 @@ MAX_TEX = 4096                        # aircraft textures above this are halved
 # secondary maps (and the cabin wall) are halved from 4096 too: keeps the file under the
 # 30 MiB limit with nine aircraft types (the colour map keeps its resolution)
 HALVE_4K = ("fuselage_normal", "fuselage_orm", "fuselage_emissive", "cabin_sidewall", "fuselage_base", "wing_base", "wing_normal")
+# the aircraft normal maps go in as JPEG q86, 4:4:4 (a fraction of the PNG, no visible banding)
+NORMAL_JPEG = ("fuselage_normal", "wing_normal")
 # the fin and the flight-deck shell maps are halved from 2048
 HALVE_2K = ("tail_base", "cockpit_shell")
 # (ten aircraft types: the 8192 px fuselage colour map is halved twice, to 2048 px; the
@@ -104,7 +106,8 @@ def glb_parts(data):
 
 
 def shrink_image(blob, png, name=""):
-    """textures larger than MAX_TEX are halved, big JPEGs re-encoded (None: keep as is)"""
+    """textures larger than MAX_TEX are halved, big JPEGs re-encoded, the aircraft normal maps
+    stored as fine JPEG instead of PNG (None: keep as is; else (bytes, mime))"""
     from PIL import Image
     src = Image.open(io.BytesIO(blob))
     w, h = src.size
@@ -113,14 +116,18 @@ def shrink_image(blob, png, name=""):
         while big(w, h):
             w, h = max(1, w // 2), max(1, h // 2)
         src = src.resize((w, h), Image.LANCZOS)
-    elif png or len(blob) < 60000:
+    elif (png and name not in NORMAL_JPEG) or len(blob) < 60000:
         return None
     out = io.BytesIO()
-    if png:
+    mime = "image/jpeg"
+    if png and name in NORMAL_JPEG:
+        src.convert("RGB").save(out, "JPEG", quality=86, optimize=True, subsampling=0)
+    elif png:
         src.save(out, "PNG", optimize=True)
+        mime = "image/png"
     else:
-        src.convert("RGB").save(out, "JPEG", quality=72, optimize=True, progressive=True)
-    return out.getvalue() if len(out.getvalue()) < len(blob) * 0.9 else None
+        src.convert("RGB").save(out, "JPEG", quality=68, optimize=True, progressive=True)
+    return (out.getvalue(), mime) if len(out.getvalue()) < len(blob) * 0.9 else None
 
 
 SHARED_DIR = "assets/_shared/"
@@ -163,8 +170,10 @@ def repack_glb(data, strip, shared=None, shared_out=None):
             png = im.get("mimeType") == "image/png"
             h = hashlib.sha1(blobs[vi]).hexdigest()
             small = shrink_image(blobs[vi], png, im.get("name", ""))
+            if small:
+                small, im["mimeType"] = small
             if shared is not None and h in shared:
-                key = SHARED_DIR + h[:16] + (".png" if png else ".jpg")
+                key = SHARED_DIR + h[:16] + (".png" if im.get("mimeType") == "image/png" else ".jpg")
                 if key not in shared_out:
                     shared_out[key] = small or blobs[vi]
                 im.pop("bufferView")
