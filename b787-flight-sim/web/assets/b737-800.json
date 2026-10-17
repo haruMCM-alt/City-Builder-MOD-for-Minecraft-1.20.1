@@ -20,7 +20,7 @@
   "VMO": 340,
   "MMO": 0.82
  },
- "ao": false,
+ "ao": true,
  "sCG": 18.4,
  "fusW": 3.76,
  "fusH": 4.01,

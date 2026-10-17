@@ -21,7 +21,7 @@
   "MMO": 0.86,
   "rollK": 1.3
  },
- "ao": false,
+ "ao": true,
  "sCG": 38.24,
  "fusW": 5.64,
  "fusH": 5.64,
