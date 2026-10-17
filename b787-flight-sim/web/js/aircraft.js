@@ -241,8 +241,10 @@ uniform float uFlex; uniform mat4 uRootInv; uniform vec3 uRootUp; uniform vec3 u
     const x0 = e[0] - 2.6;
     this.ckGlassU = { value: new THREE.Vector4(x0, zc, hw, 0) };
     const U = this.ckGlassU, rootInv = this.flexUniforms.uRootInv;
-    const gm = new THREE.MeshStandardMaterial({ color: 0x0b1117, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.5,
-      envMapIntensity: 1.6, roughnessMap: fus.roughnessMap, depthWrite: false, name: 'Cockpit_Windshield' });
+    // (the coated glass shows a faint purple / gold sheen at an angle)
+    const gm = new THREE.MeshPhysicalMaterial({ color: 0x0b1117, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.5,
+      envMapIntensity: 1.6, roughnessMap: fus.roughnessMap, depthWrite: false, name: 'Cockpit_Windshield',
+      iridescence: 0.6, iridescenceIOR: 1.5, iridescenceThicknessRange: [220, 480] });
     gm.onBeforeCompile = (sh) => {
       sh.uniforms.uCkGlass = U; sh.uniforms.uRootInv = rootInv;
       sh.vertexShader = sh.vertexShader

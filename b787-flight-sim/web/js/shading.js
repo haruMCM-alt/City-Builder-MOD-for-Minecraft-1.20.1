@@ -207,6 +207,37 @@ const FINISH = {
   B787_Navy: { clearcoat: 0.7, clearcoatRoughness: 0.09 },
   B787_GearPaint: { clearcoat: 0.35, clearcoatRoughness: 0.3 },
 };
+// clear-coat surface: the faint waviness of a painted skin over its frames and stringers, seen
+// as rippling reflections (a tiling normal map shared by every paint)
+let PEEL = null;
+function peelTexture() {
+  if (PEEL) return PEEL;
+  const N = 128, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'), img = g.createImageData(N, N);
+  const h = new Float32Array(N * N);
+  // smooth periodic height: a few sine octaves with random phases
+  const waves = [];
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let k = 0; k < 14; k++) waves.push([1 + Math.floor(rnd() * 5), 1 + Math.floor(rnd() * 5), rnd() * 6.283, rnd() * 6.283, 1 / (1 + k * 0.35)]);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    let v = 0;
+    for (const [fx, fy, px, py, a] of waves) v += a * Math.sin(6.283 * fx * x / N + px) * Math.sin(6.283 * fy * y / N + py);
+    h[y * N + x] = v;
+  }
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const dx = h[y * N + (x + 1) % N] - h[y * N + (x + N - 1) % N], dy = h[((y + 1) % N) * N + x] - h[((y + N - 1) % N) * N + x];
+    const nx = -dx * 0.6, ny = -dy * 0.6, l = Math.hypot(nx, ny, 1);
+    const i = (y * N + x) * 4;
+    img.data[i] = (nx / l * 0.5 + 0.5) * 255; img.data[i + 1] = (ny / l * 0.5 + 0.5) * 255; img.data[i + 2] = (1 / l * 0.5 + 0.5) * 255; img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  PEEL = new THREE.CanvasTexture(c);
+  PEEL.wrapS = PEEL.wrapT = THREE.RepeatWrapping; PEEL.colorSpace = THREE.NoColorSpace;
+  PEEL.repeat.set(160, 40);
+  return PEEL;
+}
+
 export function upgradeAircraftMaterials(root, quality) {
   if (quality !== 'high' && quality !== 'ultra') return;
   const done = new Map();
@@ -223,10 +254,18 @@ export function upgradeAircraftMaterials(root, quality) {
         p.defines = { STANDARD: '', PHYSICAL: '' };          // (the standard copy drops PHYSICAL)
         p.userData = { ...m.userData };
         p.clearcoat = f.clearcoat; p.clearcoatRoughness = f.clearcoatRoughness;
+        p.clearcoatNormalMap = peelTexture(); p.clearcoatNormalScale = new THREE.Vector2(0.09, 0.09);
         out = p;
-      } else if (m.name === 'B787_LeadingEdge' || m.name === 'B787_InletLip') {
-        m.metalness = 1.0; m.roughness = m.name === 'B787_InletLip' ? 0.16 : 0.22;
-        m.color.setRGB(0.80, 0.81, 0.82);
+      } else if ((m.name === 'B787_LeadingEdge' || m.name === 'B787_InletLip' || m.name === 'B787_Chrome') && m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial) {
+        // bare metal: polished along the flow, so the highlights stretch (anisotropic)
+        const p = new THREE.MeshPhysicalMaterial();
+        THREE.MeshStandardMaterial.prototype.copy.call(p, m);
+        p.defines = { STANDARD: '', PHYSICAL: '' };
+        p.userData = { ...m.userData };
+        p.metalness = 1.0; p.roughness = m.name === 'B787_InletLip' ? 0.16 : m.name === 'B787_Chrome' ? 0.12 : 0.22;
+        if (m.name !== 'B787_Chrome') p.color.setRGB(0.80, 0.81, 0.82);
+        p.anisotropy = 0.65; p.anisotropyRotation = 0;
+        out = p;
       } else if (m.name === 'B787_Tire' && m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial) {
         const p = new THREE.MeshPhysicalMaterial();
         THREE.MeshStandardMaterial.prototype.copy.call(p, m);

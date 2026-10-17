@@ -159,6 +159,24 @@ export class Audio {
       const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; s.start(0, offset % 4); return s;
     };
 
+    // structure-borne drone bus (bypasses the airborne filters: it comes through the floor)
+    this.droneBus = ctx.createGain();
+    const dsat = saturator(ctx, 1.8);
+    this.droneBus.connect(dsat); dsat.connect(this.master);
+    // small-room acoustics of the flight deck / cabin: a short, dense early-reflection response
+    this.room = ctx.createConvolver();
+    {
+      const n = Math.floor(sr * 0.32), ir = ctx.createBuffer(2, n, sr), rr = seeded(99);
+      for (let c = 0; c < 2; c++) {
+        const d = ir.getChannelData(c);
+        for (let k = 0; k < 24; k++) { const at = Math.floor(sr * (0.002 + rr() * 0.03)); d[at] += (rr() < 0.5 ? -1 : 1) * (0.6 + rr() * 0.4) * Math.exp(-at / sr / 0.03); }
+        for (let i = Math.floor(sr * 0.006); i < n; i++) d[i] += (rr() * 2 - 1) * 0.22 * Math.exp(-(i / sr) / 0.07);
+      }
+      this.room.buffer = ir;
+    }
+    this.roomG = ctx.createGain(); this.roomG.gain.value = 0;
+    const roomLP = ctx.createBiquadFilter(); roomLP.type = 'lowpass'; roomLP.frequency.value = 4500;
+    this.roomG.connect(this.room); this.room.connect(roomLP); roomLP.connect(this.master);
     this.eng = [0, 1].map((i) => this._buildEngine(i));
 
     // --- airframe / cockpit sounds (not through the engine bus) ---------------------------
@@ -206,6 +224,32 @@ export class Audio {
     const twb = bp(2370, 6);
     tw.connect(twb); tw2.connect(twb); twb.connect(this.trafWhineG); this.trafWhineG.connect(this.master);
     tw.start(); tw2.start();
+    this.cabinLP2.connect(this.roomG);
+    // flight-deck ambience: avionics cooling fans and the 400 Hz electrical hum
+    this.avG = ctx.createGain(); this.avG.gain.value = 0;
+    chain(this.noise(this.pink, 0.7), bp(1300, 0.45), this.avG, this.master);
+    this.humG = ctx.createGain(); this.humG.gain.value = 0;
+    for (const [f, a] of [[400, 1], [800, 0.35], [1200, 0.12]]) {
+      const o = ctx.createOscillator(); o.frequency.value = f; const g = ctx.createGain(); g.gain.value = a;
+      o.connect(g); g.connect(this.humG); o.start();
+    }
+    this.humG.connect(this.master);
+    // flap / slat track whistle at speed
+    this.flapF = bp(1800, 5); this.flapG = ctx.createGain(); this.flapG.gain.value = 0;
+    chain(this.noise(this.white, 1.1), this.flapF, this.flapG, this.master);
+    // carbon brakes: the low moan when braking at taxi speed, and the squeal as the aircraft stops
+    this.moanO = ctx.createOscillator(); this.moanO.type = 'sawtooth'; this.moanO.frequency.value = 150;
+    const mv = ctx.createOscillator(); mv.frequency.value = 6.5; const mvg = ctx.createGain(); mvg.gain.value = 9;
+    mv.connect(mvg); mvg.connect(this.moanO.frequency); mv.start();
+    this.moanG = ctx.createGain(); this.moanG.gain.value = 0;
+    chain(this.moanO, bp(320, 2.2), this.moanG, this.master); this.moanO.start();
+    this.grindG = ctx.createGain(); this.grindG.gain.value = 0;
+    chain(this.noise(this.crackle, 2.2), bp(700, 0.9), this.grindG, this.master);
+    this.squealO = ctx.createOscillator(); this.squealO.frequency.value = 2900;
+    const sq = ctx.createOscillator(); sq.frequency.value = 11; const sqg = ctx.createGain(); sqg.gain.value = 60;
+    sq.connect(sqg); sqg.connect(this.squealO.frequency); sq.start();
+    this.squealG = ctx.createGain(); this.squealG.gain.value = 0;
+    chain(this.squealO, this.squealG, this.master); this.squealO.start();
     this._travel = 0;
     this._gearPrev = null;
   }
@@ -217,8 +261,23 @@ export class Audio {
     const gain = (v = 0) => { const g = ctx.createGain(); g.gain.value = v; return g; };
     const filt = (type, f, q = 0.7) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; };
     // propagation: sources -> turbulence -> delay line -> direct + ground-reflected -> panner
-    E.out = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
+    // binaural placement (HRTF): the engines are heard from where they are - behind, beside,
+    // above or below the listener - not just left / right; the distance law is applied here
+    // (the panner only gives the direction)
+    if (ctx.createPanner) {
+      E.out = ctx.createPanner();
+      E.out.panningModel = 'HRTF'; E.out.distanceModel = 'linear'; E.out.rolloffFactor = 0; E.out.refDistance = 1; E.out.maxDistance = 1e6;
+      E.hrtf = true;
+    } else E.out = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
     E.out.connect(this.engBus);
+    // structure-borne drone in the cabin / flight deck: once and twice per fan revolution (the
+    // two engines never turn at quite the same speed, so the drone beats slowly)
+    E.drone = ctx.createOscillator(); E.drone.type = 'sine';
+    E.drone2 = ctx.createOscillator(); E.drone2.type = 'sine';
+    E.droneG = gain(); E.drone2G = gain();
+    E.drone.connect(E.droneG); E.drone2.connect(E.drone2G);
+    E.droneG.connect(this.droneBus); E.drone2G.connect(this.droneBus);
+    E.drone.start(); E.drone2.start();
     E.turb = gain(1);
     E.delay = ctx.createDelay(30); E.delay.delayTime.value = 0;
     E.direct = gain(1);
@@ -321,9 +380,9 @@ export class Audio {
     }
   }
 
-  burst(buf, freq, q, gain, dur, type = 'lowpass') {
+  burst(buf, freq, q, gain, dur, type = 'lowpass', delay = 0) {
     if (!this.ctx || !this.enabled) return;
-    const ctx = this.ctx, t = ctx.currentTime;
+    const ctx = this.ctx, t = ctx.currentTime + delay;
     const s = ctx.createBufferSource(); s.buffer = buf;
     const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
     const g = ctx.createGain();
@@ -397,10 +456,46 @@ export class Audio {
     this.fireG.gain.setTargetAtTime(this.enabled ? level * 0.5 : 0, this.ctx.currentTime, 0.3);
   }
 
-  thump(strength) {
+  thump(strength, gs = 70) {
     if (!this.ctx) return;
-    this.burst(this.brown, 140, 0.7, clamp(strength, 0.1, 1.2) * 1.4, 0.55);
-    this.burst(this.white, 2300, 3, 0.22 * clamp(strength, 0.3, 1), 0.35, 'bandpass');   // tyre chirp
+    const inside = this._inside, k = clamp(strength, 0.1, 1.2);
+    this.burst(this.brown, 140, 0.7, k * 1.4, 0.55);
+    // tyre chirps: each main gear spins up on its own (a few tens of ms apart), the squeal
+    // falling in pitch as the tread catches up with the runway
+    const sp = clamp(gs / 70, 0.3, 1.2);
+    for (const [dl, g] of [[0, 1], [0.025 + Math.random() * 0.05, 0.85]]) {
+      this.chirp(dl, 0.3 * sp * clamp(strength, 0.4, 1) * g * (inside ? 0.35 : 1));
+      if (Math.random() < 0.6) this.chirp(dl + 0.07 + Math.random() * 0.05, 0.12 * sp * g * (inside ? 0.35 : 1));
+    }
+    // everything in the cabin rattles for a moment
+    if (inside !== false) this.burst(this.crackle, 1900, 0.9, 0.18 * k, 0.45, 'bandpass', 0.02);
+  }
+
+  // cabin PA chime: two soft bell tones with a little room
+  chime(gain = 0.06) {
+    if (!this.ctx || !this.enabled) return;
+    const c = this.ctx;
+    [[987.8, 0], [784, 0.42]].forEach(([f, dl]) => {
+      const t = c.currentTime + dl, g = c.createGain();
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(gain, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0003, t + 1.6);
+      for (const [m, a] of [[1, 1], [2.76, 0.18], [5.4, 0.05]]) {
+        const o = c.createOscillator(); o.frequency.value = f * m; const og = c.createGain(); og.gain.value = a;
+        o.connect(og); og.connect(g); o.start(t); o.stop(t + 1.7);
+      }
+      g.connect(this.master); g.connect(this.roomG);
+    });
+  }
+
+  chirp(delay, gain) {
+    if (!this.ctx || !this.enabled) return;
+    const c = this.ctx, t = c.currentTime + delay;
+    const s = c.createBufferSource(); s.buffer = this.white;
+    const f = c.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 5;
+    f.frequency.setValueAtTime(2900, t); f.frequency.exponentialRampToValueAtTime(1300, t + 0.2);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(gain, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.22);
+    s.connect(f); f.connect(g); g.connect(this.master);
+    s.start(t, Math.random() * 3); s.stop(t + 0.3);
   }
 
   say(key, force = false) {
@@ -564,10 +659,26 @@ export class Audio {
       const roarK = prop ? 0.35 : 1;
       const rev = e.reverse;
       // stereo placement from the engine position relative to the camera
-      if (E.out.pan) {
+      if (E.hrtf && L.camQuat) {
+        // direction of the engine in the listener's frame (Web Audio: -z ahead, +y up)
+        const v = this._v || (this._v = { x: 0, y: 0, z: 0 });
+        const q = L.camQuat, ix = -q.x, iy = -q.y, iz = -q.z, iw = q.w;
+        // rotate (ex, ey, ez) by the inverse camera rotation
+        const tx = 2 * (iy * ez - iz * ey), ty = 2 * (iz * ex - ix * ez), tz = 2 * (ix * ey - iy * ex);
+        v.x = ex + iw * tx + (iy * tz - iz * ty); v.y = ey + iw * ty + (iz * tx - ix * tz); v.z = ez + iw * tz + (ix * ty - iy * tx);
+        const n = Math.max(Math.hypot(v.x, v.y, v.z), 1e-3), w = inside ? 0.6 : 1;
+        // (inside: the sound comes through the structure, less sharply placed)
+        set(E.out.positionX, v.x / n * w, 0.06); set(E.out.positionY, v.y / n * w, 0.06); set(E.out.positionZ, v.z / n * w - (1 - w), 0.06);
+      } else if (E.out.pan) {
         const pan = (ex * L.camRight.x + ey * L.camRight.y + ez * L.camRight.z) / Math.max(d1, 1);
         set(E.out.pan, clamp(pan * (inside ? 0.5 : 0.9), -1, 1), 0.1);
       }
+      // structure-borne drone (felt more than heard), only aboard
+      const shaftHz = ENGINE_SOUND.shaftHz * n1 * (i ? 1.0035 : 1);
+      set(E.drone.frequency, Math.max(shaftHz, 5), 0.1); set(E.drone2.frequency, Math.max(shaftHz * 2, 10), 0.1);
+      const aboard = inside ? 0.7 : cabin ? 1 : 0;
+      set(E.droneG.gain, on * aboard * 0.09 * n1 * n1 * (prop ? 1.6 : 1), 0.2);
+      set(E.drone2G.gain, on * aboard * 0.035 * n1 * n1, 0.2);
       // cabin window view is next to the left engine
       const near = cabin ? (i === 0 ? 1.6 : 0.55) : 1;
       // fan tone
@@ -645,6 +756,14 @@ export class Audio {
     const buffet = (gearOut * 0.6 + fm.ctl.speedbrake * 0.8 + fm.ctl.groundSpoiler * 0.5) * q * q;
     set(this.buffetG.gain, on * buffet * (inside ? 0.25 : cabin ? 0.3 : 0.12 * spread), 0.2);
     set(this.packG.gain, on * (inside ? 0.035 : cabin ? 0.02 : 0), 0.3);
+    this._inside = inside || cabin;
+    set(this.roomG.gain, on * (inside ? 0.35 : cabin ? 0.5 : 0), 0.3);
+    set(this.avG.gain, on * (inside ? 0.012 : 0), 0.3);
+    set(this.humG.gain, on * (inside ? 0.0016 : 0), 0.3);
+    // flap / slat whistle: grows with speed and flap angle (fainter through the hull)
+    const flapK = clamp(fm.ctl.flapAngle / 30, 0, 1) + 0.4 * (fm.ctl.slat || 0);
+    set(this.flapF.frequency, 1200 + ias * 4.5, 0.2);
+    set(this.flapG.gain, on * flapK * q * q * (inside ? 0.01 : cabin ? 0.03 : 0.05 * spread), 0.25);
     // ground roll: continuous rumble + centreline light thumps every 15 m under the nose gear
     const wow = fm.out.wow;
     const gs = (fm.out.gs || 0) * 0.5144;
@@ -652,8 +771,30 @@ export class Audio {
     set(this.rumbleF.frequency, 70 + gs * 1.5, 0.1);
     if (wow && gs > 3 && fm.gear[0].onGround) {
       this._travel += gs * dt;
-      if (this._travel > 15) { this._travel = 0; this.burst(this.brown, 110, 0.9, (inside ? 0.35 : 0.15) * clamp(gs / 40, 0.2, 1) * on, 0.18); }
+      if (this._travel > 15) {
+        this._travel = 0;
+        const k = (inside ? 0.35 : 0.15) * clamp(gs / 40, 0.2, 1) * on;
+        this.burst(this.brown, 110, 0.9, k, 0.18);
+        // ... and the main gear rolls over the same light a wheelbase later: "thump ... ka-thunk"
+        const wb = L.wheelbase || 22;
+        if (gs > 4 && wb / gs < 6) {
+          this.burst(this.brown, 85, 0.9, k * 1.25, 0.22, 'lowpass', wb / gs);
+          this.burst(this.brown, 85, 0.9, k * 1.1, 0.2, 'lowpass', wb / gs + 0.035);
+        }
+      }
     }
+    // nose wheel coming down after the mains
+    const noseOn = !!fm.gear[0].onGround;
+    if (wow && noseOn && this._noseOn === false && gs > 15) this.burst(this.brown, 120, 0.8, (inside ? 0.5 : 0.25) * on, 0.35);
+    this._noseOn = noseOn;
+    // brakes: moan and grind while braking at taxi speed, squeal as the wheels stop
+    const brk = Math.max(fm.ctl.brakeL || 0, fm.ctl.brakeR || 0, sys.pilot?.brakes || 0);
+    const taxiK = wow ? smoothstep(0.4, 3, gs) * (1 - smoothstep(12, 30, gs)) : 0;
+    set(this.moanO.frequency, 120 + gs * 6, 0.1);
+    set(this.moanG.gain, on * brk * taxiK * (inside ? 0.02 : 0.05 * spread + 0.01), 0.15);
+    set(this.grindG.gain, on * brk * taxiK * (inside ? 0.04 : 0.1 * spread), 0.15);
+    const stopping = wow && brk > 0.3 && gs > 0.15 && gs < 2.5;
+    set(this.squealG.gain, on * (stopping ? (inside ? 0.004 : 0.012 * spread) * smoothstep(0.15, 1, gs) : 0), 0.08);
     // hydraulics: flaps / gear in transit
     const flapsMoving = Math.abs(fm.ctl.flapAngle - (this._flapPrev ?? fm.ctl.flapAngle)) > 1e-4;
     this._flapPrev = fm.ctl.flapAngle;
@@ -662,7 +803,16 @@ export class Audio {
     // gear up / down lock clunks
     const gl = fm.ctl.gearPos <= 0.001 ? 'down' : fm.ctl.gearPos >= 0.999 ? 'up' : 'transit';
     if (this._gearPrev === 'transit' && gl !== 'transit') this.burst(this.brown, 160, 1, (inside ? 0.6 : 0.3) * on, 0.4);
+    // gear doors swinging open into the airflow: a dull whump and a rush of air
+    if (this._gearPrev && this._gearPrev !== 'transit' && gl === 'transit') {
+      this.burst(this.brown, 90, 0.8, (inside ? 0.4 : 0.25) * on, 0.5);
+      this.burst(this.pink, 600, 0.6, (inside ? 0.12 : 0.08) * on * clamp(q, 0.2, 1), 1.2, 'bandpass', 0.05);
+    }
     this._gearPrev = gl;
+    // cabin chimes: the seat-belt sign through 10,000 ft (a soft two-tone "pon-pon" in the cabin)
+    const alt = fm.out.altFt || 0;
+    if (this._alt10 != null && (this._alt10 < 10000) !== (alt < 10000) && (inside || cabin)) this.chime(cabin ? 0.07 : 0.025);
+    this._alt10 = alt;
     // warnings
     set(this.shakerG.gain, on * (sys.warn.stall ? 0.25 : 0), 0.03);
     set(this.clackG.gain, on * (sys.warn.overspeed ? 0.08 : 0), 0.03);

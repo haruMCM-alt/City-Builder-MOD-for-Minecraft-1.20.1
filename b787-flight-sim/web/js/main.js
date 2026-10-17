@@ -35,6 +35,7 @@ import { ARFF, Evacuation } from './emergency.js';
 import { Terminal, patchShellClip } from './terminal.js';
 import { RadioSet } from './radio.js';
 import { FlightCrew } from './crew.js';
+import { EnvProbe, FanBlur } from './aircraftfx.js';
 import { UISound } from './uisound.js';
 import { bindWheelUI } from './wheel.js';
 import { configureObstacles } from './obstacles.js';
@@ -1769,6 +1770,12 @@ class App {
     fm.wet = this.world.wet || 0;
     this.visual.update(dt, fm, sys, { night: this.world.night, camera: this.camera, cockpitView: cockpit, events, wet: fm.wet });
     this.crew?.update(this.visual, this.meta, { view: this.rig.view, ctl: fm.ctl, dt: this.paused ? 0 : dt });
+    // live reflections of the surroundings on the paint / glass / metal (high: every 3rd frame)
+    if (!this.envProbe && this.renderer) this.envProbe = new EnvProbe(this.renderer, this.scene);
+    const probeOn = (this.quality === 'ultra' || (this.quality === 'high' && (this._probeN = ((this._probeN || 0) + 1) % 3) === 0)) && !cockpit && this.rig.view !== 'terminal';
+    if (probeOn || !(this.quality === 'ultra' || this.quality === 'high')) this.envProbe.update(this.visual.root, probeOn, [this.visual.particles, ...(this.cur?.vapor?.trails?.map((t) => t.mesh) || [])]);
+    if (!this.cur.fanBlur) this.cur.fanBlur = new FanBlur(this.visual, this.meta);
+    this.cur.fanBlur.update(fm, this.paused ? 0 : dt);
     {
       // cabin: passengers, crew and the IFE (live flight data for the maps / info channels)
       const v = this.rig.view, o = fm.out;
@@ -1853,6 +1860,8 @@ class App {
     L.hardGround = this.camera.position.y - L.ground < 40 && this.fm.out.wow;
     L.traffic = this.traffic && this.traffic.enabled ? this.traffic.sound(this.camera.position) : null;
     L.camRight.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    L.camQuat = this.camera.quaternion;
+    L.wheelbase = this.meta.noseGear && this.meta.mainGearL ? this.meta.noseGear[0] - this.meta.mainGearL[0] : 22;
     L.fwd.set(1, 0, 0).applyQuaternion(root.quaternion);
     L.engines[0].fromArray(this.meta.engineAxisL).applyMatrix4(mw);
     L.engines[1].fromArray(this.meta.engineAxisR).applyMatrix4(mw);
@@ -2072,7 +2081,7 @@ class App {
       const lat = dx * -d.z + dz * d.x;
       const onRwy = along > -50 && along < r.length && Math.abs(lat) < r.width / 2;
       const grade = fpm > -120 ? 'Butter! 🧈' : fpm > -300 ? 'Good' : fpm > -500 ? 'Firm' : 'Hard';
-      this.audio.thump(clamp(-e.vs / 3, 0.15, 1.2));
+      this.audio.thump(clamp(-e.vs / 3, 0.15, 1.2), (e.ias || 140) * KT);
       this.toast(`接地 Touchdown ${Math.round(fpm)} fpm · ${Math.round(e.ias)} kt · ` +
         (onRwy ? `滑走路端から ${Math.round(along)} m · 中心線 ${lat.toFixed(1)} m — ${grade}` : '滑走路外 Off runway!'), 6500);
     } else if (e.type === 'damage') {
