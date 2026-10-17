@@ -107,6 +107,27 @@ def materials():
         under=mat("underfloor", (0.13, 0.13, 0.14), 0.3, 0.7),
         brown=mat("bogie_brown", (0.10, 0.08, 0.07), 0.2, 0.75),
         gfrp=mat("front_black", (0.01, 0.012, 0.015), 0.1, 0.12),
+        # v3: see-through side windows and passenger saloon
+        sglass=mat("side_glass", (0.10, 0.13, 0.12), 0.0, 0.03, alpha=0.38),
+        int_wall=mat("int_wall", (0.80, 0.80, 0.77), 0.0, 0.6),
+        int_floor=mat("int_floor", (0.30, 0.33, 0.36), 0.0, 0.8),
+        int_ceiling=mat("int_ceiling", (0.88, 0.88, 0.86), 0.0, 0.55),
+        int_light=mat("int_light", (1.0, 1.0, 1.0), 0, 0.3, (1.0, 0.99, 0.95), 4.0),
+        lcd=mat("int_lcd", (0.02, 0.03, 0.05), 0, 0.2, (0.35, 0.55, 0.9), 1.2),
+        seat_e231=mat("seat_e231", (0.04, 0.16, 0.30), 0.0, 0.9),
+        seat_e233=mat("seat_e233", (0.03, 0.10, 0.32), 0.0, 0.9),
+        seat_211=mat("seat_211", (0.25, 0.04, 0.06), 0.0, 0.9),
+        seat_115=mat("seat_115", (0.06, 0.09, 0.22), 0.0, 0.9),
+        seat_green=mat("seat_green", (0.05, 0.06, 0.12), 0.0, 0.85),
+        seat_prio=mat("seat_priority", (0.45, 0.08, 0.10), 0.0, 0.9),
+        headrest=mat("headrest_cover", (0.92, 0.92, 0.90), 0.0, 0.8),
+        partition=mat("seat_partition", (0.84, 0.85, 0.85), 0.2, 0.35),
+        pole=mat("pole", (0.75, 0.76, 0.77), 1.0, 0.22),
+        pole_yellow=mat("pole_yellow", (0.85, 0.62, 0.02), 0.0, 0.4),
+        strap=mat("strap", (0.90, 0.90, 0.88), 0.0, 0.5),
+        sidelamp=mat("SIDELAMP", (0.25, 0.02, 0.02), 0.0, 0.3),
+        weld=mat("stainless_seam", (0.40, 0.41, 0.42), 0.85, 0.45),
+        brakedisc=mat("brake_disc", (0.30, 0.29, 0.28), 0.8, 0.45),
     )
 
 

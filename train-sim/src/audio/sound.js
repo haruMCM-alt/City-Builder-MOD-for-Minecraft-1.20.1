@@ -93,6 +93,14 @@ export class SoundEngine {
     this.melFilter.connect(this.master);
     this.melFilter.connect(melDelay); melDelay.connect(melFb).connect(melDelay); melDelay.connect(melWet).connect(this.master);
 
+    // recorded door chime + linear-motor door closing (E231/E233), see assets/sounds/
+    this.doorCloseBuf = null;
+    fetch(new URL('../../assets/sounds/door_close_e231.mp3', import.meta.url))
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+      .then((b) => ctx.decodeAudioData(b))
+      .then((buf) => { this.doorCloseBuf = buf; })
+      .catch((e) => console.warn('door sound unavailable, using synthesized chime', e));
+
     this.ready = true;
   }
 
@@ -238,9 +246,28 @@ export class SoundEngine {
     s.start(t, Math.random()); s.stop(t + dur * 2 + 0.5);
   }
 
-  /** JR East style door chime (3 two-tone pairs) */
+  /** true when the recorded chime + door close sample will be used */
+  usesDoorSample() {
+    return !!(this.doorCloseBuf && this.veh && this.veh.doorSound === 'e231');
+  }
+
+  /** door chime before closing; returns seconds until the doors are shut */
   doorChime() {
-    if (!this.ready) return;
+    if (!this.ready) return 0;
+    if (this.usesDoorSample()) {
+      const s = this.ctx.createBufferSource();
+      s.buffer = this.doorCloseBuf;
+      const g = this.ctx.createGain(); g.gain.value = this.inCab ? 0.55 : 0.9;
+      s.connect(g).connect(this.master);
+      s.start();
+      return 3.3;   // the bang of the doors meeting is ~3.2 s into the clip
+    }
+    return this.synthChime();
+  }
+
+  /** JR East style door chime (3 two-tone pairs), synthesized */
+  synthChime() {
+    if (!this.ready) return 0;
     const ctx = this.ctx, t0 = ctx.currentTime + 0.05;
     for (let i = 0; i < 3; i++) {
       this.tone(1318.5, t0 + i * 0.62, 0.35, 0.09);
@@ -348,6 +375,34 @@ export class SoundEngine {
     const t = this.ctx.currentTime;
     this.tone(880, t, 0.5, 0.07);
     this.tone(1175, t + 0.18, 0.6, 0.06);
+  }
+
+  /** level-crossing bell (カンカン). dist = metres from the listener to the nearest ringing crossing */
+  crossing(dist) {
+    if (!this.ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const on = Number.isFinite(dist) && dist < 900 && !this.muted;
+    if (!on) { this.xing = null; return; }
+    if (!this.xing) this.xing = { next: t + 0.05, n: 0 };
+    // distance attenuation; the cab muffles it strongly
+    const g = Math.min(1, 30 / Math.max(30, dist)) ** 1.2 * (this.inCab ? 0.35 : 1) * 0.16;
+    while (this.xing.next < t + 0.12) {
+      const when = this.xing.next;
+      const f = this.xing.n % 2 ? 690 : 735;
+      const out = ctx.createGain();
+      out.gain.setValueAtTime(0, when);
+      out.gain.linearRampToValueAtTime(g, when + 0.004);
+      out.gain.exponentialRampToValueAtTime(0.0005, when + 0.42);
+      for (const [mul, a] of [[1, 1], [2.76, 0.45], [5.4, 0.18], [8.9, 0.07]]) {
+        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * mul;
+        const og = ctx.createGain(); og.gain.value = a;
+        o.connect(og).connect(out);
+        o.start(when); o.stop(when + 0.45);
+      }
+      out.connect(this.master);
+      this.xing.next += 0.36;
+      this.xing.n++;
+    }
   }
 
   /** an oncoming train rushing past */

@@ -24,61 +24,98 @@ from lib import materials, MB, OUT_DIR, HERE  # noqa: E402
 import cars  # noqa: E402
 
 def make_cab_interior(M, coll):
+    """E231/E233-style cab seen from the driver's seat (left side, +Y)."""
+    from lib import mat
+    wall = mat("cab_wall2", (0.30, 0.32, 0.32), 0.0, 0.75)
+    desk = mat("cab_desk2", (0.035, 0.037, 0.04), 0.1, 0.55)
+    panel = mat("cab_panel2", (0.06, 0.065, 0.07), 0.15, 0.5)
+    trim = mat("cab_trim", (0.18, 0.19, 0.20), 0.3, 0.45)
+    floor = mat("cab_floor", (0.12, 0.13, 0.14), 0.0, 0.9)
+    tt = mat("TIMETABLE", (0.85, 0.85, 0.80), 0.0, 0.7)
+    needle = mat("needle", (0.95, 0.35, 0.05), 0.0, 0.4, (1.0, 0.4, 0.05), 0.6)
     mb = MB("cab_interior")
     L = 19.9
-    xF = L / 2 - 0.22  # inner face of the front wall at window height
+    xF = L / 2 - 0.22
     W = 1.40
-    zf = 1.25  # cab floor
-    zc = 3.25  # ceiling
-    # floor / ceiling / side walls / back wall (normals face inward)
-    mb.poly([(xF - 2.6, -W, zf), (xF, -W, zf), (xF, W, zf), (xF - 2.6, W, zf)], M["cab_desk"], (0, 0, 1))
-    mb.poly([(xF - 2.6, -W, zc), (xF, -W, zc), (xF, W, zc), (xF - 2.6, W, zc)], M["cab_wall"], (0, 0, -1))
+    zf, zc = 1.25, 3.25
+    xB = xF - 2.6
+    mb.poly([(xB, -W, zf), (xF, -W, zf), (xF, W, zf), (xB, W, zf)], floor, (0, 0, 1))
+    mb.poly([(xB, -W, zc), (xF, -W, zc), (xF, W, zc), (xB, W, zc)], wall, (0, 0, -1))
     for s in (-1, 1):
         y = s * W
-        # side wall with a window opening (x: xF-1.6..xF-0.4, z: 2.0..2.8)
         x0, x1 = xF - 1.6, xF - 0.35
-        mb.poly([(xF - 2.6, y, zf), (xF, y, zf), (xF, y, 2.0), (xF - 2.6, y, 2.0)], M["cab_wall"], (0, -s, 0))
-        mb.poly([(xF - 2.6, y, 2.8), (xF, y, 2.8), (xF, y, zc), (xF - 2.6, y, zc)], M["cab_wall"], (0, -s, 0))
-        mb.poly([(xF - 2.6, y, 2.0), (x0, y, 2.0), (x0, y, 2.8), (xF - 2.6, y, 2.8)], M["cab_wall"], (0, -s, 0))
-        mb.poly([(x1, y, 2.0), (xF, y, 2.0), (xF, y, 2.8), (x1, y, 2.8)], M["cab_wall"], (0, -s, 0))
-    mb.poly([(xF - 2.6, -W, zf), (xF - 2.6, W, zf), (xF - 2.6, W, zc), (xF - 2.6, -W, zc)], M["cab_wall"], (1, 0, 0))
-    # front wall around the windscreen opening (sill z=1.85, header z=3.08)
+        mb.poly([(xB, y, zf), (xF, y, zf), (xF, y, 2.0), (xB, y, 2.0)], wall, (0, -s, 0))
+        mb.poly([(xB, y, 2.8), (xF, y, 2.8), (xF, y, zc), (xB, y, zc)], wall, (0, -s, 0))
+        mb.poly([(xB, y, 2.0), (x0, y, 2.0), (x0, y, 2.8), (xB, y, 2.8)], wall, (0, -s, 0))
+        mb.poly([(x1, y, 2.0), (xF, y, 2.0), (xF, y, 2.8), (x1, y, 2.8)], wall, (0, -s, 0))
+        # side window frame + sill
+        mb.box(((x0 + x1) / 2, y - s * 0.03, 1.99), (x1 - x0 + 0.06, 0.08, 0.04), trim)
+        mb.box(((x0 + x1) / 2, y - s * 0.02, 2.81), (x1 - x0 + 0.06, 0.05, 0.03), trim)
+    mb.poly([(xB, -W, zf), (xB, W, zf), (xB, W, zc), (xB, -W, zc)], wall, (1, 0, 0))
+    # back wall door with window
+    mb.box((xB + 0.01, -0.35, 2.15), (0.03, 0.75, 1.80), trim)
+    mb.box((xB + 0.03, -0.35, 2.55), (0.01, 0.45, 0.55), M["win"])
+    # front wall around the windscreen (sill 1.85, header 3.08)
     fx = xF + 0.02
     sill, head = 1.85, 3.08
-    mb.poly([(fx, -W, head), (fx, W, head), (fx, W, zc), (fx, -W, zc)], M["cab_wall"], (-1, 0, 0))
-    mb.poly([(fx, -W, zf), (fx, W, zf), (fx, W, sill), (fx, -W, sill)], M["cab_panel"], (-1, 0, 0))
+    mb.poly([(fx, -W, head), (fx, W, head), (fx, W, zc), (fx, -W, zc)], wall, (-1, 0, 0))
+    mb.poly([(fx, -W, zf), (fx, W, zf), (fx, W, sill), (fx, -W, sill)], panel, (-1, 0, 0))
     for (y0, y1) in ((-W, -1.30), (-0.40, -0.30), (0.02, 0.10), (1.30, W)):
         mb.poly([(fx, y0, sill), (fx, y1, sill), (fx, y1, head), (fx, y0, head)], M["black"], (-1, 0, 0))
+    # rubber gaskets around the windscreen openings
+    for (y0, y1) in ((-1.30, -0.40), (-0.30, 0.02), (0.10, 1.30)):
+        mb.box((fx - 0.01, (y0 + y1) / 2, sill + 0.012), (0.03, y1 - y0, 0.025), M["rubber"])
+        mb.box((fx - 0.01, (y0 + y1) / 2, head - 0.012), (0.03, y1 - y0, 0.025), M["rubber"])
+    # header box (destination unit back) + roller sun blind
+    mb.box((xF - 0.15, -0.2, 3.16), (0.30, 1.6, 0.18), wall)
+    mb.box((xF - 0.08, 0.72, 3.04), (0.06, 0.95, 0.05), M["dkgrey"])
+    mb.box((xF - 0.05, 0.72, 2.96), (0.012, 0.92, 0.14), mat("blind", (0.25, 0.22, 0.15), 0.0, 0.8, alpha=0.6))
     # wiper arm resting on the driver's window
     mb.beam((fx + 0.01, 0.25, sill + 0.03), (fx + 0.01, 1.15, sill + 0.10), 0.015, 0.012, M["black"])
-    # sun visor
-    mb.box((xF - 0.10, 0.72, 3.03), (0.20, 0.95, 0.02), M["dkgrey"])
-    # desk: low sloped console spanning the width
-    mb.poly([(xF - 0.95, -W, 1.70), (xF - 0.95, W, 1.70), (xF - 0.02, W, 1.83), (xF - 0.02, -W, 1.83)], M["cab_desk"], (0, 0, 1))
-    mb.poly([(xF - 0.95, -W, 1.70), (xF - 0.95, W, 1.70), (xF - 0.95, W, 1.30), (xF - 0.95, -W, 1.30)], M["cab_panel"], (-1, 0, 0))
-    # low instrument cluster in front of the driver (left side, +Y)
-    mb.poly([(xF - 0.62, 0.20, 1.86), (xF - 0.62, 1.20, 1.86), (xF - 0.30, 1.20, 1.86), (xF - 0.30, 0.20, 1.86)], M["cab_desk"], (0, 0, 1))
-    mb.poly([(xF - 0.62, 0.20, 1.86), (xF - 0.62, 1.20, 1.86), (xF - 0.70, 1.20, 1.72), (xF - 0.70, 0.20, 1.72)], M["cab_panel"], (-1, 0, 0.5))
-    for (y, r) in ((0.88, 0.07), (0.62, 0.06), (0.40, 0.05)):
-        c = Vector((xF - 0.67, y, 1.80))
-        mb.cyl(c, (-1, 0, 0.55), r, 0.02, M["dkgrey"], seg=20)
-        mb.cyl(c + Vector((-0.004, 0, 0.002)), (-1, 0, 0.55), r * 0.82, 0.02, M["gauge_face"], seg=20)
-    # TIMS monitors
-    for yc in (-0.05, -0.55):
-        mb.poly([(xF - 0.60, yc - 0.20, 1.74), (xF - 0.60, yc + 0.20, 1.74), (xF - 0.48, yc + 0.20, 1.92), (xF - 0.48, yc - 0.20, 1.92)], M["screen"], (-1, 0, 0.6))
-    # buttons row
-    for k in range(8):
-        mb.cyl((xF - 0.82, -1.25 + k * 0.1, 1.73), (0, 0, 1), 0.02, 0.03, M[["head", "tail", "green_mark", "chrome"][k % 4]], seg=8)
+    # ---- desk: low console across the cab
+    mb.poly([(xF - 0.95, -W, 1.70), (xF - 0.95, W, 1.70), (xF - 0.02, W, 1.83), (xF - 0.02, -W, 1.83)], desk, (0, 0, 1))
+    mb.poly([(xF - 0.95, -W, 1.70), (xF - 0.95, W, 1.70), (xF - 0.95, W, 1.30), (xF - 0.95, -W, 1.30)], panel, (-1, 0, 0))
+    mb.box((xF - 0.96, 0, 1.70), (0.04, 2 * W, 0.03), trim)                        # desk edge
+    # driver's instrument hood (in front of the driver, +Y side)
+    hood = [(0.0, 0.0), (0.42, 0.0), (0.42, 0.20), (0.06, 0.12)]
+    from lib import prism
+    prism(mb, hood, lambda u, v, d: (xF - 0.86 + u, d, 1.77 + v), 0.12, 1.16, panel)
+    # gauges on the hood face (sloped toward the driver)
+    face_n = Vector((-0.08, 0, 0.36)).normalized()
+    def on_face(y, t):
+        # point on the sloped face: t = 0..1 from the lower front edge to the top
+        return Vector((xF - 0.80 + 0.36 * t, y, 1.89 + 0.08 * t)) + face_n * 0.004
+    ax = Vector((0.36, 0, 0.08)).normalized().cross(Vector((0, 1, 0)))
+    for (y, r, t) in ((0.64, 0.105, 0.45), (0.93, 0.065, 0.45), (0.36, 0.065, 0.45)):
+        c = on_face(y, t)
+        mb.cyl(c, face_n, r + 0.012, 0.02, M["chrome"], seg=24)
+        mb.cyl(c + face_n * 0.006, face_n, r, 0.02, M["black"], seg=24)
+        mb.cyl(c + face_n * 0.011, face_n, r * 0.92, 0.01, M["gauge_face"], seg=24)
+        mb.beam(c + face_n * 0.018, c + face_n * 0.018 + Vector((0.6 * r, -0.55 * r, 0.12 * r)), 0.006, 0.003, needle)
+    # TIMS monitors: one in the hood, one in the centre console
+    for (yc, w) in ((0.0, 0.42), (-0.62, 0.48)):
+        mb.box((xF - 0.62, yc, 1.92), (0.06, w + 0.06, 0.30), panel, Matrix.Rotation(math.radians(-25), 3, "Y"))
+        mb.poly([(xF - 0.66, yc - w / 2, 1.80), (xF - 0.66, yc + w / 2, 1.80), (xF - 0.55, yc + w / 2, 2.04), (xF - 0.55, yc - w / 2, 2.04)], M["screen"], (-1, 0, 0.45))
+    # staff timetable holder (left of the driver) + clock
+    mb.poly([(xF - 0.90, 0.95, 1.73), (xF - 0.90, 1.25, 1.73), (xF - 0.62, 1.25, 1.80), (xF - 0.62, 0.95, 1.80)], tt, (-0.2, 0, 1))
+    mb.box((xF - 0.76, 1.10, 1.76), (0.32, 0.34, 0.02), trim)
+    # switches / lamps rows on the centre console
+    for k in range(10):
+        mb.cyl((xF - 0.82, -1.25 + k * 0.085, 1.735), (0, 0, 1), 0.018, 0.025, M[["head", "tail", "green_mark", "chrome", "chrome"][k % 5]], seg=8)
+        mb.box((xF - 0.70, -1.25 + k * 0.085, 1.75), (0.05, 0.04, 0.02), M["dkgrey"])
     # one-handle master controller base (left of driver)
-    mb.box((xF - 0.80, 1.18, 1.55), (0.45, 0.22, 0.32), M["cab_panel"])
+    mb.box((xF - 0.80, 1.18, 1.55), (0.45, 0.22, 0.32), panel)
+    mb.box((xF - 0.80, 1.18, 1.715), (0.40, 0.03, 0.01), M["black"])            # handle slot
     # driver seat
-    mb.box((xF - 1.40, 0.72, 1.70), (0.5, 0.5, 0.1), M["blue_seat"])
-    mb.box((xF - 1.67, 0.72, 2.05), (0.08, 0.5, 0.6), M["blue_seat"])
+    seat = mat("cab_seat", (0.08, 0.10, 0.16), 0.0, 0.85)
+    mb.box((xF - 1.40, 0.72, 1.70), (0.5, 0.5, 0.1), seat)
+    mb.box((xF - 1.67, 0.72, 2.05), (0.08, 0.5, 0.6), seat)
     mb.cyl((xF - 1.40, 0.72, 1.47), (0, 0, 1), 0.05, 0.45, M["chrome"], seg=8)
+    # ceiling light + speaker
+    mb.box((xF - 1.2, 0, zc - 0.02), (0.6, 0.25, 0.02), M["lamp"])
     cab = mb.build(coll)
 
     # master controller handle as its own object (animated by the sim).
-    # Pivot at the slot; the T-handle points up and rotates around Y.
     hb = MB("mascon_handle")
     hb.beam((0, 0, 0), (0, 0, 0.22), 0.03, 0.03, M["chrome"])
     hb.cyl((0, 0, 0.24), (0, 1, 0), 0.03, 0.22, M["handle"], seg=10)

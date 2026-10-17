@@ -36,6 +36,20 @@ export const DOOR_SIDE = {
   小金井: 'right', 自治医大: 'right', 石橋: 'left', 雀宮: 'left', 宇都宮: 'left',
 };
 
+// River crossings: [s0, s1] = levee to levee (floodplain), [w0, w1] = water channel.
+export const RIVERS = [
+  { name: '荒川', s0: 13250, s1: 14150, w0: 13480, w1: 13880, h: 8.0, truss: true },
+  { name: '利根川', s0: 57150, s1: 58750, w0: 57600, w1: 58250, h: 8.0, truss: true },
+  { name: '渡良瀬川', s0: 59700, s1: 60400, w0: 59900, w1: 60180, h: 7.0, truss: true },
+  { name: '思川', s0: 76200, s1: 76850, w0: 76420, w1: 76590, h: 6.5, truss: false },
+  { name: '田川', s0: 106950, s1: 107180, w0: 107040, w1: 107090, h: 3.5, truss: false },
+];
+// Elevated sections (高架)
+export const VIADUCTS = [
+  { name: '赤羽', s0: 10900, s1: 13300, h: 8.5 },
+  { name: '浦和', s0: 21900, s1: 24800, h: 7.5 },
+];
+
 export const PLATFORM_LEN = 320; // 15 cars + margin
 export const TRACK_SPACING = 3.8;
 export const ISLAND_W = 7.0;
@@ -78,6 +92,8 @@ function buildCurves() {
       const arc = R * ang;
       const len = arc + trans;
       if (s + len > b) break;
+      // keep bridges and elevated stations straight
+      if (RIVERS.some((r) => s < r.s1 + 300 && s + len > r.s0 - 300) || VIADUCTS.some((v) => s < v.s1 && s + len > v.s0)) { s += len; continue; }
       // steer back toward north/north-north-east
       const target = -0.25; // slightly east of north overall
       let dir = heading > target ? -1 : 1;
@@ -130,6 +146,50 @@ export class Route {
       this.x[i] = x; this.z[i] = z; this.th[i] = th;
     }
     this.buildLimits();
+    this.buildElevation();
+  }
+
+  // --- vertical alignment: viaducts and bridges, joined by 12‰ ramps ------------
+  buildElevation() {
+    const n = Math.ceil((S_MAX - S_MIN) / 2) + 1;
+    this.elevTable = new Float32Array(n);
+    const feats = [...VIADUCTS, ...RIVERS];
+    for (let i = 0; i < n; i++) {
+      const s = S_MIN + i * 2;
+      let h = 0;
+      for (const f of feats) {
+        const ramp = f.h / 0.012;
+        let w;
+        if (s >= f.s0 && s <= f.s1) w = 1;
+        else if (s < f.s0) w = 1 - smooth((f.s0 - s) / ramp);
+        else w = 1 - smooth((s - f.s1) / ramp);
+        h = Math.max(h, f.h * w);
+      }
+      this.elevTable[i] = h;
+    }
+  }
+
+  elev(s) {
+    const f = (s - S_MIN) / 2;
+    const i = Math.max(0, Math.min(this.elevTable.length - 2, Math.floor(f)));
+    const t = Math.min(1, Math.max(0, f - i));
+    return this.elevTable[i] + (this.elevTable[i + 1] - this.elevTable[i]) * t;
+  }
+
+  /** gradient (rise per metre) */
+  grade(s) { return (this.elev(s + 5) - this.elev(s - 5)) / 10; }
+
+  /** what carries the track at s */
+  structureAt(s) {
+    for (const r of RIVERS) {
+      if (s >= r.s0 && s <= r.s1) return { type: s >= r.w0 && s <= r.w1 ? 'bridge' : 'viaduct', river: r };
+    }
+    for (const v of VIADUCTS) if (s >= v.s0 && s <= v.s1) return { type: 'viaduct', viaduct: v };
+    return { type: this.elev(s) > 0.25 ? 'embankment' : 'ground' };
+  }
+
+  riverAt(s, margin = 0) {
+    return RIVERS.find((r) => s > r.s0 - margin && s < r.s1 + margin) || null;
   }
 
   get sMin() { return S_MIN + 10; }
@@ -150,6 +210,7 @@ export class Route {
     const lx = dz, lz = -dx;
     out.x = x + lx * offset;
     out.z = z + lz * offset;
+    out.y = this.elevTable ? this.elev(s) : 0;
     out.dx = dx; out.dz = dz;
     out.lx = lx; out.lz = lz;
     out.th = th;

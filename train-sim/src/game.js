@@ -62,7 +62,8 @@ export class Game {
   startClosing() {
     this.state = 'closing';
     this.stateT = 0;
-    this.sound.doorChime();
+    this.closeAt = this.sound.doorChime() || 2.2;
+    this.doorSample = this.sound.usesDoorSample();
     this.hud.message('ドアが閉まります', 'info', 2);
   }
 
@@ -93,8 +94,12 @@ export class Game {
         this.startClosing();
       }
     } else if (this.state === 'closing') {
-      if (this.stateT > 2.2 && ph.doorsOpen) { this.sound.doorMove(false); ph.doorsOpen = 'closing'; }
-      if (this.stateT > 4.5) {
+      const closeStart = this.doorSample ? this.closeAt - 1.2 : 2.2;
+      if (this.stateT > closeStart && ph.doorsOpen === true) {
+        if (!this.doorSample) this.sound.doorMove(false);   // the recording already contains the doors
+        ph.doorsOpen = 'closing';
+      }
+      if (this.stateT > (this.doorSample ? this.closeAt + 0.8 : 4.5)) {
         ph.doorsOpen = false;
         this.state = 'ready';
         this.stateT = 0;

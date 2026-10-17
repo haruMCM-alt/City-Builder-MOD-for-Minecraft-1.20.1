@@ -43,12 +43,11 @@
         <h2>車内放送</h2>
         <div class="row"><label>音源</label>
           <select id="annMode">
-            <option value="file">添付の車内放送ファイル</option>
+            <option value="file">収録音声（内蔵）</option>
             <option value="tts">音声合成</option>
             <option value="off">なし</option>
           </select>
         </div>
-        <label class="file-btn">ファイルを選択（.m4a）<input id="annFile" type="file" accept="audio/*,.m4a"></label>
         <p id="annStatus" class="note"></p>
 
         <h2>発車メロディ</h2>
@@ -65,6 +64,11 @@
         <p id="melStatus" class="note"></p>
 
         <h2>画質</h2>
+        <div class="row"><label>描画</label><select id="qualSel">
+          <option value="ultra">最高（影・AO・ブルーム）</option>
+          <option value="high">高（影・ブルーム）</option>
+          <option value="low">軽量（低スペックPC向け）</option>
+        </select></div>
         <label class="chk"><input id="shadowChk" type="checkbox"> 影を表示</label>
 
         <button id="startBtn" class="start" disabled>読み込み中…</button>

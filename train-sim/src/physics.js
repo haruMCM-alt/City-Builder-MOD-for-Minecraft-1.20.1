@@ -19,6 +19,7 @@ export class TrainPhysics {
     this.doorsOpen = false;
     this.ats = { braking: false, near: false, pattern: 999, events: 0 };
     this.jerk = 0;
+    this.grade = 0; // rise per metre (+ = uphill)
   }
 
   get EB() { return -(this.veh.brakeNotches + 1); }
@@ -81,9 +82,10 @@ export class TrainPhysics {
     // brakes are slightly stronger at very low speed (friction coefficient)
     const lowBoost = vk < 10 ? 1 + (10 - vk) * 0.012 : 1;
     const aTr = tractiveAccel(veh, vk, this.power);
-    let a = aTr - resistance(vk) - (this.v > 0 ? decel * lowBoost : 0);
+    let a = aTr - resistance(vk) - (this.v > 0 ? decel * lowBoost : 0) - 9.81 * this.grade;
     const prevA = this.a;
-    if (this.v <= 0 && a <= 0) { a = 0; this.v = 0; }
+    // held by the brakes when standing (no rolling back)
+    if (this.v <= 0 && (a <= 0 || this.brake > 0.3)) { a = 0; this.v = 0; }
     this.v = Math.max(0, this.v + a * dt);
     this.s += this.v * dt;
     this.jerk = (a - prevA) / Math.max(dt, 1e-3);

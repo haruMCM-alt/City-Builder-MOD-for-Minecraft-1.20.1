@@ -1,9 +1,27 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+// tiny sun glints on glass / polished metal can overflow the half-float buffer;
+// one Inf/NaN pixel would then smear across the screen through the bloom blur
+const SanitizeShader = {
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      if (any(isnan(c.rgb)) || any(isinf(c.rgb))) c.rgb = vec3(16.0);
+      gl_FragColor = vec4(clamp(c.rgb, 0.0, 32.0), 1.0);
+    }`,
+};
 import { Route } from './route.js';
 import { VEHICLES, DEFAULT_VEHICLE, CAR_LEN } from './vehicles.js';
-import { World } from './world.js';
+import { World } from './world/world.js';
 import { TrainSet } from './trainmodel.js';
 import { TrainPhysics } from './physics.js';
 import { SoundEngine } from './audio/sound.js';
@@ -29,7 +47,7 @@ const announcer = new Announcer(sound);
 const melody = new MelodyPlayer(sound);
 const hud = new HUD();
 const gltfs = {};
-let renderer, scene, camera, sun, hemi;
+let renderer, scene, camera, sun, hemi, composer = null, aoPass = null;
 let world = null, player = null, physics = null, game = null, traffic = null;
 let cab = null, mascon = null;
 let running = false, paused = false;
@@ -46,6 +64,7 @@ const settings = {
   annMode: store.get('annMode', 'file'),
   melMode: store.get('melMode', 'on'),
   shadows: store.get('shadows', true),
+  quality: store.get('quality', 'high'),
 };
 if (!VEHICLES[settings.vehicle]) settings.vehicle = DEFAULT_VEHICLE;
 
@@ -75,28 +94,52 @@ function initRenderer() {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   $('view').appendChild(renderer.domElement);
   scene = new THREE.Scene();
-  // soft reflections for stainless bodies and glass
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = 0.55;
-  scene.fog = new THREE.Fog(0xc9d9e6, 250, 2300);
-  camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.05, 6000);
+  // sky, image based lighting and fog come from the World's Environment
+  camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.25, 30000);
   camera.rotation.order = 'YXZ';
-  hemi = new THREE.HemisphereLight(0xcfe3ff, 0x6b6250, 0.85);
+  hemi = new THREE.HemisphereLight(0xcfe3ff, 0x6b6250, 0.35);
   scene.add(hemi);
-  sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
+  sun = new THREE.DirectionalLight(0xfff1dc, 3.0);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera;
-  sc.left = -70; sc.right = 70; sc.top = 70; sc.bottom = -70; sc.near = 1; sc.far = 400;
+  sc.left = -90; sc.right = 90; sc.top = 90; sc.bottom = -90; sc.near = 1; sc.far = 600;
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.03;
   scene.add(sun, sun.target);
   window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
+    if (composer) composer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
   });
+}
+
+/** post-processing chain for the chosen quality: HDR + MSAA, (GTAO), bloom, tone mapping */
+function setupComposer(q) {
+  if (composer) { composer.dispose(); composer = null; aoPass = null; }
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setPixelRatio(q === 'low' ? 1 : Math.min(window.devicePixelRatio, 1.5));
+  sun.shadow.mapSize.set(q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024, q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024);
+  if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+  if (q === 'low') return;
+  const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: 4 });
+  composer = new EffectComposer(renderer, rt);
+  composer.addPass(new RenderPass(scene, camera));
+  composer.addPass(new ShaderPass(SanitizeShader));
+  if (q === 'ultra') {
+    aoPass = new GTAOPass(scene, camera, w, h);
+    aoPass.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.0, scale: 1.0, samples: 12 });
+    aoPass.blendIntensity = 0.85;
+    composer.addPass(aoPass);
+  }
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.28, 0.45, 0.95));
+  composer.addPass(new OutputPass());
+}
+
+function draw() {
+  if (composer) composer.render();
+  else renderer.render(scene, camera);
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +173,9 @@ function buildMenu() {
     updateFormationNote();
   };
   fromSel.addEventListener('change', fix); toSel.addEventListener('change', fix);
+  const qualSel = $('qualSel');
+  qualSel.value = settings.quality;
+  qualSel.addEventListener('change', () => { settings.quality = qualSel.value; store.set('quality', settings.quality); });
   const shadowChk = $('shadowChk');
   shadowChk.checked = settings.shadows;
   shadowChk.addEventListener('change', () => { settings.shadows = shadowChk.checked; store.set('shadows', settings.shadows); });
@@ -138,16 +184,7 @@ function buildMenu() {
   const annSel = $('annMode');
   annSel.value = settings.annMode;
   annSel.addEventListener('change', () => { settings.annMode = annSel.value; store.set('annMode', settings.annMode); updateAnnStatus(); });
-  $('annFile').addEventListener('change', async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    $('annStatus').textContent = '読み込み中…';
-    try {
-      await announcer.loadFile(f);
-      settings.annMode = 'file'; annSel.value = 'file';
-      updateAnnStatus();
-    } catch (err) { $('annStatus').textContent = err.message; }
-  });
+
   // departure melodies
   const melSel = $('melMode');
   melSel.value = settings.melMode;
@@ -203,8 +240,8 @@ function updateAnnStatus() {
   const el = $('annStatus');
   if (settings.annMode === 'off') el.textContent = '車内放送なし';
   else if (settings.annMode === 'tts') el.textContent = 'ブラウザの音声合成で放送します';
-  else if (announcer.audio) el.textContent = `✔ ${announcer.fileName}${announcer.durationWarning ? '（長さが想定と違います。区切り位置がずれる可能性があります）' : ''}`;
-  else el.textContent = '添付の車内放送ファイル（.m4a）を選択してください。未選択の場合は音声合成で代用します。';
+  else if (announcer.audio) el.textContent = '✔ 収録音声を内蔵（宇都宮線 普通宇都宮行き 上野→宇都宮／収録：ひごくま氏）';
+  else el.textContent = '収録音声を読み込み中…（読み込めない場合は音声合成で代用します）';
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +253,7 @@ async function startGame() {
   await sound.init();
   if (announcer.loading) { try { await announcer.loading; } catch { /* falls back below */ } }
   if (settings.annMode === 'file' && !announcer.audio) {
-    if (!(await announcer.tryLocal())) announcer.mode = 'tts';
+    if (!(await announcer.loadBuiltIn())) announcer.mode = 'tts';
   }
   if (settings.annMode === 'tts') announcer.mode = 'tts';
   if (settings.annMode === 'off') announcer.mode = 'off';
@@ -229,11 +266,12 @@ async function startGame() {
   const veh = VEHICLES[settings.vehicle];
   const formation = veh.formations[settings.cars] || veh.formations[15];
   sound.setVehicle(veh);
+  setupComposer(settings.quality);
   renderer.shadowMap.enabled = settings.shadows;
   sun.castShadow = settings.shadows;
 
   if (world) { teardown(); }
-  world = new World(scene, route, gltfs.env);
+  world = new World(renderer, scene, route, gltfs.env, settings.quality);
   const tt = buildTimetable(route, veh, formation.length, settings.from, settings.to);
   physics = new TrainPhysics(veh, formation.length);
   player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: '普通 宇都宮', destType: veh.id === 's115' ? 'roll' : 'led' });
@@ -262,12 +300,7 @@ function modelKey(veh) { return { e231: 'e231', e233: 'e233', s211: '211', s115:
 function teardown() {
   if (player) player.dispose();
   if (traffic) traffic.clear();
-  if (world) {
-    for (const ch of world.chunks.values()) world.disposeChunk(ch);
-    for (const ch of world.stations.values()) world.disposeChunk(ch);
-    world.root.removeFromParent();
-    scene.remove(world.sky, world.ground, world.clouds);
-  }
+  if (world) world.dispose();
   announcer.stop(true);
   melody.stopClip(true);
   sound.horn(false); sound.atsBell(false);
@@ -388,29 +421,33 @@ function updateCamera(dt) {
     camera.rotation.set(look.pitch, -Math.PI / 2 + look.yaw, 0);
   } else if (camMode === 'side') {
     route.pose(physics.s - 12, 16, p);
-    camera.position.set(p.x, 3.2, p.z);
+    camera.position.set(p.x, p.y + 3.2, p.z);
     route.pose(physics.s - 22, 0, q);
-    camera.lookAt(q.x, 2.0, q.z);
+    camera.lookAt(q.x, q.y + 2.0, q.z);
   } else if (camMode === 'front') {
     // ahead of the train, like a platform-end photo of the cab
     route.pose(physics.s + 15, 3.4, p);
-    camera.position.set(p.x, 2.0, p.z);
+    camera.position.set(p.x, p.y + 2.0, p.z);
     route.pose(physics.s - 9, 0.2, q);
-    camera.lookAt(q.x, 1.9, q.z);
+    camera.lookAt(q.x, q.y + 1.9, q.z);
   } else if (camMode === 'chase') {
     route.pose(physics.s - 70, 0, p);
-    camera.position.set(p.x, 22, p.z);
+    camera.position.set(p.x, p.y + 22, p.z);
     route.pose(physics.s + 40, 0, q);
-    camera.lookAt(q.x, 0, q.z);
+    camera.lookAt(q.x, q.y, q.z);
   } else if (camMode === 'trackside') {
     if (!tracksideCam || physics.s > tracksideCam.s + physics.len + 40) {
       const s = physics.s + 260 + Math.random() * 120;
-      route.pose(s, 6.2 + Math.random() * 1.2, p);
-      tracksideCam = { s, x: p.x, z: p.z, y: 1.6 + Math.random() * 2 };
+      const st = route.structureAt(s).type;
+      // on viaducts / bridges stand at ground level and look up; else beside the line
+      const lat = st === 'ground' ? 6.2 + Math.random() * 1.2 : 18 + Math.random() * 10;
+      route.pose(s, lat, p);
+      const gy = st === 'ground' || st === 'embankment' ? p.y : 0;
+      tracksideCam = { s, x: p.x, z: p.z, y: gy + 1.6 + Math.random() * 2 };
     }
     camera.position.set(tracksideCam.x, tracksideCam.y, tracksideCam.z);
     route.pose(physics.s - 15, 0, q);
-    camera.lookAt(q.x, 2.2, q.z);
+    camera.lookAt(q.x, q.y + 2.2, q.z);
   }
 }
 
@@ -522,11 +559,12 @@ function frame() {
   const dt = Math.min(0.05, (now - lastT) / 1000);
   lastT = now;
   if (!running || !renderer) { if (renderer && scene) renderer.render(scene, camera); return; }
+  if (window.__noRender) return;
   pollGamepad();
-  if (paused) { renderer.render(scene, camera); return; }
+  if (paused) { draw(); return; }
   simStep(dt);
   updateView(dt);
-  renderer.render(scene, camera);
+  draw();
   if (game.finished && !resultShown) showResult();
 }
 
@@ -541,6 +579,7 @@ function simStep(dt) {
     game.addScore(-10);
   }
   if (physics.ats.braking !== atsWasBraking) { sound.atsBell(physics.ats.braking); atsWasBraking = physics.ats.braking; }
+  physics.grade = route.grade(physics.s - physics.len / 2);
   for (let i = 0; i < n; i++) physics.step(dt / n);
   game.update(dt);
 
@@ -567,13 +606,19 @@ function updateView(dt) {
   player.place(route, physics.s, () => 0, 0.0025 * Math.min(1, physics.kmh / 80));
   world.update(physics.s, 1);
   if (mascon) mascon.rotation.z = physics.handle * 0.11;
+  player.setSideLamps(!!physics.doorsOpen);
   updateCamera(dt);
   const cp = new THREE.Vector3();
   camera.getWorldPosition(cp);
-  world.updateFixed(cp);
+  world.updateFixed(cp, physics.s);
+  const trains = [{ front: physics.s, len: physics.len, dir: 1 }];
+  for (const t of traffic.list) trains.push({ front: t.s, len: t.set.length, dir: -1 });
+  world.animate(dt, trains, cp);
+  sound.crossing(world.nearestActiveCrossing);
   const fp = route.pose(physics.s - 20, 0, {});
-  sun.position.set(fp.x + 120, 180, fp.z + 60);
-  sun.target.position.set(fp.x, 0, fp.z);
+  const sd = world.env.sunDir;
+  sun.position.set(fp.x + sd.x * 300, fp.y + sd.y * 300, fp.z + sd.z * 300);
+  sun.target.position.set(fp.x, fp.y, fp.z);
   const limit = route.limitOverTrain(physics.s, physics.len);
   const ups = route.upcomingLimits(physics.s, 1500).find((l) => l.v < limit) || null;
   hud.update(dt, {
@@ -625,7 +670,7 @@ async function boot() {
     $('bootLoad').textContent = 'モデルの読み込みに失敗しました。ローカルサーバー経由で開いてください（README参照）。';
   }
   // auto-detect a locally placed announcement file
-  if (!announcer.audio && (await announcer.tryLocal())) updateAnnStatus();
+  if (!announcer.audio) { await announcer.loadBuiltIn(); updateAnnStatus(); }
   if (!melody.audio && (await melody.tryLocal())) updateMelStatus();
 }
 
@@ -635,6 +680,7 @@ boot();
 window.__sim = {
   get physics() { return physics; }, get game() { return game; }, get world() { return world; },
   setCamMode, route, sound, announcer, melody, simStep, updateView,
+  get renderer() { return renderer; }, get scene() { return scene; }, get camera() { return camera; }, draw,
   /** fast-forward the logic by `sec` seconds in fixed steps (no rendering) */
   advance(sec, dt = 0.05, each) { for (let t = 0; t < sec && !game.finished; t += dt) { if (each) each(); simStep(dt); } updateView(0.016); },
 };

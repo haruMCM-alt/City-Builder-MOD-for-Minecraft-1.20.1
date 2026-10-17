@@ -26,6 +26,7 @@ export const VEHICLES = {
     brakeMax: 4.2, // km/h/s at max service brake
     ebDecel: 4.6,
     handle: 'one',
+    doorSound: 'e231',
     formations: {
       15: 'CPMMR' + 'CMPMMGGPMR',
       10: 'CMPMMGGPMR',
@@ -63,6 +64,7 @@ export const VEHICLES = {
     brakeMax: 4.2,
     ebDecel: 4.7,
     handle: 'one',
+    doorSound: 'e231',
     formations: {
       15: 'CPMMR' + 'CMPMMGGPMR',
       10: 'CMPMMGGPMR',

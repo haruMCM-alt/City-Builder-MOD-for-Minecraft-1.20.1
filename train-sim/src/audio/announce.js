@@ -1,14 +1,13 @@
 // Clip playback from long user-supplied recordings.
 //
-// The recordings themselves are NOT part of this repository (they are other people's
-// work; both creators ask to be contacted before reuse). They are loaded from:
-//   1. a file the user picks in the menu, or
-//   2. assets/audio/<name>.m4a if the user placed it there locally (gitignored).
+// The in-car announcement recording ships with the game (assets/sounds/, added at the
+// project owner's request; credit: ひごくま / Higokuma). The departure-melody recording
+// is loaded from a file the user picks, or assets/audio/utsunomiya_melody.m4a (gitignored).
 // Cue points (seconds into each recording) are in announce-cues.js / melody-cues.js.
 
 import { CUES, EXPECTED_DURATION } from './announce-cues.js';
 
-export const LOCAL_AUDIO_URL = 'assets/audio/utsunomiya_announce.m4a';
+export const LOCAL_AUDIO_URL = 'assets/sounds/utsunomiya_announce.mp3';
 export const LOCAL_MELODY_URL = 'assets/audio/utsunomiya_melody.m4a';
 
 /** plays [start, end] segments of one long audio file through a Web Audio bus */
@@ -135,7 +134,10 @@ export class Announcer extends ClipPlayer {
 
   onLoaded() { this.mode = 'file'; }
 
-  tryLocal() { return super.tryLocal(LOCAL_AUDIO_URL); }
+  /** load the built-in recording (no HEAD probe: works on static hosts that reject HEAD) */
+  async loadBuiltIn() {
+    try { await this.setSource(LOCAL_AUDIO_URL, '内蔵（ひごくま氏 収録）'); return true; } catch { return false; }
+  }
 
   has(id) {
     if (this.mode === 'off') return false;
