@@ -1,0 +1,6 @@
+# The in-car announcement recording is third-party audio; keep it local only.
+assets/audio/*
+!assets/audio/README.md
+
+# Blender backup files
+*.blend1

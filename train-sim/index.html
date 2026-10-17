@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>宇都宮線 運転シミュレーター</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="view"></div>
+
+<!-- ======================= MENU ======================= -->
+<section id="menu" class="overlay">
+  <div class="menu-inner">
+    <header class="title">
+      <div class="line-badge">JU</div>
+      <div>
+        <h1>宇都宮線 運転シミュレーター</h1>
+        <p class="sub">上野 → 宇都宮 109 km ・ 普通列車 ・ 全23駅</p>
+      </div>
+    </header>
+
+    <div class="cols">
+      <div class="col">
+        <h2>車両</h2>
+        <div id="vehList" class="veh-list"></div>
+      </div>
+      <div class="col">
+        <h2>運転区間・編成</h2>
+        <div class="row"><label>出発</label><select id="fromSel"></select></div>
+        <div class="row"><label>到着</label><select id="toSel"></select></div>
+        <div class="row"><label>両数</label><select id="carsSel"><option value="15">15両（グリーン車付）</option><option value="10">10両</option></select></div>
+        <p id="formNote" class="note"></p>
+
+        <h2>車内放送</h2>
+        <div class="row"><label>音源</label>
+          <select id="annMode">
+            <option value="file">添付の車内放送ファイル</option>
+            <option value="tts">音声合成</option>
+            <option value="off">なし</option>
+          </select>
+        </div>
+        <label class="file-btn">ファイルを選択（.m4a）<input id="annFile" type="file" accept="audio/*,.m4a"></label>
+        <p id="annStatus" class="note"></p>
+
+        <h2>画質</h2>
+        <label class="chk"><input id="shadowChk" type="checkbox"> 影を表示</label>
+
+        <button id="startBtn" class="start" disabled>読み込み中…</button>
+        <div id="bootLoad" class="boot-load"><div class="bar"><div id="loadBar"></div></div></div>
+      </div>
+    </div>
+
+    <details class="help">
+      <summary>操作方法</summary>
+      <table>
+        <tr><td>↑ / W / Z / ホイール上</td><td>力行側へ（ノッチを進める・ブレーキを緩める）</td></tr>
+        <tr><td>↓ / S / A / ホイール下</td><td>ブレーキ側へ</td></tr>
+        <tr><td>Space / N</td><td>ニュートラル</td></tr>
+        <tr><td>Q</td><td>常用最大ブレーキ</td></tr>
+        <tr><td>E / Backspace</td><td>非常ブレーキ</td></tr>
+        <tr><td>H（長押し）</td><td>警笛</td></tr>
+        <tr><td>C / V</td><td>視点切替（運転台・側面・後方上空・沿線）</td></tr>
+        <tr><td>Enter / F</td><td>停車中、発車時刻まで早送り</td></tr>
+        <tr><td>T</td><td>時刻表の表示</td></tr>
+        <tr><td>M / Esc</td><td>消音 / 一時停止</td></tr>
+        <tr><td>ドラッグ</td><td>運転台で見回す（ダブルクリックで正面）</td></tr>
+      </table>
+      <p class="note">停止位置目標「15」にぴったり止め、時刻表どおりに走らせるほど高得点。制限速度を超えると ATS-P が作動します。</p>
+    </details>
+  </div>
+</section>
+
+<section id="loading" class="overlay hidden"><div class="spinner"></div><p>路線を準備中…</p></section>
+
+<!-- ======================= HUD ======================= -->
+<section id="hud" class="hidden">
+  <div id="topBar">
+    <div id="routeStrip"></div>
+  </div>
+  <div id="topRight">
+    <div class="score-box"><span class="lbl">SCORE</span><span id="score">0</span></div>
+    <div class="lamps"><span id="atsLamp" class="lamp">ATS-P</span><span id="doorLamp" class="lamp">戸閉</span></div>
+    <div class="limit-box"><span class="lbl">制限</span><span id="limitNow" class="lim">120</span><span id="limitNext" class="lim-next"></span></div>
+    <div class="cam-box"><span id="vehName"></span> ・ <span id="camLabel"></span></div>
+  </div>
+
+  <div id="message"></div>
+
+  <div id="stopGauge"><div class="scale"><span class="mark"></span><span id="stopNeedle" class="needle"></span></div><div id="stopText"></div></div>
+
+  <div id="bottom">
+    <canvas id="speedo" width="260" height="260"></canvas>
+    <div id="notchBox">
+      <div id="notchBig">B7</div>
+      <div id="notches"></div>
+    </div>
+    <div id="infoBox">
+      <div class="row1"><span id="nextKind" class="kind">停車</span><span id="nextName" class="name">—</span></div>
+      <div class="grid">
+        <span class="lbl">停止位置まで</span><span id="nextDist" class="val big">--</span>
+        <span class="lbl">到着時刻</span><span id="nextArr" class="val">--</span>
+        <span class="lbl">現在時刻</span><span id="clock" class="val">--</span>
+        <span class="lbl"></span><span class="val small"><span id="delay"></span> <span id="nextDep"></span></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="touch">
+    <button id="btnPow">▲<small>力行</small></button>
+    <button id="btnN">N</button>
+    <button id="btnBrk">▼<small>ブレーキ</small></button>
+    <button id="btnEB" class="eb">EB</button>
+    <button id="btnHorn">警笛</button>
+    <button id="btnCam">視点</button>
+    <button id="btnSkip">早送り</button>
+    <button id="btnPause">Ⅱ</button>
+  </div>
+
+  <div id="ttBox" class="hidden">
+    <table><thead><tr><th>駅</th><th>着</th><th>発</th></tr></thead><tbody id="ttPanel"></tbody></table>
+  </div>
+</section>
+
+<section id="pause" class="overlay hidden">
+  <div class="dialog">
+    <h2>一時停止</h2>
+    <button id="resumeBtn" class="start">運転再開</button>
+    <button id="quitBtn" class="ghost">メニューへ戻る</button>
+  </div>
+</section>
+
+<section id="result" class="overlay hidden">
+  <div class="dialog wide">
+    <h2>運転終了</h2>
+    <div class="res-head"><div class="grade" id="resGrade">A</div><div><span class="lbl">SCORE</span><div id="resScore" class="res-score">0</div></div></div>
+    <table class="res-table"><thead><tr><th>駅</th><th>停止位置</th><th>時刻</th><th>得点</th></tr></thead><tbody id="resRows"></tbody></table>
+    <div class="btns"><button id="retryBtn" class="start">もう一度</button><button id="menuBtn" class="ghost">メニューへ</button></div>
+  </div>
+</section>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
