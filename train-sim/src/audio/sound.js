@@ -82,6 +82,17 @@ export class SoundEngine {
     const annHp = ctx.createBiquadFilter(); annHp.type = 'highpass'; annHp.frequency.value = 180;
     this.annBus.connect(annHp).connect(this.master);
 
+    // departure melody bus: platform speaker heard from the train (echo + muffling in the cab)
+    this.melBus = ctx.createGain();
+    this.melBus.gain.value = 0.9;
+    this.melFilter = ctx.createBiquadFilter(); this.melFilter.type = 'lowpass'; this.melFilter.frequency.value = 5000;
+    const melDelay = ctx.createDelay(1.0); melDelay.delayTime.value = 0.19;
+    const melFb = ctx.createGain(); melFb.gain.value = 0.28;
+    const melWet = ctx.createGain(); melWet.gain.value = 0.35;
+    this.melBus.connect(this.melFilter);
+    this.melFilter.connect(this.master);
+    this.melFilter.connect(melDelay); melDelay.connect(melFb).connect(melDelay); melDelay.connect(melWet).connect(this.master);
+
     this.ready = true;
   }
 
@@ -155,6 +166,7 @@ export class SoundEngine {
     this.body.frequency.setTargetAtTime(inCab ? 2600 : 9000, t, 0.1);
     this.humG.gain.setTargetAtTime(inCab ? 0.012 : 0.0, t, 0.1);
     this.fanG.gain.setTargetAtTime(inCab ? 0.02 : 0.004, t, 0.1);
+    if (this.melFilter) this.melFilter.frequency.setTargetAtTime(inCab ? 2400 : 7000, t, 0.1);
   }
 
   setMuted(m) {
@@ -296,6 +308,38 @@ export class SoundEngine {
       this.bell.o.stop(t + 0.3); this.bell.am.stop(t + 0.3);
       this.bell = null;
     }
+  }
+
+  /** original placeholder departure jingle (used when no melody file is loaded) */
+  fallbackMelody() {
+    if (!this.ready) return 0;
+    const t0 = this.ctx.currentTime + 0.05;
+    const N = { D5: 587.3, E5: 659.3, G5: 784, A5: 880, C6: 1046.5, D6: 1174.7, E6: 1318.5 };
+    const seq = ['E5', 'G5', 'A5', 'C6', 'A5', 'G5', 'E5', 'D5', 'E5', 'G5', 'C6', 'D6', 'E6', 'D6', 'C6', null];
+    const step = 0.2;
+    for (let r = 0; r < 2; r++) {
+      seq.forEach((n, i) => {
+        if (!n) return;
+        const when = t0 + (r * seq.length + i) * step;
+        this.marimba(N[n], when);
+      });
+    }
+    return seq.length * step * 2 + 0.6;
+  }
+
+  marimba(f, when) {
+    const ctx = this.ctx;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.08, when + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.9);
+    for (const [mul, a] of [[1, 1], [4, 0.25], [10, 0.06]]) {
+      const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * mul;
+      const og = ctx.createGain(); og.gain.value = a;
+      o.connect(og).connect(g);
+      o.start(when); o.stop(when + 1.0);
+    }
+    g.connect(this.melBus);
   }
 
   /** short chime (pattern approach / info) */

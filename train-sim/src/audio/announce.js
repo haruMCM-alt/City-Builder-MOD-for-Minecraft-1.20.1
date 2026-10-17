@@ -1,32 +1,35 @@
-// In-car announcements.
+// Clip playback from long user-supplied recordings.
 //
-// The recording itself is NOT part of this repository (it is someone else's work and
-// its creator asks to be contacted before reuse). The player loads it from:
+// The recordings themselves are NOT part of this repository (they are other people's
+// work; both creators ask to be contacted before reuse). They are loaded from:
 //   1. a file the user picks in the menu, or
-//   2. assets/audio/utsunomiya_announce.m4a if the user placed it there locally.
-// Cue points (seconds into that recording) are in announce-cues.js.
-// Without the file, a synthetic voice (speechSynthesis) reads equivalent text.
+//   2. assets/audio/<name>.m4a if the user placed it there locally (gitignored).
+// Cue points (seconds into each recording) are in announce-cues.js / melody-cues.js.
 
 import { CUES, EXPECTED_DURATION } from './announce-cues.js';
 
 export const LOCAL_AUDIO_URL = 'assets/audio/utsunomiya_announce.m4a';
+export const LOCAL_MELODY_URL = 'assets/audio/utsunomiya_melody.m4a';
 
-export class Announcer {
-  constructor(sound) {
+/** plays [start, end] segments of one long audio file through a Web Audio bus */
+export class ClipPlayer {
+  constructor(sound, busName, expected) {
     this.sound = sound;
-    this.mode = 'tts'; // 'file' | 'tts' | 'off'
+    this.busName = busName;
+    this.expected = expected;
     this.audio = null;
     this.srcNode = null;
     this.current = null; // { id, end }
     this.fileName = '';
     this.paused = false;
+    this.loading = null;
   }
 
-  async tryLocal() {
+  async tryLocal(url) {
     try {
-      const r = await fetch(LOCAL_AUDIO_URL, { method: 'HEAD' });
+      const r = await fetch(url, { method: 'HEAD' });
       if (!r.ok) return false;
-      await this.setSource(LOCAL_AUDIO_URL, 'assets/audio/utsunomiya_announce.m4a');
+      await this.setSource(url, url.split('/').pop());
       return true;
     } catch { return false; }
   }
@@ -46,9 +49,9 @@ export class Announcer {
         cleanup();
         this.audio = a;
         this.fileName = name;
-        this.mode = 'file';
-        this.durationWarning = Math.abs(a.duration - EXPECTED_DURATION) > 5;
+        this.durationWarning = Math.abs(a.duration - this.expected) > 5;
         this.srcNode = null;
+        this.onLoaded();
         resolve();
       };
       const bad = () => { cleanup(); reject(new Error('この音声ファイルを再生できませんでした。Chrome・Edge・Safari で開くか、mp3 に変換したファイルを選んでください。')); };
@@ -58,16 +61,81 @@ export class Announcer {
     });
   }
 
+  onLoaded() {}
+
   /** route the <audio> element through the Web Audio graph (after the context exists) */
   attach() {
     if (!this.audio || this.srcNode || !this.sound.ctx) return;
     try {
       this.srcNode = this.sound.ctx.createMediaElementSource(this.audio);
-      this.srcNode.connect(this.sound.annBus);
+      this.srcNode.connect(this.sound[this.busName]);
     } catch (e) {
-      console.warn('announcement routing failed; playing directly', e);
+      console.warn('audio routing failed; playing directly', e);
     }
   }
+
+  playRange(id, start, end) {
+    this.stopClip(true);
+    if (!this.audio) return 0;
+    this.attach();
+    this.audio.currentTime = start;
+    this.audio.volume = 1;
+    const p = this.audio.play();
+    if (p && p.catch) p.catch(() => {});
+    this.current = { id, end };
+    return end - start;
+  }
+
+  stopClip(quick = false) {
+    if (this.audio && !this.audio.paused) {
+      if (quick) this.audio.pause();
+      else this.fadeOut();
+    }
+    this.current = null;
+  }
+
+  fadeOut() {
+    const a = this.audio;
+    let v = a.volume;
+    const iv = setInterval(() => {
+      v -= 0.1;
+      if (v <= 0) { a.pause(); a.volume = 1; clearInterval(iv); } else a.volume = v;
+    }, 40);
+  }
+
+  get playing() {
+    if (!this.current) return false;
+    return this.audio && !this.audio.paused;
+  }
+
+  setPaused(p) {
+    this.paused = p;
+    if (this.audio && this.current) {
+      if (p) this.audio.pause(); else this.audio.play().catch(() => {});
+    }
+  }
+
+  /** call every frame: stops the clip at its end point */
+  update() {
+    if (this.current && !this.current.tts && this.audio && !this.paused) {
+      if (this.audio.currentTime >= this.current.end) {
+        this.audio.pause();
+        this.current = null;
+      }
+    }
+  }
+}
+
+/** in-car announcements, with a speech-synthesis fallback */
+export class Announcer extends ClipPlayer {
+  constructor(sound) {
+    super(sound, 'annBus', EXPECTED_DURATION);
+    this.mode = 'tts'; // 'file' | 'tts' | 'off'
+  }
+
+  onLoaded() { this.mode = 'file'; }
+
+  tryLocal() { return super.tryLocal(LOCAL_AUDIO_URL); }
 
   has(id) {
     if (this.mode === 'off') return false;
@@ -82,13 +150,7 @@ export class Announcer {
     if (this.mode === 'file' && this.audio) {
       const c = CUES[id];
       if (!c) return 0;
-      this.attach();
-      this.audio.currentTime = c[0];
-      this.audio.volume = 1;
-      const p = this.audio.play();
-      if (p && p.catch) p.catch(() => {});
-      this.current = { id, end: c[1] };
-      return c[1] - c[0];
+      return this.playRange(id, c[0], c[1]);
     }
     if (this.mode === 'tts' && 'speechSynthesis' in window) {
       const text = ttsText(id, ctx);
@@ -105,46 +167,23 @@ export class Announcer {
   }
 
   stop(quick = false) {
-    if (this.audio && !this.audio.paused) {
-      if (quick) this.audio.pause();
-      else this.fadeOut();
-    }
+    this.stopClip(quick);
     if ('speechSynthesis' in window) speechSynthesis.cancel();
-    this.current = null;
-  }
-
-  fadeOut() {
-    const a = this.audio;
-    let v = a.volume;
-    const iv = setInterval(() => {
-      v -= 0.1;
-      if (v <= 0) { a.pause(); a.volume = 1; clearInterval(iv); } else a.volume = v;
-    }, 40);
   }
 
   get playing() {
     if (!this.current) return false;
     if (this.current.tts) return speechSynthesis.speaking;
-    return this.audio && !this.audio.paused;
+    return super.playing;
   }
 
   setPaused(p) {
-    this.paused = p;
-    if (this.mode === 'file' && this.audio && this.current) {
-      if (p) this.audio.pause(); else this.audio.play().catch(() => {});
-    } else if (this.mode === 'tts' && 'speechSynthesis' in window) {
+    if (this.mode === 'tts' && 'speechSynthesis' in window) {
       if (p) speechSynthesis.pause(); else speechSynthesis.resume();
+      this.paused = p;
+      return;
     }
-  }
-
-  /** call every frame: stops the clip at its end point */
-  update() {
-    if (this.current && !this.current.tts && this.audio && !this.paused) {
-      if (this.audio.currentTime >= this.current.end) {
-        this.audio.pause();
-        this.current = null;
-      }
-    }
+    super.setPaused(p);
   }
 }
 

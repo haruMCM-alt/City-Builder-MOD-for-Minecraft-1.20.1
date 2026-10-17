@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Route } from './route.js';
 import { VEHICLES, DEFAULT_VEHICLE, CAR_LEN } from './vehicles.js';
 import { World } from './world.js';
@@ -7,6 +8,8 @@ import { TrainSet } from './trainmodel.js';
 import { TrainPhysics } from './physics.js';
 import { SoundEngine } from './audio/sound.js';
 import { Announcer } from './audio/announce.js';
+import { MelodyPlayer } from './audio/melody.js';
+import { MELODY_CLIPS } from './audio/melody-cues.js';
 import { buildTimetable, fmtTime } from './timetable.js';
 import { HUD } from './hud.js';
 import { Game } from './game.js';
@@ -23,6 +26,7 @@ const store = {
 const route = new Route();
 const sound = new SoundEngine();
 const announcer = new Announcer(sound);
+const melody = new MelodyPlayer(sound);
 const hud = new HUD();
 const gltfs = {};
 let renderer, scene, camera, sun, hemi;
@@ -40,6 +44,7 @@ const settings = {
   from: store.get('from', 0),
   to: store.get('to', route.stations.length - 1),
   annMode: store.get('annMode', 'file'),
+  melMode: store.get('melMode', 'on'),
   shadows: store.get('shadows', true),
 };
 if (!VEHICLES[settings.vehicle]) settings.vehicle = DEFAULT_VEHICLE;
@@ -70,10 +75,14 @@ function initRenderer() {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   $('view').appendChild(renderer.domElement);
   scene = new THREE.Scene();
+  // soft reflections for stainless bodies and glass
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.55;
   scene.fog = new THREE.Fog(0xc9d9e6, 250, 2300);
   camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.05, 6000);
   camera.rotation.order = 'YXZ';
-  hemi = new THREE.HemisphereLight(0xcfe3ff, 0x6b6250, 1.1);
+  hemi = new THREE.HemisphereLight(0xcfe3ff, 0x6b6250, 0.85);
   scene.add(hemi);
   sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
   sun.castShadow = true;
@@ -139,9 +148,24 @@ function buildMenu() {
       updateAnnStatus();
     } catch (err) { $('annStatus').textContent = err.message; }
   });
+  // departure melodies
+  const melSel = $('melMode');
+  melSel.value = settings.melMode;
+  melSel.addEventListener('change', () => { settings.melMode = melSel.value; store.set('melMode', settings.melMode); updateMelStatus(); });
+  $('melFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    $('melStatus').textContent = '読み込み中…';
+    try { await melody.loadFile(f); } catch (err) { $('melStatus').textContent = err.message; return; }
+    updateMelStatus();
+  });
+  $('melAssignBtn').addEventListener('click', () => { buildMelodyAssign(); $('melAssign').classList.remove('hidden'); });
+  $('melAssignClose').addEventListener('click', () => { $('melAssign').classList.add('hidden'); if (melody.audio) melody.audio.pause(); });
+  $('melAssignReset').addEventListener('click', () => { melody.resetAssign(); buildMelodyAssign(); });
   $('startBtn').addEventListener('click', startGame);
   updateFormationNote();
   updateAnnStatus();
+  updateMelStatus();
 }
 
 function updateFormationNote() {
@@ -150,6 +174,29 @@ function updateFormationNote() {
   const g = (f.match(/G/g) || []).length;
   const st = route.stations;
   $('formNote').textContent = `${f.length}両編成${g ? `（グリーン車 ${g}両）` : ''} ・ ${st[settings.from].name} → ${st[settings.to].name}  ${((st[settings.to].s - st[settings.from].s) / 1000).toFixed(1)} km`;
+}
+
+function updateMelStatus() {
+  const el = $('melStatus');
+  if (settings.melMode === 'off') el.textContent = '発車メロディなし';
+  else if (melody.audio) el.textContent = `✔ ${melody.fileName}${melody.durationWarning ? '（長さが想定と違います。区切り位置がずれる可能性があります）' : ''}`;
+  else el.textContent = '添付の発車メロディ集（.m4a）を選択してください。未選択の場合は仮の合成メロディを鳴らします。';
+  $('melAssignBtn').disabled = !melody.audio;
+}
+
+/** per-station melody picker with preview */
+function buildMelodyAssign() {
+  const list = $('melAssignList');
+  const opts = MELODY_CLIPS.map((c) => `<option value="${c.no}">No.${c.no}${c.retired ? '（使用終了）' : ''} ・ ${(c.end - c.start).toFixed(0)}秒</option>`).join('');
+  list.innerHTML = route.stations.slice(0, -1).map((st) => `
+    <div class="ma-row"><span class="ma-st">${st.name}</span>
+      <select data-st="${st.name}">${opts}</select>
+      <button class="ma-play" data-st="${st.name}" aria-label="${st.name}のメロディを試聴">▶</button></div>`).join('');
+  list.querySelectorAll('select').forEach((sel) => {
+    sel.value = String(melody.assign[sel.dataset.st]);
+    sel.addEventListener('change', () => melody.setAssign(sel.dataset.st, Number(sel.value)));
+  });
+  list.querySelectorAll('.ma-play').forEach((b) => b.addEventListener('click', () => melody.preview(melody.assign[b.dataset.st])));
 }
 
 function updateAnnStatus() {
@@ -175,6 +222,9 @@ async function startGame() {
   if (settings.annMode === 'off') announcer.mode = 'off';
   if (settings.annMode === 'file' && announcer.audio) announcer.mode = 'file';
   announcer.attach();
+  if (melody.loading) { try { await melody.loading; } catch { /* fallback jingle */ } }
+  melody.enabled = settings.melMode !== 'off';
+  melody.attach();
 
   const veh = VEHICLES[settings.vehicle];
   const formation = veh.formations[settings.cars] || veh.formations[15];
@@ -194,7 +244,7 @@ async function startGame() {
   mascon = cab.getObjectByName('mascon_handle');
   player.cars[0].userData.inner.add(cab);
   hud.setup(veh, tt);
-  game = new Game({ route, physics, timetable: tt, sound, announcer, hud, fromIdx: settings.from });
+  game = new Game({ route, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from });
   traffic = new Traffic();
   world.preload(physics.s);
   setCamMode('cab');
@@ -219,6 +269,7 @@ function teardown() {
     scene.remove(world.sky, world.ground, world.clouds);
   }
   announcer.stop(true);
+  melody.stopClip(true);
   sound.horn(false); sound.atsBell(false);
 }
 
@@ -300,8 +351,8 @@ function recolorKeihin(set) {
 // ---------------------------------------------------------------------------
 // cameras
 // ---------------------------------------------------------------------------
-const CAMS = ['cab', 'side', 'chase', 'trackside'];
-const CAM_LABEL = { cab: '運転台', side: '側面', chase: '後方上空', trackside: '沿線' };
+const CAMS = ['cab', 'front', 'side', 'chase', 'trackside'];
+const CAM_LABEL = { cab: '運転台', front: '正面', side: '側面', chase: '後方上空', trackside: '沿線' };
 function setCamMode(m) {
   camMode = m;
   $('camLabel').textContent = CAM_LABEL[m];
@@ -340,6 +391,12 @@ function updateCamera(dt) {
     camera.position.set(p.x, 3.2, p.z);
     route.pose(physics.s - 22, 0, q);
     camera.lookAt(q.x, 2.0, q.z);
+  } else if (camMode === 'front') {
+    // ahead of the train, like a platform-end photo of the cab
+    route.pose(physics.s + 15, 3.4, p);
+    camera.position.set(p.x, 2.0, p.z);
+    route.pose(physics.s - 9, 0.2, q);
+    camera.lookAt(q.x, 1.9, q.z);
   } else if (camMode === 'chase') {
     route.pose(physics.s - 70, 0, p);
     camera.position.set(p.x, 22, p.z);
@@ -348,7 +405,7 @@ function updateCamera(dt) {
   } else if (camMode === 'trackside') {
     if (!tracksideCam || physics.s > tracksideCam.s + physics.len + 40) {
       const s = physics.s + 260 + Math.random() * 120;
-      route.pose(s, 9 + Math.random() * 6, p);
+      route.pose(s, 6.2 + Math.random() * 1.2, p);
       tracksideCam = { s, x: p.x, z: p.z, y: 1.6 + Math.random() * 2 };
     }
     camera.position.set(tracksideCam.x, tracksideCam.y, tracksideCam.z);
@@ -429,6 +486,7 @@ function togglePause() {
   paused = !paused;
   $('pause').classList.toggle('hidden', !paused);
   announcer.setPaused(paused);
+  melody.setPaused(paused);
   if (sound.ctx) paused ? sound.ctx.suspend() : sound.ctx.resume();
 }
 
@@ -500,6 +558,7 @@ function simStep(dt) {
   }
   sound.update({ v: physics.kmh, torque: physics.torque, brake: physics.brake, curvature: route.curvature(physics.s) });
   announcer.update();
+  melody.update();
   traffic.update(dt, physics.s);
 }
 
@@ -567,6 +626,7 @@ async function boot() {
   }
   // auto-detect a locally placed announcement file
   if (!announcer.audio && (await announcer.tryLocal())) updateAnnStatus();
+  if (!melody.audio && (await melody.tryLocal())) updateMelStatus();
 }
 
 boot();
@@ -574,7 +634,7 @@ boot();
 // debugging handle (used by automated tests)
 window.__sim = {
   get physics() { return physics; }, get game() { return game; }, get world() { return world; },
-  setCamMode, route, sound, announcer, simStep, updateView,
+  setCamMode, route, sound, announcer, melody, simStep, updateView,
   /** fast-forward the logic by `sec` seconds in fixed steps (no rendering) */
   advance(sec, dt = 0.05, each) { for (let t = 0; t < sec && !game.finished; t += dt) { if (each) each(); simStep(dt); } updateView(0.016); },
 };

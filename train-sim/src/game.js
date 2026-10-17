@@ -6,12 +6,13 @@ import { CUES } from './audio/announce-cues.js';
  * triggering the in-car announcements.
  */
 export class Game {
-  constructor({ route, physics, timetable, sound, announcer, hud, fromIdx }) {
+  constructor({ route, physics, timetable, sound, announcer, melody, hud, fromIdx }) {
     this.route = route;
     this.ph = physics;
     this.tt = timetable;
     this.sound = sound;
     this.ann = announcer;
+    this.melody = melody;
     this.hud = hud;
     this.fromIdx = fromIdx; // index in the full station list of tt[0]
     this.ti = 1; // index into tt of the target (next) stop
@@ -41,11 +42,28 @@ export class Game {
   }
 
   /** skip waiting at a station */
+  /** how long the melody runs here: the whole clip at the origin, cut to fit short stops */
+  melodyLength() {
+    if (!this.melody || !this.melody.enabled) return 0;
+    const row = this.current;
+    const full = this.melody.durationFor(row.station.name);
+    if (row.arr == null) return full;
+    return Math.min(full, Math.max(6, row.dep - row.arr - 17));
+  }
+
   skipWait() {
     if (this.state === 'dwell' && this.current.dep != null) {
-      const t = this.current.dep - 22;
+      const ml = this.melodyLength();
+      const t = this.current.dep - 12 - (ml ? ml + 1.5 : 0) - 4;
       if (this.clock < t) this.clock = t;
     }
+  }
+
+  startClosing() {
+    this.state = 'closing';
+    this.stateT = 0;
+    this.sound.doorChime();
+    this.hud.message('ドアが閉まります', 'info', 2);
   }
 
   update(dt) {
@@ -60,11 +78,19 @@ export class Game {
         this.introPlayed = true;
         if (this.fromIdx === 0 && ann.has('intro')) ann.play('intro', {});
       }
-      if (row.dep != null && this.clock >= row.dep - 12) {
-        this.state = 'closing';
-        this.stateT = 0;
-        this.sound.doorChime();
-        this.hud.message('ドアが閉まります', 'info', 2);
+      const ml = row.dep != null ? this.melodyLength() : 0;
+      if (row.dep != null && this.clock >= row.dep - 12 - (ml ? ml + 1.5 : 0)) {
+        if (ml) {
+          // platform departure melody first, then the door chime
+          this.melDur = Math.min(this.melody.playFor(row.station.name) || ml, ml);
+          this.state = 'melody';
+          this.stateT = 0;
+        } else this.startClosing();
+      }
+    } else if (this.state === 'melody') {
+      if (this.stateT >= this.melDur) {
+        if (this.melody.playing) this.melody.stopClip(false); // the conductor releases the button
+        this.startClosing();
       }
     } else if (this.state === 'closing') {
       if (this.stateT > 2.2 && ph.doorsOpen) { this.sound.doorMove(false); ph.doorsOpen = 'closing'; }
@@ -202,11 +228,11 @@ export class Game {
       if (left >= 0) delay = Math.min(0, delay);
     } else if (this.current && this.current.dep != null) {
       delay = this.clock - this.current.dep;
-      if (this.state === 'dwell' || this.state === 'closing') delayText = '';
+      if (this.state === 'dwell' || this.state === 'closing' || this.state === 'melody') delayText = '';
       else delayText = delay > 3 ? `発車 ${Math.round(delay)}秒遅れ` : '';
     }
     let depText = '';
-    if (this.state === 'dwell' || this.state === 'closing') depText = `発車 ${fmtTime(this.current.dep)}`;
+    if (this.state === 'dwell' || this.state === 'closing' || this.state === 'melody') depText = `発車 ${fmtTime(this.current.dep)}`;
     return { dist, delay, delayText, depText, next: tgt, terminal: this.terminal, targetIdx: this.ti, running: this.state === 'running' };
   }
 }

@@ -51,6 +51,19 @@
         <label class="file-btn">ファイルを選択（.m4a）<input id="annFile" type="file" accept="audio/*,.m4a"></label>
         <p id="annStatus" class="note"></p>
 
+        <h2>発車メロディ</h2>
+        <div class="row"><label>音源</label>
+          <select id="melMode">
+            <option value="on">添付の発車メロディ集</option>
+            <option value="off">なし</option>
+          </select>
+        </div>
+        <div class="file-row">
+          <label class="file-btn">ファイルを選択（.m4a）<input id="melFile" type="file" accept="audio/*,.m4a"></label>
+          <button id="melAssignBtn" class="small-btn" disabled>駅ごとの割り当て</button>
+        </div>
+        <p id="melStatus" class="note"></p>
+
         <h2>画質</h2>
         <label class="chk"><input id="shadowChk" type="checkbox"> 影を表示</label>
 
@@ -68,7 +81,7 @@
         <tr><td>Q</td><td>常用最大ブレーキ</td></tr>
         <tr><td>E / Backspace</td><td>非常ブレーキ</td></tr>
         <tr><td>H（長押し）</td><td>警笛</td></tr>
-        <tr><td>C / V</td><td>視点切替（運転台・側面・後方上空・沿線）</td></tr>
+        <tr><td>C / V</td><td>視点切替（運転台・正面・側面・後方上空・沿線）</td></tr>
         <tr><td>Enter / F</td><td>停車中、発車時刻まで早送り</td></tr>
         <tr><td>T</td><td>時刻表の表示</td></tr>
         <tr><td>M / Esc</td><td>消音 / 一時停止</td></tr>
@@ -127,6 +140,15 @@
 
   <div id="ttBox" class="hidden">
     <table><thead><tr><th>駅</th><th>着</th><th>発</th></tr></thead><tbody id="ttPanel"></tbody></table>
+  </div>
+</section>
+
+<section id="melAssign" class="overlay hidden">
+  <div class="dialog wide">
+    <h2>発車メロディの割り当て</h2>
+    <p class="note">録音には駅名が入っていないため、初期値は収録順からの推定です。▶で試聴して、各駅で宇都宮方面へ発車するときに鳴らす曲を選んでください（このブラウザに保存されます）。</p>
+    <div id="melAssignList" class="ma-list"></div>
+    <div class="btns"><button id="melAssignReset" class="ghost">初期値に戻す</button><button id="melAssignClose" class="start">閉じる</button></div>
   </div>
 </section>
 

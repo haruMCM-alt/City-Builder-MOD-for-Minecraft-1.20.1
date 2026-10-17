@@ -4,3 +4,4 @@ assets/audio/*
 
 # Blender backup files
 *.blend1
+__pycache__/
