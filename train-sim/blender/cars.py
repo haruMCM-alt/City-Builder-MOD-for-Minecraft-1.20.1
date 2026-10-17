@@ -51,7 +51,7 @@ E231 = Series(
     # side livery: (z0, z1, material, skip_doors)
     # side bands continue the front bands at the same height (measured on the face)
     side_zones=[(1.47, 1.65, "green", True), (1.65, 1.79, "orange", True), (2.87, 3.00, "green", False)],
-    crew_mat="door",
+    crew_mat="crew",                 # the crew door is painted green (itreni side photos)
     nose_r=0.30, rake=(1.95, 0.10),
     front_zones=[(1.05, 1.22, "body"), (1.22, 1.45, "gfrp"), (1.45, 1.52, "body"), (1.52, 1.76, "green"),
                  (1.76, 1.86, "orange"), (1.86, 1.98, "body"), (1.98, 3.30, "gfrp"), (3.30, 9, "body")],
@@ -83,14 +83,14 @@ S211 = Series(
     doors=DOORS3, door_w=1.30, door_z=(1.10, 2.86),
     win_z=(1.86, 2.66), win_r=0.03,
     # orange over green below the windows, orange line along the top
-    side_zones=[(1.58, 1.68, "green", True), (1.68, 1.80, "orange", True), (2.84, 2.96, "orange", True)],
+    side_zones=[(1.48, 1.62, "green", True), (1.62, 1.80, "orange", True), (2.84, 2.96, "orange", True)],
     crew_mat="door",
     nose_r=0.12, rake=(2.0, 0.04),
     # white painted face: green + orange band carrying the light units
     front_zones=[(1.05, 1.48, "white"), (1.48, 1.60, "green"), (1.60, 1.82, "orange"), (1.82, 9, "white")],
     corner_zones=[(1.05, 1.48, "white"), (1.48, 1.60, "green"), (1.60, 1.82, "orange"), (1.82, 3.10, "white")],
     front_nx=0.6,
-    front="211", skirt="small211",
+    front="211", skirt="s211v4",
     panto="single", ac="au75s", green=True,
 )
 
@@ -101,7 +101,7 @@ S115 = Series(
     doors=DOORS3, door_w=1.10, door_z=(1.12, 2.86),
     win_z=(1.84, 2.62), win_r=0.03,
     # 湘南色: green lower body, orange from the window line up, green line at the roof edge
-    side_zones=[(1.05, 1.64, "paint_green", False), (1.64, 2.94, "paint_orange", False), (2.94, 3.00, "paint_green", False)],
+    side_zones=[(1.05, 1.74, "paint_green", False), (1.74, 3.00, "paint_orange", False)],
     crew_mat="paint_orange",
     door_mat="paint_orange",
     nose_r=0.20, rake=(2.95, 0.10),
@@ -930,6 +930,19 @@ def add_logo(extra, S, coll, text, y, z, size):
 
 def skirt(mb, S, M):
     x0 = H - 0.05
+    if S.skirt == "s211v4":
+        # 211: wide light-grey plate, shallow V bottom, side wings
+        outline = [(-1.22, 0.60), (1.22, 0.60), (1.22, 0.30), (0.45, 0.23), (0.0, 0.20), (-0.45, 0.23), (-1.22, 0.30)]
+        xs = H + 0.02
+
+        def ax(u, v, d):
+            return (xs + d + (0.60 - v) * 0.06, u, v)
+        prism(mb, outline, ax, -0.05, 0.0, M["light_grey"])
+        for s in (-1, 1):
+            mb.poly([ax(s * 1.22, 0.60, -0.05), (xs - 0.6, s * 1.15, 0.60), (xs - 0.6, s * 1.10, 0.35), ax(s * 1.22, 0.30, -0.05)], M["light_grey"], (0, s, 0))
+            mb.beam((xs - 0.6, s * 0.95, 0.92), (xs - 0.05, s * 1.05, 0.58), 0.06, 0.08, M["dkgrey"])
+            mb.box((xs - 0.25, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])
+        return
     if S.skirt == "e233v4":
         # E233-3000: big white plate with a deep U notch from the top, slots on the right wing
         outline = [(-1.30, 0.63), (-0.70, 0.63), (-0.33, 0.30), (0.33, 0.30), (0.70, 0.63), (1.30, 0.63),
@@ -1113,8 +1126,9 @@ def make_green(S, M, coll):
     endA = section(A0, A1, 1.05, 3.03, 3.62, lvA, green_side, "green_endA")
     endB = section(B0, B1, 1.05, 3.03, 3.62, lvA, green_side, "green_endB")
     # double-deck centre: lofted with rounded drop at both ends (bottom and roof)
-    lvD = sorted({1.22, 1.88, 2.02, 2.32, 2.40, 2.56, 3.32})
-    zones_D = [(2.02, 2.32, "green", False), (2.32, 2.40, "orange", False)]
+    lvD = sorted({1.22, 1.29, 1.95, 2.05, 2.44, 2.53, 2.60, 3.32})
+    # thick green band with orange on top between the decks (itreni side photos)
+    zones_D = [(2.05, 2.44, "green", False), (2.44, 2.53, "orange", False)]
     TD = Series(**{**S.__dict__, "side_zones": zones_D})
     mbD = MB("green_dd")
     rows = []
@@ -1144,7 +1158,7 @@ def make_green(S, M, coll):
     winA = [(-8.95, 2.28, 0.95, 0.82, 0.10), (-7.85, 2.28, 0.95, 0.82, 0.10), (-6.75, 2.28, 0.95, 0.82, 0.10)]
     dwin = [(-5.35, 2.42, 0.42, 0.78, 0.05), (8.05, 2.42, 0.42, 0.78, 0.05)]
     up = [(-3.17 + k * 2.26, 2.94, 2.00, 0.72, 0.16) for k in range(5)]
-    low = [(-3.17 + k * 2.26, 1.55, 1.95, 0.62, 0.08) for k in range(5)]
+    low = [(-3.17 + k * 2.26, 1.62, 1.95, 0.64, 0.08) for k in range(5)]
     hollow(endA, SA, M, coll, A0 + 0.08, A1 - 0.06, lv=lvA)
     hollow(endB, SA, M, coll, B0 + 0.06, B1 - 0.08, lv=lvA)
     DI0, DI1 = D0 + 0.62, D1 - 0.62

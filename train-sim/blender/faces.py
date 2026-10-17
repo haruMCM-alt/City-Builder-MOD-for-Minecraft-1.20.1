@@ -39,7 +39,7 @@ E231_FACE = dict(
     levels=[1.10, 1.24, 1.30, 1.40, 1.52, 1.60, 1.70, 1.80, 1.90, 2.00, 2.10, 2.30, 2.50, 2.70, 2.90],
     cols=28,
     # cab side: crew door with a tall window, narrow cab window behind the face corner
-    cab_side=dict(crew=(8.20, 8.80, 1.14, 2.90), door_windows=[(8.50, 2.36, 0.36, 0.74, 0.04)], windows=[(9.06, 2.40, 0.36, 0.80, 0.05)]),
+    cab_side=dict(crew=(8.20, 8.80, 1.14, 2.90), door_windows=[(8.50, 2.36, 0.36, 0.74, 0.04)], windows=[(8.98, 2.42, 0.48, 0.66, 0.05)]),
 )
 
 
@@ -144,8 +144,112 @@ def features_e233(det, S, M, fp, fr, extra, add_logo):
     det.box((fp(0, 0.96)[0] - 0.07, 0, 0.96), (0.14, 2.70, 0.14), M["silver"])
     return [(0.28, 2.06, -0.66, 2.33), (0.92, 2.06, -0.06, 2.33)]
 
+# ---------------------------------------------------------------------------
+# 211-3000 (measured from a frontal photo, ≈ 4.3 mm/px)
+# ---------------------------------------------------------------------------
+S211_FACE = dict(
+    profile=[(1.00, 0.000), (3.30, 0.000), (3.60, 0.030)],   # flat, upright face
+    plan_d=0.03, plan_e=2.0, plan_w=1.45,
+    corner_r=0.12,
+    levels=[1.10, 1.21, 1.48, 1.62, 1.63, 1.77, 1.91, 2.04, 2.30, 2.60, 2.90, 3.10, 3.28],
+    cols=30,
+    cab_side=dict(crew=(8.25, 8.85, 1.14, 2.86), door_windows=[(8.55, 2.36, 0.36, 0.72, 0.03)], windows=[(9.18, 2.40, 0.42, 0.72, 0.03)]),
+)
+
+
+def paint_211(P: Painter, S):
+    P.col[:] = 0
+    P.fill(P.sd_band(-9, 9), "#e7e7e2", 0.40, 0.0)                    # cream-white painted face
+    P.fill(P.sd_rrect(-0.47, 0.46, 0.5, 4.0, 0.0), STAINLESS, 0.30, 0.85)   # stainless centre column
+    for s in (-1, 1):
+        y0, y1 = sorted((s * 0.49, s * 1.40))
+        fr = P.sd_rrect(y0, y1, 2.04, 3.59, 0.10)
+        P.fill(fr, BLACK_FRP, 0.15, 0.05)
+        P.fill(P.sd_rrect(y0 + 0.025, y1 - 0.025, 2.07, 3.56, 0.08), BLACK_GLASS, 0.03, 0.0)
+        # orange band carrying the lamp housings, green below (not across the door)
+        P.fill(P.sd_rrect(y0 - 0.02 if s < 0 else y0, y1 + 0.02 if s > 0 else y1, 1.63, 1.91, 0.0), ORANGE, 0.4, 0.0)
+        P.fill(P.sd_rrect(y0 - 0.02 if s < 0 else y0, y1 + 0.02 if s > 0 else y1, 1.48, 1.62, 0.0), "#1f8a5a", 0.4, 0.0)
+        h0, h1 = sorted((s * 0.73, s * 1.31))
+        P.fill(P.sd_rrect(h0, h1, 1.65, 1.89, 0.03), "#8d9093", 0.35, 0.6)
+    # destination roll-sign window above the gangway door
+    P.fill(P.sd_rrect(-0.33, 0.32, 3.28, 3.56, 0.03), BLACK_GLASS, 0.05, 0.0)
+    # gangway door: seam, window with rubber gasket
+    P.outline(P.sd_rrect(-0.36, 0.36, 1.21, 3.10, 0.05), 0.010, "#3c3f42", 0.5, 0.3)
+    w = P.sd_rrect(-0.30, 0.30, 2.30, 3.04, 0.06)
+    P.fill(w, "#151617", 0.5, 0.0)
+    P.fill(P.sd_rrect(-0.28, 0.28, 2.32, 3.02, 0.05), BLACK_GLASS, 0.03, 0.0)
+    P.outline(P.sd_band(1.04, 9), 0.006, "#6a6d70", 0.5, 0.2)
+    P.grime(1.20, 0.22)
+
+
+def features_211(det, S, M, fp, fr, extra, add_logo):
+    for s in (-1, 1):
+        det.cyl(fp(s * 0.91, 1.77, 0.010), (1, 0, 0), 0.085, 0.02, M["chrome"], seg=20)
+        det.cyl(fp(s * 0.91, 1.77, 0.021), (1, 0, 0), 0.072, 0.004, M["head"], seg=20)
+        det.cyl(fp(s * 1.16, 1.77, 0.010), (1, 0, 0), 0.065, 0.02, M["chrome"], seg=16)
+        det.cyl(fp(s * 1.16, 1.77, 0.021), (1, 0, 0), 0.052, 0.004, M["tail"], seg=16)
+        det.box(fp(s * 0.66, 1.28, 0.03), (0.06, 0.50, 0.05), M["light_grey"])          # steps
+    fr(det, M["dest"], -0.29, 0.29, 3.31, 3.53, eps=0.004)
+    add_logo("JR", 0.92, 3.29, 0.20)
+    for z in (2.18, 1.55):
+        det.box(fp(0.0, z, 0.02), (0.03, 0.28, 0.02), M["chrome"])                       # door handrails
+    det.box((fp(0, 0.99)[0] - 0.05, 0, 0.99), (0.10, 2.80, 0.10), M["light_grey"])
+    return [(-0.60, 2.60, -0.72, 2.95), (0.60, 2.60, 0.72, 2.95)]
+
+# ---------------------------------------------------------------------------
+# 115 (湘南色, 1000番台; proportions from frontal / 3/4 photos)
+# ---------------------------------------------------------------------------
+P_ORANGE = "#f08312"
+P_GREEN = "#285f3c"
+S115_FACE = dict(
+    # upright lower face, the window band leans back a little, green cap curves to the roof
+    profile=[(1.00, 0.000), (2.40, 0.000), (3.20, 0.070), (3.40, 0.140), (3.66, 0.300)],
+    plan_d=0.16, plan_e=2.2, plan_w=1.45,
+    corner_r=0.13,
+    levels=[1.10, 1.30, 1.50, 1.74, 1.95, 2.12, 2.30, 2.41, 2.52, 2.80, 3.05, 3.20, 3.30],
+    cols=30,
+    cab_side=dict(crew=(8.30, 8.85, 1.14, 2.86), door_windows=[(8.575, 2.36, 0.34, 0.70, 0.03)], windows=[(9.20, 2.45, 0.40, 0.66, 0.03)]),
+)
+
+
+def paint_115(P: Painter, S):
+    P.col[:] = 0
+    P.fill(P.sd_band(-9, 9), P_ORANGE, 0.35, 0.0)
+    P.fill(P.sd_band(3.30, 9), P_GREEN, 0.35, 0.0)                    # green cap (おでこ)
+    P.fill(P.sd_band(-9, 1.74), P_GREEN, 0.35, 0.0)                   # green lower front
+    # gangway door (orange, crossing the green) with its window
+    door = P.sd_rrect(-0.36, 0.36, 1.12, 3.26, 0.04)
+    P.fill(door, P_ORANGE, 0.35, 0.0)
+    P.outline(door, 0.012, "#5a3a1c", 0.6, 0.0)
+    for (y0, y1, z0, z1, r) in ((-1.37, -0.43, 2.46, 3.24, 0.07), (0.43, 1.37, 2.46, 3.24, 0.07), (-0.30, 0.30, 2.44, 3.18, 0.05)):
+        g = P.sd_rrect(y0, y1, z0, z1, r)
+        P.fill(g, "#2a2b2c", 0.6, 0.0)                                 # H-rubber gasket
+        P.fill(P.sd_rrect(y0 + 0.035, y1 - 0.035, z0 + 0.035, z1 - 0.035, r * 0.6), BLACK_GLASS, 0.03, 0.0)
+    P.fill(P.sd_band(2.40, 2.42), "#b06a25", 0.4, 0.0)                 # moulding under the windows
+    P.outline(P.sd_band(1.74, 9), 0.004, "#20301f", 0.5, 0.0)
+    P.grime(1.30, 0.30)
+
+
+def features_115(det, S, M, fp, fr, extra, add_logo):
+    for s in (-1, 1):
+        det.cyl(fp(s * 0.88, 2.12, 0.02), (1, 0, 0), 0.115, 0.04, M["chrome"], seg=24)
+        det.cyl(fp(s * 0.88, 2.12, 0.042), (1, 0, 0), 0.090, 0.005, M["head"], seg=24)
+        det.cyl(fp(s * 0.55, 2.12, 0.015), (1, 0, 0), 0.075, 0.03, M["paint_orange"], seg=16)   # jumper cover
+        det.cyl(fp(s * 0.88, 1.50, 0.015), (1, 0, 0), 0.075, 0.03, M["chrome"], seg=18)
+        det.cyl(fp(s * 0.88, 1.50, 0.031), (1, 0, 0), 0.058, 0.004, M["tail"], seg=18)
+        det.box(fp(s * 0.60, 2.70, 0.03), (0.04, 0.03, 0.40), M["chrome"])                       # handrails
+    # protruding destination box on the forehead
+    x = fp(0, 3.46)[0]
+    det.box((x - 0.04, 0, 3.46), (0.16, 0.70, 0.30), M["paint_green"])
+    det.poly([(x + 0.041, -0.30, 3.34), (x + 0.041, 0.30, 3.34), (x + 0.041, 0.30, 3.58), (x + 0.041, -0.30, 3.58)], M["dest"], (1, 0, 0))
+    det.box(fp(0.0, 1.30, 0.06), (0.12, 0.44, 0.10), M["paint_orange"])                         # door step
+    det.box((fp(0, 0.99)[0] - 0.05, 0, 0.99), (0.10, 2.70, 0.10), M["dkgrey"])
+    return [(-0.55, 2.58, -0.95, 2.72), (0.95, 2.58, 0.55, 2.72)]
+
 
 FACES = {
     "e231": (E231_FACE, paint_e231, features_e231),
     "e233": (E233_FACE, paint_e233, features_e233),
+    "211": (S211_FACE, paint_211, features_211),
+    "115": (S115_FACE, paint_115, features_115),
 }

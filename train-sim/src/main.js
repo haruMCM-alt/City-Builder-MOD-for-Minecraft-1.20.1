@@ -274,7 +274,7 @@ async function startGame() {
   world = new World(renderer, scene, route, gltfs.env, settings.quality);
   const tt = buildTimetable(route, veh, formation.length, settings.from, settings.to);
   physics = new TrainPhysics(veh, formation.length);
-  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: '普通 宇都宮', destType: veh.id === 's115' ? 'roll' : 'led' });
+  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: '普通 宇都宮', destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led' });
   scene.add(player.group);
   // cab interior on the leading car
   cab = gltfs.cab.scene.clone(true);
