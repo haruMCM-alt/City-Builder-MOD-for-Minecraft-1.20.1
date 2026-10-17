@@ -12,6 +12,8 @@ import random
 import bpy
 from mathutils import Vector, Matrix
 from lib import MB, apply_boolean, delete, join, smooth, text_mesh, rounded_rect, prism
+from frontpaint import Painter, front_material
+import faces
 
 L = 19.5           # body length; couplers make it 20.0 m over couplers
 H = L / 2
@@ -111,6 +113,9 @@ S115 = Series(
 )
 
 SERIES = {"e231": E231, "e233": E233, "211": S211, "115": S115}
+for _k, _S in SERIES.items():
+    if _k in faces.FACES:
+        _S.face = faces.FACES[_k][0]
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +245,12 @@ class Layout:
                     self.windows.append(((a + b) / 2 + sx * (ww / 4 + 0.02), cz, ww / 2 - 0.04, wh, S.win_r))
             else:
                 self.windows.append(((a + b) / 2, cz, span - 0.25, wh, S.win_r))
-        if kind == "cab":
+        if kind == "cab" and getattr(S, "face", None) and S.face.get("cab_side"):
+            cs = S.face["cab_side"]
+            self.crew.append(cs["crew"])
+            self.door_windows += cs["door_windows"]
+            self.windows += cs["windows"]
+        elif kind == "cab":
             # crew door and cab side window
             self.crew.append((H - 1.62, H - 1.02, dz0 + 0.04, dz1))
             self.door_windows.append((H - 1.32, 2.30, 0.36, 0.62, 0.04))
@@ -284,19 +294,122 @@ def rake_at(S, z):
     return r * (z - z0) / (S.top - z0)
 
 
+# ---------------------------------------------------------------------------
+# v4 cab nose: measured side profile + plan curve, rounded edges, painted face
+# ---------------------------------------------------------------------------
+def _interp(table, z):
+    if z <= table[0][0]:
+        return table[0][1]
+    for (z0, a), (z1, b) in zip(table, table[1:]):
+        if z <= z1:
+            return a + (b - a) * (z - z0) / (z1 - z0)
+    return table[-1][1]
+
+
+def face_x(S, y, z):
+    """x of the cab face surface at (y, z): side-view setback + plan-view curve"""
+    F = S.face
+    set_c = _interp(F["profile"], z)
+    wref = F.get("plan_w", 1.45)
+    plan = F.get("plan_d", 0.0) * min(1.0, abs(y) / wref) ** F.get("plan_e", 2.0)
+    return H - set_c - plan
+
+
+def face_point(S, y, z, eps=0.0):
+    return (face_x(S, y, z) + eps, y, z)
+
+
+def build_nose(mb, S, M, rows_side, ids_side, lv, top_i, mf_side):
+    """Rounded-edge nose: rings that turn from the side surface onto the face,
+    then a structured grid over the face. Returns nothing (adds to mb)."""
+    F = S.face
+    r = F["corner_r"]
+    fm = M["FRONT_" + S.key]
+    K = F.get("rings", 6)
+    loop0, _ = profile(S, lv)
+    n = len(loop0)
+    rings = []
+    for k in range(K + 1):
+        th = k / K * math.pi / 2
+        d = r * (1 - math.cos(th))
+        lp, _ = profile(S, lv, inset=d) if d > 1e-6 else (loop0, None)
+        rings.append([(face_x(S, y, z) - r * (1 - math.sin(th)), y, z) for (y, z) in lp])
+
+    def mfn(c, nrm):
+        if nrm.z < -0.7:
+            return M["under"]
+        return fm
+    # side body end row -> ring 0 -> ... -> ring K
+    zc = (S.zb + S.top) / 2
+    loft(mb, [rows_side[-1], rings[0]], mf_side, zc)        # still on the side surface
+    ids = loft(mb, rings, mfn, zc)
+    ringK = ids[-1]
+    # face grid: horizontal rows between the mirrored contour points
+    N = F.get("cols", 24)
+    face_rows = []
+    for i in range(1, top_i + 1):
+        a, b = ringK[i], ringK[(n - i) % n]
+        if i == top_i or a == b:
+            face_rows.append([a])
+            break
+        pa, pb = mb.verts[a], mb.verts[b]
+        row = [a]
+        for j in range(1, N):
+            t = j / N
+            y = pa.y + (pb.y - pa.y) * t
+            z = pa.z + (pb.z - pa.z) * t
+            if i == 1 and j == N // 2:
+                row.append(ringK[0])       # bottom centre of the contour
+                continue
+            row.append(mb._v(face_point(S, y, z)))
+        row.append(b)
+        face_rows.append(row)
+    mi = mb._mi(fm)
+
+    def add(q):
+        P = [mb.verts[k] for k in q]
+        nrm = (P[1] - P[0]).cross(P[-1] - P[0])
+        if nrm.length < 1e-12 and len(q) == 4:
+            nrm = (P[2] - P[1]).cross(P[3] - P[1])
+        if nrm.x < 0:
+            q = list(reversed(q))
+        mb.faces.append((q, mi, True))
+    for ra, rb in zip(face_rows, face_rows[1:]):
+        if len(rb) == 1:
+            for j in range(len(ra) - 1):
+                add([ra[j], ra[j + 1], rb[0]])
+        else:
+            for j in range(len(ra) - 1):
+                add([ra[j], ra[j + 1], rb[j + 1], rb[j]])
+
+
 def build_body(S, M, car, coll, cab=False):
     mb = MB(f"{S.key}_{car.kind}_body")
     lv = levels_for(S)
+    if cab and getattr(S, "face", None):
+        extra = S.face.get("levels", [])
+        lv = sorted(set(lv) | {z for z in extra if S.zb < z < S.cant})
     loop, top_i = profile(S, lv)
     zc = (S.zb + S.top) / 2
     xs = sorted(car.x_stations() | {x for x in [-H + 0.0, H]})
     x_end = H - S.nose_r if cab else H
+    if cab and getattr(S, "face", None):
+        # the side surface ends where the corner rounding begins (its rearmost point)
+        x_end = min(face_x(S, y, z) for (y, z) in loop) - S.face["corner_r"] - 0.01
     xs = [x for x in xs if x <= x_end - 1e-3] + [x_end]
     rows = [[(x, y, z) for (y, z) in loop] for x in xs]
 
     def mf(c, n):
         return side_material(S, M, car, c, n)
 
+    if cab and getattr(S, "face", None):
+        ids = loft(mb, rows, mf, zc)
+        mb.faces.append((list(reversed(ids[0])), mb._mi(M[getattr(S, "body_mat", "body")]), False))
+        build_nose(mb, S, M, rows, ids, lv, top_i, mf)
+        body = mb.build(coll)
+        weld(body, 1e-6)
+        fix_normals(body)
+        return body
     if cab:
         # rounded nose: insets of the section, moved forward on a quarter circle
         K = 7
@@ -866,6 +979,10 @@ def make_car(S, M, kind, coll):
         return make_green(S, M, coll)
     car = Layout(S, kind)
     cab = kind == "cab"
+    if cab and getattr(S, "face", None) and ("FRONT_" + S.key) not in M:
+        P = Painter()
+        faces.FACES[S.key][1](P, S)
+        M["FRONT_" + S.key] = front_material(S.key, P)
     body = build_body(S, M, car, coll, cab=cab)
     xi0, xi1 = -H + 0.08, (H - 2.30 if cab else H - 0.08)
     hollow(body, S, M, coll, xi0, xi1)
@@ -888,7 +1005,25 @@ def make_car(S, M, kind, coll):
     gangway(det, M, -H, -1, top=S.door_z[1] + 0.05)
     coupler(det, M, -H, -1)
     extra = []
-    if cab:
+    if cab and getattr(S, "face", None):
+        def fr(mb, m, y0, y1, z0, z1, eps=0.006, r=0.0):
+            pts = rounded_rect((y0 + y1) / 2, (z0 + z1) / 2, y1 - y0, z1 - z0, r, n=3) if r > 0 else [(y0, z0), (y1, z0), (y1, z1), (y0, z1)]
+            mb.poly([face_point(S, y, z, eps) for (y, z) in pts], m, (1, 0, 0))
+
+        def logo(text, y, z, size):
+            ob = text_mesh(text, size, coll, name="logo", extrude=0.0015)
+            ob.data.materials.clear()
+            ob.data.materials.append(bpy.data.materials["logo_white"])
+            x = face_x(S, y, z) + 0.004
+            ob.matrix_world = Matrix.Translation((x, y, z)) @ Matrix.Rotation(math.radians(90), 4, "Z") @ Matrix.Rotation(math.radians(90), 4, "X")
+            extra.append(ob)
+        wipers = faces.FACES[S.key][2](det, S, M, lambda y, z, e=0.0: face_point(S, y, z, e), fr, extra, logo)
+        for (y0, z0, y1, z1) in wipers:
+            det.beam(face_point(S, y0, z0, 0.025), face_point(S, y1, z1, 0.025), 0.016, 0.014, M["black"])
+            det.cyl(face_point(S, y0, z0, 0.02), (1, 0, 0), 0.025, 0.03, M["black"], seg=10)
+        skirt(det, S, M)
+        coupler(det, M, H - 0.05, 1, front=True)
+    elif cab:
         front_details(det, S, M, coll, extra)
         skirt(det, S, M)
         coupler(det, M, H - 0.05, 1, front=True)

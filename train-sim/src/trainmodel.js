@@ -91,6 +91,13 @@ const UPGRADED = new WeakSet();
 function upgradeMaterial(m) {
   if (!m || UPGRADED.has(m)) return;
   UPGRADED.add(m);
+  if (m.name && m.name.startsWith('FRONT_')) {
+    // painted cab face: keep its maps, add the brushed finish + grime like the body
+    m.envMapIntensity = 1.1;
+    if (m.map) m.map.anisotropy = 8;
+    stainlessPatch(m, 0.5);
+    return;
+  }
   switch (m.name) {
     case 'stainless_body': case 'stainless_door': case 'silver_paint': case 'stainless_seam':
       m.envMapIntensity = 1.15;

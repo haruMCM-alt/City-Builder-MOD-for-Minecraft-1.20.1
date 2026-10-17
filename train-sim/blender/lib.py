@@ -263,6 +263,13 @@ class MB:
         up = Vector((0, 0, 1))
         for poly in me.polygons:
             name = self.mats[poly.material_index].name
+            if name.startswith("FRONT_"):
+                # front-projected UVs for the painted cab face (see frontpaint.py)
+                from frontpaint import uv_of
+                for li in poly.loop_indices:
+                    co = me.vertices[me.loops[li].vertex_index].co
+                    uv.data[li].uv = uv_of(co.y, co.z)
+                continue
             if name not in ("DEST", "STOPSIGN"):
                 for li in poly.loop_indices:
                     uv.data[li].uv = (0.0, 0.0)
