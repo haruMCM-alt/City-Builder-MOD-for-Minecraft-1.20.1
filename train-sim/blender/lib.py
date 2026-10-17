@@ -50,8 +50,9 @@ def materials():
         dkgrey=mat("dark_grey", (0.10, 0.10, 0.11), 0.2, 0.7),
         grey=mat("grey", (0.38, 0.39, 0.40), 0.3, 0.6),
         roof=mat("roof", (0.30, 0.31, 0.32), 0.2, 0.8),
-        orange=mat("shonan_orange", (0.9131, 0.2232, 0.0144), 0.0, 0.42),
-        green=mat("shonan_green", (0.0, 0.305, 0.0612), 0.0, 0.42),
+        # band colours sampled from sunlit reference photos (sRGB #f39a28 / #2fa860)
+        orange=mat("shonan_orange", (0.896, 0.323, 0.021), 0.0, 0.40),
+        green=mat("shonan_green", (0.028, 0.392, 0.117), 0.0, 0.40),
         paint_orange=mat("paint_orange", (0.8714, 0.2232, 0.007), 0.0, 0.35),
         paint_green=mat("paint_green", (0.0212, 0.1144, 0.0452), 0.0, 0.35),
         light_grey=mat("light_grey", (0.82, 0.83, 0.84), 0.1, 0.4),

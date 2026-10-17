@@ -49,13 +49,14 @@ E231 = Series(
     doors=DOORS4, door_w=1.30, door_z=(1.10, 2.90),
     win_z=(1.86, 2.70), win_r=0.07,
     # side livery: (z0, z1, material, skip_doors)
-    side_zones=[(1.58, 1.74, "green", True), (1.74, 1.81, "orange", True), (2.93, 3.00, "green", False)],
-    crew_mat="crew",
+    # side bands continue the front bands at the same height (measured on the face)
+    side_zones=[(1.47, 1.65, "green", True), (1.65, 1.79, "orange", True), (2.87, 3.00, "green", False)],
+    crew_mat="door",
     nose_r=0.30, rake=(1.95, 0.10),
     front_zones=[(1.05, 1.22, "body"), (1.22, 1.45, "gfrp"), (1.45, 1.52, "body"), (1.52, 1.76, "green"),
                  (1.76, 1.86, "orange"), (1.86, 1.98, "body"), (1.98, 3.30, "gfrp"), (3.30, 9, "body")],
     corner_zones=[(1.52, 1.76, "green"), (1.76, 1.86, "orange")],
-    front="e231", skirt="e231",
+    front="e231", skirt="e231v4",
     panto="single", ac="au726", green=True,
 )
 
@@ -65,12 +66,12 @@ E233 = Series(
     zb=1.05, cant=3.03, top=3.62, roof_e=0.62,
     doors=DOORS4, door_w=1.30, door_z=(1.10, 2.90),
     win_z=(1.88, 2.72), win_r=0.05,
-    side_zones=[(1.56, 1.72, "green", True), (1.72, 1.80, "orange", True), (2.93, 3.00, "green", False)],
+    side_zones=[(1.50, 1.66, "green", True), (1.66, 1.78, "orange", True), (2.87, 3.00, "green", False)],
     crew_mat="door",
     nose_r=0.42, rake=(1.40, 0.24), front_nx=0.80,
     front_zones=[(1.05, 1.36, "silver"), (1.36, 1.62, "green"), (1.62, 1.74, "orange"), (1.74, 3.42, "gfrp"), (3.42, 9, "white")],
     corner_zones=[(1.05, 1.36, "silver"), (1.36, 1.62, "green"), (1.62, 1.74, "orange"), (1.74, 3.50, "white")],
-    front="e233", skirt="e233",
+    front="e233", skirt="e233v4",
     panto="single", ac="au726", green=True,
 )
 
@@ -929,6 +930,41 @@ def add_logo(extra, S, coll, text, y, z, size):
 
 def skirt(mb, S, M):
     x0 = H - 0.05
+    if S.skirt == "e233v4":
+        # E233-3000: big white plate with a deep U notch from the top, slots on the right wing
+        outline = [(-1.30, 0.63), (-0.70, 0.63), (-0.33, 0.30), (0.33, 0.30), (0.70, 0.63), (1.30, 0.63),
+                   (1.26, 0.22), (1.05, 0.10), (-1.05, 0.10), (-1.26, 0.22)]
+        xs = H + 0.02
+
+        def ax(u, v, d):
+            return (xs + d + (0.63 - v) * 0.08, u, v)
+        prism(mb, outline, ax, -0.06, 0.0, M["skirtw"])
+        for k in range(3):
+            mb.box(ax(0.92, 0.49 - k * 0.05, 0.004), (0.01, 0.30, 0.022), M["black"])
+        for s in (-1, 1):
+            mb.poly([ax(s * 1.30, 0.63, -0.06), (xs - 0.75, s * 1.22, 0.63), (xs - 0.75, s * 1.10, 0.30), ax(s * 1.26, 0.22, -0.06)], M["skirtw"], (0, s, 0))
+            mb.beam((xs - 0.6, s * 0.95, 0.92), (xs - 0.05, s * 1.05, 0.60), 0.06, 0.08, M["dkgrey"])
+            mb.box((xs - 0.25, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])
+        mb.box((xs - 0.35, 0, 0.66), (0.3, 2.3, 0.06), M["dkgrey"])
+        return
+    if S.skirt == "e231v4":
+        # E231-1000: low white plate, chamfered outer corners, shallow V notch at the bottom,
+        # wrapping back at the sides; equipment and coupler visible above it
+        outline = [(-1.30, 0.63), (1.30, 0.63), (1.27, 0.42), (1.06, 0.13), (0.36, 0.13), (0.20, 0.25),
+                   (-0.20, 0.25), (-0.36, 0.13), (-1.06, 0.13), (-1.27, 0.42)]
+        xs = H + 0.02
+
+        def ax(u, v, d):
+            return (xs + d + (0.63 - v) * 0.10, u, v)
+        prism(mb, outline, ax, -0.05, 0.0, M["skirtw"])
+        for s in (-1, 1):
+            # side wings bending back towards the bogie
+            mb.poly([ax(s * 1.30, 0.63, -0.05), (xs - 0.75, s * 1.22, 0.63), (xs - 0.75, s * 1.10, 0.30), ax(s * 1.27, 0.42, -0.05)], M["skirtw"], (0, s, 0))
+            mb.beam((xs - 0.6, s * 0.95, 0.92), (xs - 0.05, s * 1.05, 0.60), 0.06, 0.08, M["dkgrey"])   # stays
+            mb.box((xs - 0.25, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])                        # air hose cocks
+            mb.cyl((xs - 0.12, s * 0.45, 0.70), (0, 0, 1), 0.025, 0.25, M["rubber"], seg=6)
+        mb.box((xs - 0.35, 0, 0.66), (0.3, 2.3, 0.06), M["dkgrey"])                                     # cross beam
+        return
     if S.skirt == "none":
         mb.box((x0 - 0.10, 0, 0.98), (0.20, 2.5, 0.12), M["dkgrey"])
         outline = [(-1.0, 0.90), (-0.9, 0.42), (0.9, 0.42), (1.0, 0.90), (0.30, 0.90), (0.30, 0.70), (-0.30, 0.70), (-0.30, 0.90)]
