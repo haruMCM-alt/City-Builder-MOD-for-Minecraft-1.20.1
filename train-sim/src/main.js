@@ -20,7 +20,7 @@ const SanitizeShader = {
     }`,
 };
 import { Route } from './route.js';
-import { VEHICLES, DEFAULT_VEHICLE, CAR_LEN } from './vehicles.js';
+import { VEHICLES, DEFAULT_VEHICLE, CAR_LEN, BOGIE_C } from './vehicles.js';
 import { World } from './world/world.js';
 import { TrainSet } from './trainmodel.js';
 import { TrainPhysics } from './physics.js';
@@ -31,6 +31,7 @@ import { MELODY_CLIPS } from './audio/melody-cues.js';
 import { buildTimetable, fmtTime } from './timetable.js';
 import { HUD } from './hud.js';
 import { CabDisplays } from './cabdisplays.js';
+import { loadFonts } from './displays.js';
 import { Game } from './game.js';
 
 const $ = (id) => document.getElementById(id);
@@ -51,8 +52,11 @@ const gltfs = {};
 let renderer, scene, camera, sun, hemi, composer = null, aoPass = null;
 let world = null, player = null, physics = null, game = null, traffic = null;
 let cab = null, mascon = null, cabLcd = null;
+let carIdx = 1, carLights = null;     // passenger view: which car, and its saloon lights
 // driver's eye (ref2/cab spec: high cab, eye 2.965 m above rail), car-local three.js coords
 const EYE = { x: 8.32, y: 2.965, z: -0.85, pitch: -0.07 };
+// standing passenger in the aisle of a motor car (floor 1.17 m above rail + 1.58 m eye), looking forward
+const CAR_EYE = { x: -4.6, y: 2.75, z: 0.32, pitch: -0.06 };
 let running = false, paused = false;
 let camMode = 'cab';
 const look = { yaw: 0, pitch: -0.05, drag: false, lx: 0, ly: 0 };
@@ -68,6 +72,7 @@ const settings = {
   melMode: store.get('melMode', 'on'),
   shadows: store.get('shadows', true),
   quality: store.get('quality', 'high'),
+  vvvf: store.get('vvvf', 'new'),
 };
 if (!VEHICLES[settings.vehicle]) settings.vehicle = DEFAULT_VEHICLE;
 
@@ -176,6 +181,9 @@ function buildMenu() {
     updateFormationNote();
   };
   fromSel.addEventListener('change', fix); toSel.addEventListener('change', fix);
+  const vvvfSel = $('vvvfSel');
+  vvvfSel.value = settings.vvvf;
+  vvvfSel.addEventListener('change', () => { settings.vvvf = vvvfSel.value; store.set('vvvf', settings.vvvf); });
   const qualSel = $('qualSel');
   qualSel.value = settings.quality;
   qualSel.addEventListener('change', () => { settings.quality = qualSel.value; store.set('quality', settings.quality); });
@@ -268,6 +276,7 @@ async function startGame() {
 
   const veh = VEHICLES[settings.vehicle];
   const formation = veh.formations[settings.cars] || veh.formations[15];
+  sound.altSound = settings.vvvf === 'old';
   sound.setVehicle(veh);
   setupComposer(settings.quality);
   renderer.shadowMap.enabled = settings.shadows;
@@ -277,8 +286,21 @@ async function startGame() {
   world = new World(renderer, scene, route, gltfs.env, settings.quality);
   const tt = buildTimetable(route, veh, formation.length, settings.from, settings.to);
   physics = new TrainPhysics(veh, formation.length);
-  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: '普通 宇都宮', destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led' });
+  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: '普通 宇都宮', destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', info: true });
   scene.add(player.group);
+  // the passenger view rides in the first motor car
+  carIdx = Math.max(1, formation.indexOf('P'));
+  if (carLights) carLights.removeFromParent();
+  carLights = new THREE.Group();
+  for (const x of [-6.5, -2.2, 2.2, 6.5]) {
+    const l = new THREE.PointLight(0xfff6ea, 2.2, 7.5, 1.6);
+    l.position.set(x, 3.25, 0);
+    carLights.add(l);
+  }
+  carLights.visible = false;
+  player.cars[carIdx].userData.inner.add(carLights);
+  sound.setTrain(formation, veh);
+  AXLES = axleOffsets(formation.length);
   // cab interior on the leading car
   cab = gltfs.cab.scene.clone(true);
   cab.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
@@ -331,7 +353,7 @@ class Traffic {
     this.timer = { up: 20, ex: 10 };
     this.pose = {};
   }
-  clear() { for (const t of this.list) t.set.dispose(); this.list = []; }
+  clear() { for (const t of this.list) { t.set.dispose(); if (t.voice) t.voice.dispose(); } this.list = []; }
   spawn(kind, s) {
     const pick = kind === 'keihin' ? 'e233' : ['e231', 'e233', 'e231', 's211'][Math.floor(Math.random() * 4)];
     const veh = VEHICLES[pick];
@@ -347,7 +369,8 @@ class Traffic {
     if (opts.recolor) recolorKeihin(set);
     scene.add(set.group);
     const track = kind === 'keihin' ? (x) => route.extraTracks(x)[1] ?? route.upOffset(x) - 8.8 : (x) => route.upOffset(x);
-    this.list.push({ set, s, v: (kind === 'keihin' ? 75 : 95 + Math.random() * 15) / 3.6, track, passed: false, kind });
+    const voice = sound.addTrain(kind === 'keihin' ? VEHICLES.e233 : veh, formation.length);
+    this.list.push({ set, s, v: (kind === 'keihin' ? 75 : 95 + Math.random() * 15) / 3.6, track, passed: false, kind, voice, axles: axleOffsets(formation.length), torque: Math.random() < 0.5 ? 0.3 : 0 });
   }
   update(dt, sp) {
     this.timer.up -= dt;
@@ -363,17 +386,34 @@ class Traffic {
         this.spawn('keihin', sp + 2400);
       }
     }
+    const lp = listenerS();
     for (const t of this.list) {
+      const prev = t.s;
       t.s -= t.v * dt;
       t.set.place(route, t.s, t.track, 0.004);
-      if (!t.passed && t.s < sp) {
-        t.passed = true;
-        sound.passBy(camMode === 'cab' ? 0.7 : 1);
+      // rail joints under every axle (this train runs toward -s; its cars trail behind at +s)
+      if (Math.abs(t.s - lp) < 700) {
+        for (const off of t.axles) {
+          const a = prev + off, b = t.s + off;
+          if (Math.floor(a / 25) !== Math.floor(b / 25)) {
+            const sj = Math.floor(a / 25) * 25;
+            const p = route.pose(sj, t.track(sj), this.pose);
+            sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, t.v * 3.6, false);
+          }
+        }
+      }
+      if (t.voice) {
+        const pos = [0.12, 0.5, 0.88].map((f) => {
+          const sv = t.s + t.set.length * f;
+          const p = route.pose(sv, t.track(sv), {});
+          return { x: p.x, y: p.y + 0.8, z: p.z };
+        });
+        t.voice.update(pos, t.v * 3.6, t.torque, { curvature: route.curvature(t.s), brake: 0 });
       }
     }
     this.list = this.list.filter((t) => {
       const keep = t.s + t.set.length > sp - 900 && t.s > route.sMin + 100;
-      if (!keep) t.set.dispose();
+      if (!keep) { t.set.dispose(); if (t.voice) t.voice.dispose(); }
       return keep;
     });
   }
@@ -389,21 +429,28 @@ function recolorKeihin(set) {
 // ---------------------------------------------------------------------------
 // cameras
 // ---------------------------------------------------------------------------
-const CAMS = ['cab', 'front', 'side', 'chase', 'trackside'];
-const CAM_LABEL = { cab: '運転台', front: '正面', side: '側面', chase: '後方上空', trackside: '沿線' };
+const CAMS = ['cab', 'car', 'front', 'side', 'chase', 'trackside'];
+const CAM_LABEL = { cab: '運転台', car: '車内', front: '正面', side: '側面', chase: '後方上空', trackside: '沿線' };
 function setCamMode(m) {
   camMode = m;
   $('camLabel').textContent = CAM_LABEL[m];
   const inCab = m === 'cab';
-  sound.setInCab(inCab);
+  sound.cut();
+  sound.setListenerMode(m === 'cab' ? 'cab' : m === 'car' ? 'car' : 'outside');
   if (player) player.setVisible(0, !inCab);
   if (cab) cab.visible = inCab;
+  if (carLights) carLights.visible = m === 'car';
   if (camera.parent) camera.parent.remove(camera);
   if (inCab) {
     player.cars[0].userData.inner.add(camera);
     camera.position.set(EYE.x, EYE.y, EYE.z);
     camera.fov = 60;
     look.yaw = 0; look.pitch = EYE.pitch;
+  } else if (m === 'car') {
+    player.cars[carIdx].userData.inner.add(camera);
+    camera.position.set(CAR_EYE.x, CAR_EYE.y, CAR_EYE.z);
+    camera.fov = 68;
+    look.yaw = 0; look.pitch = CAR_EYE.pitch;
   } else {
     scene.add(camera);
     camera.fov = 50;
@@ -415,14 +462,15 @@ function setCamMode(m) {
 function updateCamera(dt) {
   if (!player) return;
   const p = {}, q = {};
-  if (camMode === 'cab') {
+  if (camMode === 'cab' || camMode === 'car') {
     // head bob + joint jolts
+    const E = camMode === 'cab' ? EYE : CAR_EYE;
     bob.v += (-bob.y * 120 - bob.v * 9) * dt;
     bob.y += bob.v * dt;
     const t = performance.now() / 1000;
-    const vib = Math.min(1, physics.kmh / 100) * 0.006;
-    camera.position.y = EYE.y + bob.y + Math.sin(t * 13.1) * vib * 0.4;
-    camera.position.z = EYE.z + Math.sin(t * 2.3) * vib;
+    const vib = Math.min(1, physics.kmh / 100) * (camMode === 'car' ? 0.009 : 0.006);
+    camera.position.y = E.y + bob.y + Math.sin(t * 13.1) * vib * 0.4;
+    camera.position.z = E.z + Math.sin(t * 2.3) * vib;
     camera.rotation.set(look.pitch, -Math.PI / 2 + look.yaw, 0);
   } else if (camMode === 'side') {
     route.pose(physics.s - 12, 16, p);
@@ -449,6 +497,7 @@ function updateCamera(dt) {
       route.pose(s, lat, p);
       const gy = st === 'ground' || st === 'embankment' ? p.y : 0;
       tracksideCam = { s, x: p.x, z: p.z, y: gy + 1.6 + Math.random() * 2 };
+      sound.cut();
     }
     camera.position.set(tracksideCam.x, tracksideCam.y, tracksideCam.z);
     route.pose(physics.s - 15, 0, q);
@@ -495,12 +544,13 @@ function setupInput() {
   v.addEventListener('pointerdown', (e) => { look.drag = true; look.lx = e.clientX; look.ly = e.clientY; });
   window.addEventListener('pointerup', () => { look.drag = false; });
   window.addEventListener('pointermove', (e) => {
-    if (!look.drag || camMode !== 'cab') return;
-    look.yaw = Math.max(-1.4, Math.min(1.4, look.yaw - (e.clientX - look.lx) * 0.004));
+    if (!look.drag || (camMode !== 'cab' && camMode !== 'car')) return;
+    const lim = camMode === 'car' ? Math.PI : 1.4;
+    look.yaw = Math.max(-lim, Math.min(lim, look.yaw - (e.clientX - look.lx) * 0.004));
     look.pitch = Math.max(-0.6, Math.min(0.5, look.pitch - (e.clientY - look.ly) * 0.004));
     look.lx = e.clientX; look.ly = e.clientY;
   });
-  v.addEventListener('dblclick', () => { look.yaw = 0; look.pitch = EYE.pitch; });
+  v.addEventListener('dblclick', () => { look.yaw = 0; look.pitch = camMode === 'car' ? CAR_EYE.pitch : EYE.pitch; });
   // on-screen buttons
   const hold = (id, fn) => {
     const el = $(id);
@@ -552,9 +602,19 @@ function pollGamepad() {
 // ---------------------------------------------------------------------------
 // main loop
 // ---------------------------------------------------------------------------
-const AXLES = [];
-for (let c = 0; c < 4; c++) for (const b of [-6.9, 6.9]) for (const a of [-1.05, 1.05]) AXLES.push(CAR_LEN / 2 + c * CAR_LEN - b - a);
-AXLES.sort((a, b) => a - b);
+/** axle positions measured back from the leading coupler, for an n-car train */
+function axleOffsets(n) {
+  const out = [];
+  for (let c = 0; c < n; c++) for (const b of [-BOGIE_C, BOGIE_C]) for (const a of [-1.05, 1.05]) out.push(CAR_LEN / 2 + c * CAR_LEN - b - a);
+  return out.sort((a, b) => a - b);
+}
+let AXLES = axleOffsets(4);
+const _jp = {};
+/** where along the line the listener is (for culling far-away joint clicks) */
+function listenerS() {
+  if (camMode === 'trackside' && tracksideCam) return tracksideCam.s;
+  return physics ? physics.s - (camMode === 'car' ? (carIdx + 0.5) * CAR_LEN : 0) : 0;
+}
 let atsWasBraking = false;
 let lastT = performance.now();
 
@@ -588,22 +648,59 @@ function simStep(dt) {
   for (let i = 0; i < n; i++) physics.step(dt / n);
   game.update(dt);
 
-  // rail joint sounds (every 25 m, plus turnouts at station throats)
+  // rail joint sounds under every axle (every 25 m, plus turnouts at station throats),
+  // emitted where the joint is so they are delayed / panned / attenuated for the listener
   if (physics.s - prevS > 0) {
+    const ls = listenerS();
+    const bobLo = camMode === 'car' ? carIdx * CAR_LEN : 0, bobHi = bobLo + CAR_LEN;
     for (let i = 0; i < AXLES.length; i++) {
       const off = AXLES[i];
       const a = prevS - off, b = physics.s - off;
-      if (Math.floor(a / 25) !== Math.floor(b / 25) || turnoutBetween(a, b)) {
-        const dist = camMode === 'cab' ? Math.abs(off - 1.2) : 8;
-        sound.joint(1 / (1 + dist / 7), physics.kmh);
-        if (camMode === 'cab' && i < 2) bob.v -= 0.02 * Math.min(1, physics.kmh / 80);
+      const joint = Math.floor(a / 25) !== Math.floor(b / 25);
+      if (joint || turnoutBetween(a, b)) {
+        if (Math.abs(b - ls) < 600) {
+          const sj = joint ? Math.floor(b / 25) * 25 : b;
+          const p = route.pose(sj, 0, _jp);
+          sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, physics.kmh, true);
+        }
+        if ((camMode === 'cab' || camMode === 'car') && off > bobLo && off < bobHi) bob.v -= 0.012 * Math.min(1, physics.kmh / 80);
       }
     }
   }
-  sound.update({ v: physics.kmh, torque: physics.torque, brake: physics.brake, curvature: route.curvature(physics.s) });
   announcer.update();
   melody.update();
   traffic.update(dt, physics.s);
+}
+
+/** listener at the camera, own train positions, crossing bells */
+const _lv = { p: new THREE.Vector3(), f: new THREE.Vector3(), r: new THREE.Vector3() };
+function updateSound() {
+  if (!sound.ready || !player) return;
+  camera.updateMatrixWorld();
+  camera.getWorldPosition(_lv.p);
+  camera.getWorldDirection(_lv.f);
+  _lv.r.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+  sound.setListener(_lv.p, _lv.f, _lv.r);
+  const cars = [], bridge = [];
+  for (let i = 0; i < player.cars.length; i++) {
+    cars.push(player.cars[i].position);
+    const st = route.structureAt(physics.s - (i + 0.5) * CAR_LEN);
+    bridge.push(st.type === 'bridge' ? (st.river.truss ? 1 : 0.55) : st.type === 'viaduct' ? 0.12 : 0);
+  }
+  const fp = route.pose(physics.s - 0.5, 0, {});
+  sound.update({
+    v: physics.kmh, torque: physics.torque, brake: physics.brake, curvature: route.curvature(physics.s),
+    doorsOpen: physics.doorsOpen === true, cars, front: fp, bridge,
+  });
+  const bells = [];
+  if (world) {
+    for (const c of world.crossings) {
+      if (!c.active) continue;
+      const p = route.pose(c.s, -6.5, {});
+      bells.push({ id: c.s, x: p.x, y: p.y + 2.6, z: p.z });
+    }
+  }
+  sound.crossing(bells);
 }
 
 /** scene, camera and HUD for the current state */
@@ -617,14 +714,22 @@ function updateView(dt) {
   }
   if (cabLcd && camMode === 'cab') cabLcd.update(dt, { physics, game, route });
   player.setSideLamps(!!physics.doorsOpen);
+  player.setDoors(game.doorSide, physics.doorsOpen === true);
+  const tgt = game.target;
+  player.animate(dt, {
+    next: tgt ? tgt.station : null,
+    arriving: game.state === 'arrived' || (game.state === 'running' && tgt && tgt.station.s - physics.s < 700),
+    carNo: player.cars.length - carIdx,          // 1号車 is the Ueno end
+    clock: fmtTime(game.clock, false),
+  });
   updateCamera(dt);
+  updateSound();
   const cp = new THREE.Vector3();
   camera.getWorldPosition(cp);
   world.updateFixed(cp, physics.s);
   const trains = [{ front: physics.s, len: physics.len, dir: 1 }];
   for (const t of traffic.list) trains.push({ front: t.s, len: t.set.length, dir: -1 });
   world.animate(dt, trains, cp);
-  sound.crossing(world.nearestActiveCrossing);
   const fp = route.pose(physics.s - 20, 0, {});
   const sd = world.env.sunDir;
   sun.position.set(fp.x + sd.x * 300, fp.y + sd.y * 300, fp.z + sd.z * 300);
@@ -670,7 +775,7 @@ async function boot() {
   buildMenu();
   requestAnimationFrame(frame);
   try {
-    await loadAssets();
+    await Promise.all([loadAssets(), loadFonts()]);
     $('startBtn').disabled = false;
     $('startBtn').textContent = '運転開始';
     // a nice idle backdrop: the selected train at 上野

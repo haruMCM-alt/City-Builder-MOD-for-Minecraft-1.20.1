@@ -28,6 +28,7 @@ export class Game {
     this.penalties = 0;
     this.ph.s = timetable[0].station.s;
     this.ph.doorsOpen = true;
+    this.doorSide = timetable[0].station.door;     // platform side of the doors now in use
     this.introPlayed = false;
   }
 
@@ -125,6 +126,7 @@ export class Game {
     } else if (this.state === 'arrived') {
       if (this.stateT > 1.2 && !ph.doorsOpen) {
         ph.doorsOpen = true;
+        this.doorSide = this.target.station.door;
         this.sound.doorMove(true);
       }
       if (this.stateT > 3) {

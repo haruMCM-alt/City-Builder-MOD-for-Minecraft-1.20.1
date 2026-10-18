@@ -1,4 +1,28 @@
-// All train sounds are synthesized with the Web Audio API (no samples).
+// Train sound engine (Web Audio, all synthesized except the recorded door chime).
+//
+// Layout
+//   own train  : one spatial voice per car for wheel/rail rolling noise (+ bridge drumming),
+//                one per motor car for the traction worklet (VVVF / DC motor, own channel each),
+//                rail joints as spatial one-shots per axle, horn at the cab front
+//   world      : passing trains (their own worklet + rolling noise + joints), level-crossing bells
+//   interior   : cab / saloon ambience (blowers, wind on the cab front, air-con), chimes, ATS bell
+// Every spatial source runs through a propagation delay that follows its distance, which gives
+// real Doppler shifts and arrival times (see spatial.js). The listener follows the camera; when it
+// is inside the train the exterior buses pass through "body insulation" filters.
+
+import { Listener, SpatialVoice, oneShot, makeImpulse } from './spatial.js';
+
+const MODE_MIX = {
+  //            own-train exterior          world (other trains, bells)     reverb  ann   ats   chime
+  cab:     { own: [1500, 0.55, 5200, 0.10], world: [1700, 0.40, 6000, 0.05], wet: 0.035, ann: 1.0, ats: 1.0, chime: 0.55 },
+  car:     { own: [1900, 0.75, 6500, 0.10], world: [1800, 0.40, 6000, 0.05], wet: 0.035, ann: 1.0, ats: 0.0, chime: 1.0 },
+  outside: { own: [20000, 1.0, 20000, 0.0], world: [20000, 1.0, 20000, 0.0], wet: 0.16, ann: 0.12, ats: 0.08, chime: 0.55 },
+};
+
+function isMotor(formation, i) {
+  const c = formation[i];
+  return c === 'P' || (c === 'M' && formation[i - 1] === 'P');
+}
 
 export class SoundEngine {
   constructor() {
@@ -6,83 +30,94 @@ export class SoundEngine {
     this.ready = false;
     this.muted = false;
     this.inCab = true;
+    this.mode = 'cab';
     this.lastBrake = 0;
     this.lastCamStep = 0;
+    this.L = new Listener();
+    this.jump = true;
+    this.trains = new Set();
+    this.bells = new Map();
+    this.doorsOpen = false;
   }
 
-  async init() {
+  async init(ctxOverride) {
     if (this.ctx) return;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    const ctx = ctxOverride || new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
     this.ctx = ctx;
     this.master = ctx.createGain();
     this.master.gain.value = 0.8;
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14; comp.ratio.value = 4;
+    comp.threshold.value = -16; comp.ratio.value = 3.5; comp.attack.value = 0.01; comp.release.value = 0.25;
     this.master.connect(comp).connect(ctx.destination);
 
-    // "cabin" filter: everything from under the floor is muffled inside the cab
-    this.body = ctx.createBiquadFilter();
-    this.body.type = 'lowpass';
-    this.body.frequency.value = 3800;
-    this.body.connect(this.master);
-
-    this.noiseBuf = this.makeNoise(3);
-    this.brownBuf = this.makeBrown(3);
-    this.jointBuf = this.makeJoint();
+    this.noiseBuf = this.makeNoise(4);
+    this.brownBuf = this.makeBrown(4);
+    this.pinkBuf = this.makePink(4);
+    this.jointBufs = [this.makeJoint(1), this.makeJoint(2), this.makeJoint(3)];
+    this.jointBuf = this.jointBufs[0];
     this.camBuf = this.makeClick();
 
-    // traction worklet
-    try {
-      await ctx.audioWorklet.addModule(new URL('./traction-worklet.js', import.meta.url));
-      this.traction = new AudioWorkletNode(ctx, 'traction', { outputChannelCount: [2] });
-      this.tractionGain = ctx.createGain();
-      this.tractionGain.gain.value = 0.9;
-      this.traction.connect(this.tractionGain).connect(this.body);
-    } catch (e) {
-      console.warn('AudioWorklet unavailable', e);
-    }
+    // --- buses -------------------------------------------------------------------
+    // exterior sources -> "insulation" (two low-passes + a leak path for the highs) -> master
+    const insulation = () => {
+      const input = ctx.createGain();
+      const lp1 = ctx.createBiquadFilter(); lp1.type = 'lowpass'; lp1.Q.value = 0.6;
+      const lp2 = ctx.createBiquadFilter(); lp2.type = 'lowpass'; lp2.Q.value = 0.6;
+      const g = ctx.createGain();
+      const leakF = ctx.createBiquadFilter(); leakF.type = 'lowpass'; leakF.Q.value = 0.5;
+      const leak = ctx.createGain();
+      input.connect(lp1).connect(lp2).connect(g).connect(this.master);
+      input.connect(leakF).connect(leak).connect(this.master);
+      return { input, lp1, lp2, g, leakF, leak };
+    };
+    this.ownIns = insulation();
+    this.worldIns = insulation();
+    this.ownBus = this.ownIns.input;
+    this.worldBus = this.worldIns.input;
+    // environment reverb (sent from both exterior buses)
+    this.reverb = ctx.createConvolver();
+    this.reverb.buffer = makeImpulse(ctx, 1.8, 3.0, [[0.006, 0.5], [0.021, 0.25], [0.043, 0.18], [0.078, 0.12], [0.121, 0.09]]);
+    this.wet = ctx.createGain(); this.wet.gain.value = 0.03;
+    this.ownBus.connect(this.wet); this.worldBus.connect(this.wet);
+    this.wet.connect(this.reverb).connect(this.master);
+    // interior (non-spatial) sounds
+    this.cabBus = ctx.createGain();
+    this.cabBus.connect(this.master);
+    // `body` kept for older callers (cam clicks etc.)
+    this.body = this.cabBus;
 
-    // rolling noise (low rumble)
-    this.roll = this.loopSource(this.brownBuf);
-    this.rollF = ctx.createBiquadFilter(); this.rollF.type = 'lowpass'; this.rollF.frequency.value = 300;
-    this.rollG = ctx.createGain(); this.rollG.gain.value = 0;
-    this.roll.connect(this.rollF).connect(this.rollG).connect(this.body);
-    // rail hiss / wind
-    this.wind = this.loopSource(this.noiseBuf);
-    this.windF = ctx.createBiquadFilter(); this.windF.type = 'bandpass'; this.windF.frequency.value = 900; this.windF.Q.value = 0.6;
-    this.windG = ctx.createGain(); this.windG.gain.value = 0;
-    this.wind.connect(this.windF).connect(this.windG).connect(this.master);
-    // flange squeal on curves
-    this.flange = ctx.createOscillator(); this.flange.type = 'sine'; this.flange.frequency.value = 3200;
-    this.flangeG = ctx.createGain(); this.flangeG.gain.value = 0;
-    this.flange.connect(this.flangeG).connect(this.body);
-    this.flange.start();
-    // brake squeal near standstill
-    this.squeal = ctx.createOscillator(); this.squeal.type = 'triangle'; this.squeal.frequency.value = 2400;
-    const sqLfo = ctx.createOscillator(); sqLfo.frequency.value = 7;
-    const sqLfoG = ctx.createGain(); sqLfoG.gain.value = 40;
-    sqLfo.connect(sqLfoG).connect(this.squeal.frequency); sqLfo.start();
-    this.squealG = ctx.createGain(); this.squealG.gain.value = 0;
-    this.squeal.connect(this.squealG).connect(this.body);
-    this.squeal.start();
-    // cab hum (auxiliary power unit / blower)
+    // --- rolling noise generators (wheel/rail roughness), shared by groups of cars -------
+    this.rollGens = [0, 1, 2, 3].map(() => this.makeRollGen());
+    this.bridgeGen = this.makeBridgeGen();
+
+    // --- interior ambience ---------------------------------------------------------
     this.hum = ctx.createOscillator(); this.hum.type = 'sawtooth'; this.hum.frequency.value = 120;
-    const humF = ctx.createBiquadFilter(); humF.type = 'lowpass'; humF.frequency.value = 400;
-    this.humG = ctx.createGain(); this.humG.gain.value = 0.012;
-    this.hum.connect(humF).connect(this.humG).connect(this.master);
+    const humF = ctx.createBiquadFilter(); humF.type = 'lowpass'; humF.frequency.value = 380;
+    this.humG = ctx.createGain(); this.humG.gain.value = 0.010;
+    this.hum.connect(humF).connect(this.humG).connect(this.cabBus);
     this.hum.start();
-    const fan = this.loopSource(this.noiseBuf);
-    const fanF = ctx.createBiquadFilter(); fanF.type = 'lowpass'; fanF.frequency.value = 700;
-    this.fanG = ctx.createGain(); this.fanG.gain.value = 0.02;
-    fan.connect(fanF).connect(this.fanG).connect(this.master);
+    const fan = this.loopSource(this.pinkBuf);
+    const fanF = ctx.createBiquadFilter(); fanF.type = 'lowpass'; fanF.frequency.value = 900;
+    this.fanG = ctx.createGain(); this.fanG.gain.value = 0.03;
+    fan.connect(fanF).connect(this.fanG).connect(this.cabBus);
+    // wind on the cab front / car body, rising with v^2
+    this.wind = this.loopSource(this.noiseBuf);
+    this.windF = ctx.createBiquadFilter(); this.windF.type = 'bandpass'; this.windF.frequency.value = 900; this.windF.Q.value = 0.5;
+    this.windG = ctx.createGain(); this.windG.gain.value = 0;
+    this.wind.connect(this.windF).connect(this.windG).connect(this.cabBus);
+    // outdoor ambience bed (distant traffic / breeze), only when the listener is outside
+    const amb = this.loopSource(this.brownBuf);
+    const ambF = ctx.createBiquadFilter(); ambF.type = 'lowpass'; ambF.frequency.value = 500;
+    this.ambG = ctx.createGain(); this.ambG.gain.value = 0;
+    amb.connect(ambF).connect(this.ambG).connect(this.master);
 
     // announcement bus (in-car speaker colouring)
     this.annBus = ctx.createGain();
-    this.annBus.gain.value = 1.0;
+    this.annLevel = ctx.createGain();
     const annHp = ctx.createBiquadFilter(); annHp.type = 'highpass'; annHp.frequency.value = 180;
-    this.annBus.connect(annHp).connect(this.master);
+    this.annBus.connect(annHp).connect(this.annLevel).connect(this.master);
 
-    // departure melody bus: platform speaker heard from the train (echo + muffling in the cab)
+    // departure melody bus: platform speaker heard from the train (echo + muffling inside)
     this.melBus = ctx.createGain();
     this.melBus.gain.value = 0.9;
     this.melFilter = ctx.createBiquadFilter(); this.melFilter.type = 'lowpass'; this.melFilter.frequency.value = 5000;
@@ -93,6 +128,11 @@ export class SoundEngine {
     this.melFilter.connect(this.master);
     this.melFilter.connect(melDelay); melDelay.connect(melFb).connect(melDelay); melDelay.connect(melWet).connect(this.master);
 
+    this.chimeBus = ctx.createGain();
+    this.chimeBus.connect(this.master);
+    this.atsBus = ctx.createGain();
+    this.atsBus.connect(this.master);
+
     // recorded door chime + linear-motor door closing (E231/E233), see assets/sounds/
     this.doorCloseBuf = null;
     fetch(new URL('../../assets/sounds/door_close_e231.mp3', import.meta.url))
@@ -101,12 +141,83 @@ export class SoundEngine {
       .then((buf) => { this.doorCloseBuf = buf; })
       .catch((e) => console.warn('door sound unavailable, using synthesized chime', e));
 
+    try {
+      await ctx.audioWorklet.addModule(new URL('./traction-worklet.js', import.meta.url));
+      this.hasWorklet = true;
+    } catch (e) {
+      console.warn('AudioWorklet unavailable', e);
+      this.hasWorklet = false;
+    }
     this.ready = true;
+    this.setListenerMode(this.mode);
   }
 
-  setVehicle(veh) {
-    this.veh = veh;
-    if (this.traction) this.traction.port.postMessage({ type: 'config', sound: veh.sound });
+  // ---------------------------------------------------------------------------------
+  // generators
+  // ---------------------------------------------------------------------------------
+  /** wheel/rail roughness noise: peak at v / (roughness wavelength), low rumble, flange & brake squeal */
+  makeRollGen() {
+    const ctx = this.ctx;
+    const src = this.loopSource(this.noiseBuf);
+    const peak = ctx.createBiquadFilter(); peak.type = 'bandpass'; peak.Q.value = 0.9; peak.frequency.value = 600;
+    const hiG = ctx.createGain(); hiG.gain.value = 0;
+    const rum = this.loopSource(this.brownBuf);
+    const rumF = ctx.createBiquadFilter(); rumF.type = 'lowpass'; rumF.frequency.value = 220;
+    const rumG = ctx.createGain(); rumG.gain.value = 0;
+    // aerodynamic / pass-by hiss
+    const air = this.loopSource(this.pinkBuf);
+    const airF = ctx.createBiquadFilter(); airF.type = 'highpass'; airF.frequency.value = 1500;
+    const airG = ctx.createGain(); airG.gain.value = 0;
+    const out = ctx.createGain();
+    src.connect(peak).connect(hiG).connect(out);
+    rum.connect(rumF).connect(rumG).connect(out);
+    air.connect(airF).connect(airG).connect(out);
+    // flange squeal on curves and brake shoe squeal near the stop
+    const fl = ctx.createOscillator(); fl.type = 'sine'; fl.frequency.value = 3000 + Math.random() * 900;
+    const flLfo = ctx.createOscillator(); flLfo.frequency.value = 0.6 + Math.random();
+    const flLfoG = ctx.createGain(); flLfoG.gain.value = 60;
+    flLfo.connect(flLfoG).connect(fl.frequency);
+    const flG = ctx.createGain(); flG.gain.value = 0;
+    fl.connect(flG).connect(out);
+    const sq = ctx.createOscillator(); sq.type = 'triangle'; sq.frequency.value = 2100 + Math.random() * 700;
+    const sqLfo = ctx.createOscillator(); sqLfo.frequency.value = 6 + Math.random() * 3;
+    const sqLfoG = ctx.createGain(); sqLfoG.gain.value = 35;
+    sqLfo.connect(sqLfoG).connect(sq.frequency);
+    const sqG = ctx.createGain(); sqG.gain.value = 0;
+    sq.connect(sqG).connect(out);
+    for (const o of [fl, flLfo, sq, sqLfo]) o.start();
+    return { out, peak, hiG, rumF, rumG, airG, flG, sqG, nodes: [src, rum, air, fl, flLfo, sq, sqLfo] };
+  }
+
+  setRollGen(r, v, st, t) {
+    const k = Math.min(1.4, v / 100);
+    const moving = v > 0.3;
+    // rolling noise ~ 30 log v; roughness wavelengths of 3-6 cm put the peak at v / lambda
+    r.hiG.gain.setTargetAtTime(moving ? 0.22 * k ** 1.5 + 0.004 : 0, t, 0.08);
+    r.peak.frequency.setTargetAtTime(Math.max(180, Math.min(2600, (v / 3.6) / 0.045)), t, 0.1);
+    r.rumG.gain.setTargetAtTime(moving ? 0.5 * Math.min(1, v / 60) ** 1.2 : 0, t, 0.1);
+    r.rumF.frequency.setTargetAtTime(120 + v * 2.2, t, 0.1);
+    r.airG.gain.setTargetAtTime(v > 40 ? 0.05 * ((v - 40) / 80) ** 3 : 0, t, 0.1);
+    const R = st.curvature ? 1 / Math.abs(st.curvature) : 1e9;
+    r.flG.gain.setTargetAtTime(R < 700 && v > 12 && v < 90 ? Math.min(1, (700 - R) / 400) * 0.035 : 0, t, 0.3);
+    const sq = st.brake > 0.05 && v > 0.2 && v < 10 ? Math.sin((v / 10) * Math.PI) * 0.05 * Math.min(1, st.brake * 2) : 0;
+    r.sqG.gain.setTargetAtTime(sq, t, 0.05);
+  }
+
+  /** steel truss / girder drumming excited by the passing wheels */
+  makeBridgeGen() {
+    const ctx = this.ctx;
+    const src = this.loopSource(this.brownBuf);
+    const out = ctx.createGain(); out.gain.value = 0;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 180;
+    src.connect(lp).connect(out);
+    for (const [f, q, g] of [[205, 7, 0.9], [385, 9, 0.6], [610, 12, 0.35], [1130, 14, 0.15]]) {
+      const n = this.loopSource(this.noiseBuf);
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
+      const gg = ctx.createGain(); gg.gain.value = g;
+      n.connect(bp).connect(gg).connect(out);
+    }
+    return { out };
   }
 
   makeNoise(sec) {
@@ -129,19 +240,34 @@ export class SoundEngine {
     return b;
   }
 
-  /** "タン": wheel hitting a rail joint – low thump + metallic click */
-  makeJoint() {
+  makePink(sec) {
+    const ctx = this.ctx;
+    const b = ctx.createBuffer(1, ctx.sampleRate * sec, ctx.sampleRate);
+    const d = b.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
+    for (let i = 0; i < d.length; i++) {
+      const w = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
+      b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
+      d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + w * 0.5362) * 0.11;
+    }
+    return b;
+  }
+
+  /** "タン": a wheel dropping over a rail joint – low thump of the unsprung mass, rail ring, click */
+  makeJoint(seed) {
     const ctx = this.ctx, sr = ctx.sampleRate;
-    const len = Math.floor(sr * 0.32);
+    const len = Math.floor(sr * 0.35);
     const b = ctx.createBuffer(1, len, sr);
     const d = b.getChannelData(0);
     let lp = 0;
+    const f0 = 52 + seed * 6, ring1 = 560 + seed * 47, ring2 = 1290 + seed * 90;
     for (let i = 0; i < len; i++) {
       const t = i / sr;
-      const thump = Math.sin(2 * Math.PI * (58 + 30 * Math.exp(-t * 30)) * t) * Math.exp(-t * 16) * 0.9;
-      lp += ((Math.random() * 2 - 1) - lp) * 0.35;
-      const click = lp * Math.exp(-t * 90) * 0.7;
-      const ring = Math.sin(2 * Math.PI * 610 * t) * Math.exp(-t * 45) * 0.12 + Math.sin(2 * Math.PI * 1370 * t) * Math.exp(-t * 60) * 0.05;
+      const thump = Math.sin(2 * Math.PI * (f0 + 34 * Math.exp(-t * 30)) * t) * Math.exp(-t * 15) * 0.9;
+      lp += ((Math.random() * 2 - 1) - lp) * 0.32;
+      const click = lp * Math.exp(-t * 95) * 0.75;
+      const ring = Math.sin(2 * Math.PI * ring1 * t) * Math.exp(-t * 42) * 0.13 + Math.sin(2 * Math.PI * ring2 * t) * Math.exp(-t * 58) * 0.06;
       d[i] = thump + click + ring;
     }
     return b;
@@ -162,20 +288,136 @@ export class SoundEngine {
   loopSource(buf) {
     const s = this.ctx.createBufferSource();
     s.buffer = buf; s.loop = true;
-    s.loopStart = Math.random() * 0.5;
     s.start(0, Math.random() * buf.duration);
     return s;
   }
 
-  setInCab(inCab) {
-    this.inCab = inCab;
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    this.body.frequency.setTargetAtTime(inCab ? 2600 : 9000, t, 0.1);
-    this.humG.gain.setTargetAtTime(inCab ? 0.012 : 0.0, t, 0.1);
-    this.fanG.gain.setTargetAtTime(inCab ? 0.02 : 0.004, t, 0.1);
-    if (this.melFilter) this.melFilter.frequency.setTargetAtTime(inCab ? 2400 : 7000, t, 0.1);
+  // ---------------------------------------------------------------------------------
+  // trains
+  // ---------------------------------------------------------------------------------
+  setVehicle(veh) { this.veh = veh; }
+
+  /** the sound profile in use (E231 can switch to the pre-renewal inverter) */
+  profile(veh) { return this.altSound && veh.soundAlt ? veh.soundAlt : veh.sound; }
+
+  /** build the own train's voices: rolling noise per car, traction per motor car */
+  setTrain(formation, veh) {
+    if (!this.ready) return;
+    this.veh = veh;
+    if (this.own) this.disposeTrain(this.own);
+    const ctx = this.ctx;
+    const motors = [];
+    for (let i = 0; i < formation.length; i++) if (isMotor(formation, i)) motors.push(i);
+    const units = Math.max(1, Math.min(4, motors.length));
+    const own = { cars: [], traction: [], worklet: null, rollGens: this.rollGens, horn: null };
+    if (this.hasWorklet) {
+      own.worklet = new AudioWorkletNode(ctx, 'traction', { numberOfInputs: 0, outputChannelCount: [units], processorOptions: { units } });
+      own.worklet.port.postMessage({ type: 'config', sound: this.profile(veh), seed: 1 });
+      own.split = ctx.createChannelSplitter(units);
+      own.worklet.connect(own.split);
+    }
+    for (let i = 0; i < formation.length; i++) {
+      const v = new SpatialVoice(ctx, this.ownBus, { ref: 4, gain: 0.55 });
+      this.rollGens[i % 4].out.connect(v.input);
+      const bg = ctx.createGain(); bg.gain.value = 0;
+      this.bridgeGen.out.connect(bg).connect(v.input);
+      own.cars.push({ voice: v, bridge: bg });
+    }
+    motors.forEach((ci, k) => {
+      const v = new SpatialVoice(ctx, this.ownBus, { ref: 3.5, gain: 1.0 });
+      if (own.split) own.split.connect(v.input, k % units);
+      own.traction.push({ car: ci, voice: v });
+    });
+    own.hornVoice = new SpatialVoice(ctx, this.ownBus, { ref: 3, gain: 1.0 });
+    own.motorIdx = motors;
+    this.own = own;
+    this.jump = true;
   }
+
+  disposeTrain(t) {
+    for (const c of t.cars || []) { c.voice.dispose(); if (c.bridge) c.bridge.disconnect(); }
+    for (const c of t.traction || []) c.voice.dispose();
+    if (t.hornVoice) t.hornVoice.dispose();
+    if (t.worklet) { t.worklet.port.postMessage({ type: 'state', v: 0, torque: 0 }); t.worklet.disconnect(); }
+    if (t.gen) for (const n of t.gen.nodes) { try { n.stop(); } catch { /* */ } }
+    for (const v of t.voices || []) v.dispose();
+  }
+
+  /** a passing / oncoming train: its own traction worklet and rolling noise at front, middle and rear */
+  addTrain(veh, nCars) {
+    if (!this.ready) return null;
+    const ctx = this.ctx;
+    const t = { veh, nCars, voices: [], gen: this.makeRollGen(), worklet: null };
+    if (this.hasWorklet) {
+      t.worklet = new AudioWorkletNode(ctx, 'traction', { numberOfInputs: 0, outputChannelCount: [2], processorOptions: { units: 2 } });
+      t.worklet.port.postMessage({ type: 'config', sound: veh.sound, seed: 7 + Math.floor(Math.random() * 100) });
+      t.split = ctx.createChannelSplitter(2);
+      t.worklet.connect(t.split);
+    }
+    for (let k = 0; k < 3; k++) {
+      const v = new SpatialVoice(ctx, this.worldBus, { ref: 6, gain: 1.0, maxDist: 1600 });
+      const rg = ctx.createGain(); rg.gain.value = nCars / 5;      // each voice stands for a third of the train
+      t.gen.out.connect(rg).connect(v.input);
+      if (t.split && k !== 1) { const tg = ctx.createGain(); tg.gain.value = 0.9; t.split.connect(tg, k === 0 ? 0 : 1).connect(v.input); }
+      t.voices.push(v);
+    }
+    this.trains.add(t);
+    return {
+      update: (positions, v, torque, st) => {
+        if (!this.ready) return;
+        const now = ctx.currentTime;
+        this.setRollGen(t.gen, v, st || { curvature: 0, brake: 0 }, now);
+        if (t.worklet) t.worklet.port.postMessage({ type: 'state', v, torque });
+        positions.forEach((p, k) => { if (t.voices[k]) { t.voices[k].set(p.x, p.y, p.z); t.voices[k].update(this.L, now, this.jump); } });
+      },
+      dispose: () => { this.disposeTrain(t); this.trains.delete(t); },
+    };
+  }
+
+  // ---------------------------------------------------------------------------------
+  // listener
+  // ---------------------------------------------------------------------------------
+  /** 'cab' | 'car' | 'outside' */
+  setListenerMode(mode) {
+    this.mode = mode;
+    this.inCab = mode === 'cab';
+    this.jump = true;
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    const m = MODE_MIX[mode];
+    const open = this.doorsOpen && mode === 'car';
+    const apply = (ins, [f, g, lf, lg]) => {
+      ins.lp1.frequency.setTargetAtTime(open ? Math.max(f, 6000) : f, t, 0.08);
+      ins.lp2.frequency.setTargetAtTime(open ? Math.max(f, 6000) : f, t, 0.08);
+      ins.g.gain.setTargetAtTime(open ? Math.max(g, 0.85) : g, t, 0.08);
+      ins.leakF.frequency.setTargetAtTime(lf, t, 0.08);
+      ins.leak.gain.setTargetAtTime(lg, t, 0.08);
+    };
+    apply(this.ownIns, m.own);
+    apply(this.worldIns, m.world);
+    this.wet.gain.setTargetAtTime(m.wet, t, 0.1);
+    this.annLevel.gain.setTargetAtTime(m.ann, t, 0.1);
+    this.atsBus.gain.setTargetAtTime(m.ats, t, 0.1);
+    this.chimeBus.gain.setTargetAtTime(m.chime, t, 0.1);
+    this.humG.gain.setTargetAtTime(mode === 'cab' ? 0.010 : 0.0, t, 0.1);
+    this.fanG.gain.setTargetAtTime(mode === 'cab' ? 0.03 : mode === 'car' ? 0.045 : 0.0, t, 0.1);
+    this.ambG.gain.setTargetAtTime(mode === 'outside' ? 0.035 : 0.0, t, 0.3);
+    if (this.melFilter) this.melFilter.frequency.setTargetAtTime(mode === 'outside' ? 7000 : open ? 5000 : 2400, t, 0.1);
+  }
+
+  /** kept for older callers */
+  setInCab(inCab) { this.setListenerMode(inCab ? 'cab' : 'outside'); }
+
+  /** camera world position and orientation (unit vectors) */
+  setListener(pos, fwd, right) {
+    const L = this.L;
+    L.pos.x = pos.x; L.pos.y = pos.y; L.pos.z = pos.z;
+    L.fwd.x = fwd.x; L.fwd.y = fwd.y; L.fwd.z = fwd.z;
+    L.right.x = right.x; L.right.y = right.y; L.right.z = right.z;
+  }
+
+  /** the camera was cut to a new place: no Doppler glide from the previous distances */
+  cut() { this.jump = true; }
 
   setMuted(m) {
     this.muted = m;
@@ -184,40 +426,74 @@ export class SoundEngine {
 
   /**
    * per-frame update
-   * st: { v (km/h), torque (-1..1), brake (0..1 effective air brake), curvature (1/m), stopped }
+   * st: { v (km/h), torque (-1..1), brake (0..1), curvature (1/m), doorsOpen,
+   *       cars: [{x,y,z}] car centres (world), front: {x,y,z} cab front, bridge: [0..1 per car] }
    */
   update(st) {
     if (!this.ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
     const v = st.v;
-    if (this.traction) this.traction.port.postMessage({ type: 'state', v, torque: st.torque });
-    const k = Math.min(1, v / 120);
-    this.rollG.gain.setTargetAtTime(v > 0.3 ? 0.10 + 0.55 * k : 0, t, 0.08);
-    this.rollF.frequency.setTargetAtTime(160 + v * 6, t, 0.1);
-    this.windG.gain.setTargetAtTime((this.inCab ? 0.05 : 0.12) * k * k, t, 0.1);
-    this.windF.frequency.setTargetAtTime(500 + v * 10, t, 0.2);
-    // flange squeal on tight curves at moderate speed
-    const R = st.curvature ? 1 / Math.abs(st.curvature) : 1e9;
-    const fl = R < 900 && v > 15 ? Math.min(1, (900 - R) / 500) * 0.02 : 0;
-    this.flangeG.gain.setTargetAtTime(fl, t, 0.3);
-    // brake squeal close to the stop
-    const sq = st.brake > 0.05 && v > 0.2 && v < 9 ? Math.sin((v / 9) * Math.PI) * 0.03 * Math.min(1, st.brake * 2) : 0;
-    this.squealG.gain.setTargetAtTime(sq, t, 0.05);
+    const doors = !!st.doorsOpen;
+    if (doors !== this.doorsOpen) { this.doorsOpen = doors; this.setListenerMode(this.mode); }
+    for (const r of this.rollGens) this.setRollGen(r, v, st, t);
+    const own = this.own;
+    if (own) {
+      if (own.worklet) own.worklet.port.postMessage({ type: 'state', v, torque: st.torque });
+      const bv = Math.min(1, v / 70);
+      this.bridgeGen.out.gain.setTargetAtTime(v > 1 ? 0.55 * bv ** 1.3 : 0, t, 0.15);
+      if (st.cars) {
+        for (let i = 0; i < own.cars.length && i < st.cars.length; i++) {
+          const c = own.cars[i], p = st.cars[i];
+          c.voice.set(p.x, p.y + 0.5, p.z);
+          c.voice.update(this.L, t, this.jump);
+          c.bridge.gain.setTargetAtTime(st.bridge ? st.bridge[i] || 0 : 0, t, 0.2);
+        }
+        for (const m of own.traction) {
+          const p = st.cars[m.car];
+          if (!p) continue;
+          m.voice.set(p.x, p.y + 0.55, p.z);
+          m.voice.update(this.L, t, this.jump);
+        }
+      }
+      if (st.front) { own.hornVoice.set(st.front.x, st.front.y + 1.0, st.front.z); own.hornVoice.update(this.L, t, this.jump); }
+    }
+    const k = Math.min(1.3, v / 120);
+    this.windG.gain.setTargetAtTime(this.mode === 'cab' ? 0.06 * k * k : this.mode === 'car' ? 0.025 * k * k : 0, t, 0.1);
+    this.windF.frequency.setTargetAtTime(450 + v * 9, t, 0.2);
     // brake cylinder air
     if (st.brake > this.lastBrake + 0.12) { this.air(0.06, 0.25, 2500); this.lastBrake = st.brake; }
     else if (st.brake < this.lastBrake - 0.12) {
       this.air(st.brake < 0.02 ? 0.16 : 0.08, st.brake < 0.02 ? 0.9 : 0.4, 4200);
       this.lastBrake = st.brake;
     }
-    // resistor control: cam shaft notching while powering
-    if (this.veh && this.veh.sound.cam) {
-      const step = st.torque > 0.05 && v < 55 ? Math.floor(v / 2.6) : 0;
-      if (step > this.lastCamStep) this.playBuf(this.camBuf, 0.35, 0.95 + Math.random() * 0.1);
+    // resistor control (115): cam shaft notching under the motor car while powering
+    if (this.veh && (this.veh.sound.cam || this.veh.sound.camClicks)) {
+      const step = st.torque > 0.05 && v < (this.veh.sound.camTo || 55) ? Math.floor(v / 2.2) : 0;
+      if (step > this.lastCamStep && own && st.cars) {
+        const p = st.cars[own.motorIdx[0] ?? 1];
+        if (p) oneShot(ctx, this.L, this.ownBus, this.camBuf, { x: p.x, y: p.y + 0.8, z: p.z }, { gain: 0.9, ref: 3, rate: 0.95 + Math.random() * 0.1 });
+      }
       this.lastCamStep = step;
     }
+    this.jump = false;
   }
 
-  playBuf(buf, gain, rate = 1, when = 0, dest = this.body) {
+  /** a wheel crossing a rail joint at world position pos; own = our train (else a passing one) */
+  jointAt(pos, speed, own = true) {
+    if (!this.ready || this.muted) return;
+    const g = 0.22 + Math.min(1.2, speed / 90) * 0.85;
+    const buf = this.jointBufs[Math.floor(Math.random() * 3)];
+    oneShot(this.ctx, this.L, own ? this.ownBus : this.worldBus, buf, pos, { gain: g * (own ? 0.8 : 1.0), ref: 3, rate: 0.92 + Math.random() * 0.12 });
+  }
+
+  /** legacy non-spatial joint (kept for compatibility) */
+  joint(gain, speed) {
+    if (!this.ready || this.muted) return;
+    const g = gain * (0.25 + Math.min(1, speed / 90) * 0.9);
+    this.playBuf(this.jointBuf, g, 0.9 + Math.random() * 0.15, 0, this.ownBus);
+  }
+
+  playBuf(buf, gain, rate = 1, when = 0, dest = this.cabBus) {
     const ctx = this.ctx;
     const s = ctx.createBufferSource();
     s.buffer = buf; s.playbackRate.value = rate;
@@ -226,21 +502,15 @@ export class SoundEngine {
     s.start(ctx.currentTime + Math.max(0, when));
   }
 
-  /** wheel crossing a rail joint */
-  joint(gain, speed) {
-    if (!this.ready || this.muted) return;
-    const g = gain * (0.25 + Math.min(1, speed / 90) * 0.9);
-    this.playBuf(this.jointBuf, g, 0.9 + Math.random() * 0.15);
-  }
-
   air(gain, dur, freq) {
     if (!this.ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
     const s = ctx.createBufferSource(); s.buffer = this.noiseBuf;
     const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = 0.8;
     const g = ctx.createGain();
+    const lvl = gain * (this.mode === 'cab' ? 1 : this.mode === 'car' ? 0.6 : 0.45);
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(gain, t + 0.03);
+    g.gain.linearRampToValueAtTime(lvl, t + 0.03);
     g.gain.setTargetAtTime(0, t + dur * 0.3, dur * 0.35);
     s.connect(f).connect(g).connect(this.master);
     s.start(t, Math.random()); s.stop(t + dur * 2 + 0.5);
@@ -257,8 +527,8 @@ export class SoundEngine {
     if (this.usesDoorSample()) {
       const s = this.ctx.createBufferSource();
       s.buffer = this.doorCloseBuf;
-      const g = this.ctx.createGain(); g.gain.value = this.inCab ? 0.55 : 0.9;
-      s.connect(g).connect(this.master);
+      const g = this.ctx.createGain(); g.gain.value = 0.95;
+      s.connect(g).connect(this.chimeBus);
       s.start();
       return 3.3;   // the bang of the doors meeting is ~3.2 s into the clip
     }
@@ -270,13 +540,13 @@ export class SoundEngine {
     if (!this.ready) return 0;
     const ctx = this.ctx, t0 = ctx.currentTime + 0.05;
     for (let i = 0; i < 3; i++) {
-      this.tone(1318.5, t0 + i * 0.62, 0.35, 0.09);
-      this.tone(1046.5, t0 + i * 0.62 + 0.22, 0.45, 0.08);
+      this.tone(1318.5, t0 + i * 0.62, 0.35, 0.09, 'sine', this.chimeBus);
+      this.tone(1046.5, t0 + i * 0.62 + 0.22, 0.45, 0.08, 'sine', this.chimeBus);
     }
     return 1.9;
   }
 
-  tone(f, when, dur, gain, type = 'sine') {
+  tone(f, when, dur, gain, type = 'sine', dest = this.master) {
     const ctx = this.ctx;
     const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
     const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * 2.01;
@@ -286,27 +556,28 @@ export class SoundEngine {
     g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
     const g2 = ctx.createGain(); g2.gain.value = 0.25;
     o.connect(g); o2.connect(g2).connect(g);
-    g.connect(this.master);
+    g.connect(dest);
     o.start(when); o2.start(when); o.stop(when + dur + 0.05); o2.stop(when + dur + 0.05);
   }
 
+  /** door engine: air cylinder (115/211) or linear motor whirr + the leaves meeting / stopping */
   doorMove(open) {
     if (!this.ready) return;
-    this.air(open ? 0.10 : 0.07, open ? 0.6 : 0.5, open ? 1800 : 1400);
-    const ctx = this.ctx;
-    setTimeout(() => this.playBuf(this.jointBuf, 0.25, 1.6, 0, this.master), open ? 900 : 1500);
-    void ctx;
+    const lvl = this.mode === 'car' ? 1.6 : this.mode === 'cab' ? 0.7 : 0.9;
+    this.air((open ? 0.10 : 0.07) * lvl, open ? 0.6 : 0.5, open ? 1800 : 1400);
+    setTimeout(() => this.ready && this.playBuf(this.jointBuf, 0.22 * lvl, 1.7, 0, this.master), open ? 1800 : 1150);
   }
 
   horn(on) {
     if (!this.ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
+    const dest = this.own ? this.own.hornVoice.input : this.master;
     if (on && !this.hornNodes) {
       const tones = (this.veh && this.veh.sound.hornTones) || [466, 698];
-      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.16, t + 0.06);
-      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 2600;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.32, t + 0.06);
+      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 2800;
       const oscs = tones.map((fr) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = fr; o.connect(f); o.start(); return o; });
-      f.connect(g).connect(this.master);
+      f.connect(g).connect(dest);
       this.hornNodes = { g, oscs };
     } else if (!on && this.hornNodes) {
       const { g, oscs } = this.hornNodes;
@@ -327,7 +598,7 @@ export class SoundEngine {
       const g = ctx.createGain(); g.gain.value = 0.5;
       am.connect(amG).connect(g.gain);
       const out = ctx.createGain(); out.gain.value = 0.05;
-      o.connect(g).connect(out).connect(this.master);
+      o.connect(g).connect(out).connect(this.atsBus);
       o.start(); am.start();
       this.bell = { o, am, out };
     } else if (!on && this.bell) {
@@ -373,50 +644,52 @@ export class SoundEngine {
   chime() {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
-    this.tone(880, t, 0.5, 0.07);
-    this.tone(1175, t + 0.18, 0.6, 0.06);
+    this.tone(880, t, 0.5, 0.07, 'sine', this.atsBus);
+    this.tone(1175, t + 0.18, 0.6, 0.06, 'sine', this.atsBus);
   }
 
-  /** level-crossing bell (カンカン). dist = metres from the listener to the nearest ringing crossing */
-  crossing(dist) {
+  /**
+   * level-crossing bells (カンカン) as spatial sources.
+   * list: [{ id, x, y, z }] of the crossings ringing now (or a plain distance for old callers)
+   */
+  crossing(list) {
     if (!this.ready) return;
+    if (!Array.isArray(list)) list = [];
     const ctx = this.ctx, t = ctx.currentTime;
-    const on = Number.isFinite(dist) && dist < 900 && !this.muted;
-    if (!on) { this.xing = null; return; }
-    if (!this.xing) this.xing = { next: t + 0.05, n: 0 };
-    // distance attenuation; the cab muffles it strongly
-    const g = Math.min(1, 30 / Math.max(30, dist)) ** 1.2 * (this.inCab ? 0.35 : 1) * 0.16;
-    while (this.xing.next < t + 0.12) {
-      const when = this.xing.next;
-      const f = this.xing.n % 2 ? 690 : 735;
-      const out = ctx.createGain();
-      out.gain.setValueAtTime(0, when);
-      out.gain.linearRampToValueAtTime(g, when + 0.004);
-      out.gain.exponentialRampToValueAtTime(0.0005, when + 0.42);
-      for (const [mul, a] of [[1, 1], [2.76, 0.45], [5.4, 0.18], [8.9, 0.07]]) {
-        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * mul;
-        const og = ctx.createGain(); og.gain.value = a;
-        o.connect(og).connect(out);
-        o.start(when); o.stop(when + 0.45);
+    const seen = new Set();
+    for (const c of list) {
+      seen.add(c.id);
+      let b = this.bells.get(c.id);
+      if (!b) {
+        b = { voice: new SpatialVoice(ctx, this.worldBus, { ref: 8, gain: 0.5, maxDist: 1400 }), next: t + 0.05, n: 0, f: 700 + Math.random() * 60 };
+        this.bells.set(c.id, b);
       }
-      out.connect(this.master);
-      this.xing.next += 0.36;
-      this.xing.n++;
+      b.voice.set(c.x, c.y, c.z);
+      b.voice.update(this.L, t, this.jump);
+      // strikes are scheduled into the voice input, so they inherit its delay (Doppler) and panning
+      while (b.next < t + 0.15) {
+        const when = b.next;
+        const f = b.n % 2 ? b.f : b.f * 1.06;
+        const out = ctx.createGain();
+        out.gain.setValueAtTime(0, when);
+        out.gain.linearRampToValueAtTime(0.32, when + 0.004);
+        out.gain.exponentialRampToValueAtTime(0.0005, when + 0.42);
+        for (const [mul, a] of [[1, 1], [2.76, 0.45], [5.4, 0.18], [8.9, 0.07]]) {
+          const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * mul;
+          const og = ctx.createGain(); og.gain.value = a;
+          o.connect(og).connect(out);
+          o.start(when); o.stop(when + 0.45);
+        }
+        out.connect(b.voice.input);
+        b.next += 0.36;
+        b.n++;
+      }
+    }
+    for (const [id, b] of this.bells) {
+      if (!seen.has(id)) { const v = b.voice; setTimeout(() => v.dispose(), 4000); this.bells.delete(id); }
     }
   }
 
-  /** an oncoming train rushing past */
-  passBy(intensity = 1) {
-    if (!this.ready || this.muted) return;
-    const ctx = this.ctx, t = ctx.currentTime;
-    const s = ctx.createBufferSource(); s.buffer = this.noiseBuf;
-    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1200;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.35 * intensity, t + 0.15);
-    g.gain.setValueAtTime(0.3 * intensity, t + 3.0);
-    g.gain.linearRampToValueAtTime(0, t + 4.0);
-    s.connect(f).connect(g).connect(this.master);
-    s.start(t); s.stop(t + 4.2);
-  }
+  /** passing trains are now real spatial sources (addTrain); kept as a no-op for old callers */
+  passBy() {}
 }

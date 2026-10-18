@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>宇都宮線 運転シミュレーター</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=DotGothic16&family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 <script type="importmap">
 { "imports": {
@@ -39,6 +39,10 @@
         <div class="row"><label>到着</label><select id="toSel"></select></div>
         <div class="row"><label>両数</label><select id="carsSel"><option value="15">15両（グリーン車付）</option><option value="10">10両</option></select></div>
         <p id="formNote" class="note"></p>
+        <div class="row"><label>E231の音</label><select id="vvvfSel">
+          <option value="new">機器更新車（現在の主流）</option>
+          <option value="old">未更新車（日立 SC59A/SC77・「墜落」）</option>
+        </select></div>
 
         <h2>車内放送</h2>
         <div class="row"><label>音源</label>
@@ -85,11 +89,11 @@
         <tr><td>Q</td><td>常用最大ブレーキ</td></tr>
         <tr><td>E / Backspace</td><td>非常ブレーキ</td></tr>
         <tr><td>H（長押し）</td><td>警笛</td></tr>
-        <tr><td>C / V</td><td>視点切替（運転台・正面・側面・後方上空・沿線）</td></tr>
+        <tr><td>C / V</td><td>視点切替（運転台・車内・正面・側面・後方上空・沿線）</td></tr>
         <tr><td>Enter / F</td><td>停車中、発車時刻まで早送り</td></tr>
         <tr><td>T</td><td>時刻表の表示</td></tr>
         <tr><td>M / Esc</td><td>消音 / 一時停止</td></tr>
-        <tr><td>ドラッグ</td><td>運転台で見回す（ダブルクリックで正面）</td></tr>
+        <tr><td>ドラッグ</td><td>運転台・車内で見回す（ダブルクリックで正面）</td></tr>
       </table>
       <p class="note">停止位置目標「15」にぴったり止め、時刻表どおりに走らせるほど高得点。制限速度を超えると ATS-P が作動します。</p>
     </details>

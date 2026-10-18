@@ -139,7 +139,7 @@ def make_cab_interior(M, coll):
     # right monitor in its hood box, yawed 15° toward the driver
     box(mb, -0.40, -0.80, -0.44, 0.06, 2.45, 2.47, hood)
     box(mb, -0.40, -0.45, -0.44, 0.06, 2.47, 2.78, hood)
-    box(mb, -0.40, -0.80, -0.44, 0.06, 2.76, 2.78, hood)
+    box(mb, -0.40, -0.53, -0.44, 0.06, 2.79, 2.81, hood)          # short sun visor: the high eye point must see the screen
     screen(-0.66, -0.18, 0.246, 0.185, lcd_mon, 0.29, 0.22, yaw=math.radians(-15))
     # 緊急 button column, grab handle, radio, switch plinth
     mb.cyl(P(-0.585, 0.74, 2.66), (-1, 0, 0.23), 0.025, 0.03, red, seg=12)

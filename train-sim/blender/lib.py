@@ -129,6 +129,18 @@ def materials():
         sidelamp=mat("SIDELAMP", (0.25, 0.02, 0.02), 0.0, 0.3),
         weld=mat("stainless_seam", (0.40, 0.41, 0.42), 0.85, 0.45),
         brakedisc=mat("brake_disc", (0.30, 0.29, 0.28), 0.8, 0.45),
+        strap_belt=mat("strap_belt", (0.20, 0.21, 0.22), 0.0, 0.7),
+        strap_prio=mat("strap_priority", (0.90, 0.62, 0.02), 0.0, 0.5),
+        heater=mat("heater_grille", (0.05, 0.05, 0.055), 0.4, 0.6),
+        grille_int=mat("int_grille", (0.62, 0.63, 0.62), 0.3, 0.5),
+        floor_yellow=mat("floor_yellow", (0.85, 0.62, 0.02), 0.0, 0.6),
+        blind=mat("roller_blind", (0.22, 0.30, 0.27), 0.0, 0.9),
+        LCD_INFO=mat("LCD_INFO", (0.01, 0.01, 0.015), 0.0, 0.3, (0.05, 0.05, 0.06), 0.5),
+        AD_TV=mat("LCD_ADTV", (0.01, 0.01, 0.015), 0.0, 0.3, (0.05, 0.05, 0.06), 0.5),
+        AD_0=mat("AD_0", (0.8, 0.8, 0.8), 0.0, 0.6),
+        AD_1=mat("AD_1", (0.8, 0.8, 0.8), 0.0, 0.6),
+        AD_2=mat("AD_2", (0.8, 0.8, 0.8), 0.0, 0.6),
+        AD_3=mat("AD_3", (0.8, 0.8, 0.8), 0.0, 0.6),
     )
 
 
@@ -271,7 +283,7 @@ class MB:
                     co = me.vertices[me.loops[li].vertex_index].co
                     uv.data[li].uv = uv_of(co.y, co.z)
                 continue
-            if name not in ("DEST", "STOPSIGN") and not name.startswith("LCD_"):
+            if name not in ("DEST", "STOPSIGN") and not name.startswith(("LCD_", "AD_")):
                 for li in poly.loop_indices:
                     uv.data[li].uv = (0.0, 0.0)
                 continue

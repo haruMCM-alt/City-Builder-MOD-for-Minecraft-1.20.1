@@ -262,6 +262,7 @@ class Layout:
         self.doors = []       # (x0, x1, z0, z1)
         self.windows = []     # (cx, cz, w, h, r)
         self.door_windows = []
+        self.leaf_windows = []    # windows in the sliding door leaves (separate objects)
         self.crew = []
         dz0, dz1 = S.door_z
         hw = S.door_w / 2
@@ -272,7 +273,7 @@ class Layout:
             self.doors.append((d - hw, d + hw, dz0, dz1))
             for sx in (-1, 1):
                 leaf_c = d + sx * hw / 2
-                self.door_windows.append((leaf_c, (S.win_z[0] + 0.06 + S.win_z[1]) / 2, hw - 0.20, S.win_z[1] - S.win_z[0] - 0.02, 0.05))
+                self.leaf_windows.append((leaf_c, (S.win_z[0] + 0.06 + S.win_z[1]) / 2, hw - 0.20, S.win_z[1] - S.win_z[0] - 0.02, 0.05))
         wz0, wz1 = S.win_z
         cz, wh = (wz0 + wz1) / 2, wz1 - wz0
         edges = [-H + 0.30] + sum([[d - hw - 0.28, d + hw + 0.28] for d in sorted(self.door_centers)], []) + [H - 0.30]
@@ -599,11 +600,18 @@ def glass_panes(mb, S, M, rects, inset=0.014, depth=0.022, sides=(-1, 1), m=None
 
 
 def cut_body(body, S, M, car, coll):
-    # door grooves
-    rects = [(x0, x1, z0, z1, True) for (x0, x1, z0, z1) in car.doors] + [(x0, x1, z0, z1, False) for (x0, x1, z0, z1) in car.crew]
-    gc = side_cutter(S, M, groove_rects(rects), coll, "cut_grooves", M["gap"], depth=0.012)
-    apply_boolean(body, gc)
-    delete(gc)
+    # crew door grooves
+    rects = [(x0, x1, z0, z1, False) for (x0, x1, z0, z1) in car.crew]
+    if rects:
+        gc = side_cutter(S, M, groove_rects(rects), coll, "cut_grooves", M["gap"], depth=0.012)
+        apply_boolean(body, gc)
+        delete(gc)
+    # passenger door openings go right through the wall: the leaves are separate sliding objects
+    if car.doors:
+        dc = side_cutter(S, M, [((x0 + x1) / 2, (z0 + z1) / 2, x1 - x0, z1 - z0, 0.0) for (x0, x1, z0, z1) in car.doors], coll,
+                         "cut_doors", M["gap"], depth=WALL + 0.06)
+        apply_boolean(body, dc)
+        delete(dc)
     wc = side_cutter(S, M, car.windows + car.door_windows, coll, "cut_windows", M["rubber"], depth=WALL + 0.06)
     apply_boolean(body, wc)
     delete(wc)
@@ -660,32 +668,58 @@ def seat_segments(S, x0, x1, gap=0.10, doors=None):
     return [(a, b) for a, b in zip(cuts[0::2], cuts[1::2]) if b - a > 0.5]
 
 
+def strap(mb, M, x, y, top, mat=None):
+    """吊り手: belt + triangular handle"""
+    m = mat or M["strap"]
+    mb.box((x, y, top - 0.10), (0.028, 0.008, 0.20), M["strap_belt"])
+    zt, zb = top - 0.205, top - 0.32
+    pa, pb, pc = (x - 0.065, y, zb), (x + 0.065, y, zb), (x, y, zt)
+    for (u, v) in ((pa, pb), (pb, pc), (pc, pa)):
+        mb.beam(u, v, 0.016, 0.022, m)
+
+
 def long_seat(mb, M, S, a, b, s, seat):
+    """ロングシート: individual bucket cushions, end partitions, poles, rack, straps"""
     ws = wi(S, 1.5)
     xc, ln = (a + b) / 2, b - a
     f = FLOOR
-    mb.box((xc, s * (ws - 0.30), f + 0.20), (ln - 0.12, 0.36, 0.40), M["dkgrey"])            # base
-    mb.box((xc, s * (ws - 0.27), f + 0.38), (ln - 0.08, 0.50, 0.11), seat)                   # cushion
-    R = Matrix.Rotation(-s * math.radians(9), 3, "X")
-    mb.box((xc, s * (ws - 0.10), f + 0.70), (ln - 0.08, 0.09, 0.52), seat, R)                # backrest
-    # 袖仕切り (seat end partitions) + poles
-    for xe in (a + 0.03, b - 0.03):
-        mb.box((xe, s * (ws - 0.31), f + 0.62), (0.03, 0.60, 1.10), M["partition"])
-        mb.cyl((xe, s * (ws - 0.64), (f + 3.36) / 2), (0, 0, 1), 0.018, 3.36 - f, M["pole"], seg=8)
-    if ln > 2.4:
-        xm = a + ln * 3 / 7
-        mb.cyl((xm, s * (ws - 0.64), (f + 3.36) / 2), (0, 0, 1), 0.018, 3.36 - f, M["pole"], seg=8)
-    # luggage rack + strap rail with hanging straps
-    zr = max(2.66, S.win_z[1] + 0.07)
-    mb.box((xc, s * (wi(S, zr) - 0.18), zr), (ln - 0.06, 0.32, 0.018), M["pole"])
-    mb.cyl((xc, s * (wi(S, zr) - 0.34), zr + 0.01), (1, 0, 0), 0.012, ln - 0.06, M["pole"], seg=6)
-    ys = s * (ws - 0.68)
-    mb.cyl((xc, ys, 2.86), (1, 0, 0), 0.016, ln, M["pole"], seg=6)
-    n = max(1, int((ln - 0.2) / 0.34))
+    mb.box((xc, s * (ws - 0.33), f + 0.17), (ln - 0.16, 0.34, 0.34), M["dkgrey"])            # base
+    # heater grille under the cushion
+    mb.box((xc, s * (ws - 0.505), f + 0.17), (ln - 0.20, 0.01, 0.20), M["heater"])
+    n = max(1, int(round((ln - 0.10) / 0.46)))
+    sw = (ln - 0.10) / n
+    R = Matrix.Rotation(-s * math.radians(10), 3, "X")
     for k in range(n):
-        x = a + 0.1 + (ln - 0.2) * (k + 0.5) / n
-        mb.box((x, ys, 2.74), (0.026, 0.010, 0.22), M["strap"])
-        mb.box((x, ys, 2.59), (0.11, 0.018, 0.09), M["strap"])
+        x = a + 0.05 + sw * (k + 0.5)
+        mb.box((x, s * (ws - 0.33), f + 0.385), (sw - 0.018, 0.44, 0.095), seat)           # bucket cushion
+        mb.box((x, s * (ws - 0.13), f + 0.71), (sw - 0.022, 0.08, 0.50), seat, R)          # backrest
+    mb.box((xc, s * (ws - 0.33), f + 0.336), (ln - 0.12, 0.42, 0.012), M["dkgrey"])
+    # 袖仕切り (large end partitions) + poles
+    for xe in (a + 0.03, b - 0.03):
+        mb.box((xe, s * (ws - 0.36), f + 0.66), (0.03, 0.56, 1.18), M["partition"])
+        mb.cyl((xe, s * (ws - 0.66), (f + 3.36) / 2), (0, 0, 1), 0.018, 3.36 - f, M["pole"], seg=10)
+    if ln > 2.4:
+        xm = a + 0.05 + sw * round(n * 3 / 7)
+        mb.cyl((xm, s * (ws - 0.66), (f + 3.36) / 2), (0, 0, 1), 0.018, 3.36 - f, M["pole"], seg=10)
+    # luggage rack (stainless pipes) above the windows
+    zr = max(2.66, S.win_z[1] + 0.07)
+    wr = wi(S, zr)
+    for k, yy in enumerate((wr - 0.06, wr - 0.14, wr - 0.22, wr - 0.30)):
+        mb.cyl((xc, s * yy, zr), (1, 0, 0), 0.010, ln - 0.06, M["pole"], seg=6)
+    for xk in (a + 0.08, xc, b - 0.08):
+        mb.beam((xk, s * (wr - 0.01), zr + 0.10), (xk, s * (wr - 0.34), zr - 0.01), 0.015, 0.012, M["pole"])
+    # above-window advertising frames
+    nads = max(1, int(ln / 1.0))
+    for k in range(nads):
+        x = a + ln * (k + 0.5) / nads
+        mb.box((x, s * (wi(S, zr - 0.10) - 0.012), zr - 0.10), (min(0.72, ln / nads - 0.08), 0.008, 0.16), M[f"AD_{(k + int(a * 7)) % 4}"])
+    # strap rail + straps (priority area straps yellow)
+    ys = s * (ws - 0.70)
+    mb.cyl((xc, ys, 2.90), (1, 0, 0), 0.016, ln, M["pole"], seg=8)
+    ns = max(1, int((ln - 0.2) / 0.30))
+    for k in range(ns):
+        x = a + 0.1 + (ln - 0.2) * (k + 0.5) / ns
+        strap(mb, M, x, ys, 2.89, M["strap_prio"] if seat is M["seat_prio"] else None)
 
 
 def box_seats(mb, M, S, a, b, s, seat):
@@ -721,23 +755,55 @@ def saloon(mb, M, S, x0, x1, kind, doors=None):
             else:
                 prio = end and S.key in ("e231", "e233") and (b - a) < 2.4 and s == 1
                 long_seat(mb, M, S, a, b, s, M["seat_prio"] if prio else seat)
-    # ceiling, light strips, door LCDs
     xc, ln = (x0 + x1) / 2, x1 - x0
     zc = 3.50 if S.cant > 3.2 else 3.43
+    # ceiling: flat centre panel with the line-flow fan grille (ラインデリア), two lamp rows
     mb.box((xc, 0, zc), (ln - 0.02, 1.90, 0.02), M["int_ceiling"])
+    mb.box((xc, 0, zc - 0.015), (ln - 0.4, 0.26, 0.012), M["grille_int"])
+    for k in range(int(ln / 0.08)):
+        mb.box((x0 + 0.2 + k * 0.08, 0, zc - 0.022), (0.012, 0.22, 0.004), M["dkgrey"])
     for s in (-1, 1):
-        mb.box((xc, s * 0.62, zc - 0.025), (ln - 0.3, 0.15, 0.03), M["int_light"])
+        mb.box((xc, s * 0.62, zc - 0.025), (ln - 0.3, 0.16, 0.03), M["int_light"])
+        mb.box((xc, s * 0.62, zc - 0.012), (ln - 0.28, 0.20, 0.006), M["int_ceiling"])
+    # 中吊り広告: hanging posters along both sides of the aisle
+    k = 0
+    for (a, b) in segs:
+        if b - a < 1.6:
+            continue
+        for s in (-1, 1):
+            for x in (a + (b - a) * 0.3, a + (b - a) * 0.7):
+                mb.beam((x, s * 0.38, zc - 0.02), (x, s * 0.38, zc - 0.10), 0.006, 0.006, M["pole"])
+                mb.box((x, s * 0.38, zc - 0.30), (0.52, 0.006, 0.37), M[f"AD_{k % 4}"])
+                k += 1
     hw = S.door_w / 2
     for d in doors:
         if not (x0 < d < x1):
             continue
         for s in (-1, 1):
-            if S.key in ("e231", "e233"):
-                zl = S.door_z[1] + 0.10
-                mb.box((d, s * (wi(S, zl) - 0.05), zl), (0.56, 0.06, 0.17), M["lcd"])
-            # door pocket side poles (yellow on JR East commuter cars near doors? keep stainless)
+            zl = S.door_z[1] + 0.12
+            # passenger information display above the door (LCD on E233, LED on E231 - drawn in three.js)
+            mb.box((d - (0.30 if S.key == "e233" else 0.0), s * (wi(S, zl) - 0.05), zl), (0.56 if S.key == "e233" else 0.62, 0.06, 0.20), M["LCD_INFO"])
+            if S.key == "e233":
+                mb.box((d + 0.30, s * (wi(S, zl) - 0.05), zl), (0.56, 0.06, 0.20), M["AD_TV"])
+            # door pocket covers (the leaves slide behind them) and grab poles at the door
             for sx in (-1, 1):
-                mb.cyl((d + sx * (hw + 0.06), s * (wi(S, 2.0) - 0.07), 2.0), (0, 0, 1), 0.016, 1.3, M["pole"], seg=8)
+                xp = d + sx * (hw + hw / 2 + 0.02)
+                mb.box((xp, s * (S.width(2.0) - 0.088), (S.door_z[0] + S.door_z[1]) / 2 + 0.02), (hw + 0.06, 0.008, S.door_z[1] - S.door_z[0] - 0.02), M["int_wall"])
+                mb.cyl((d + sx * (hw + 0.07), s * (wi(S, 2.0) - 0.10), 2.0), (0, 0, 1), 0.016, 1.3, M["pole"], seg=8)
+            # yellow threshold line on the floor at the door
+            mb.box((d, s * (wi(S, 1.2) - 0.12), FLOOR + 0.003), (S.door_w, 0.10, 0.006), M["floor_yellow"])
+    # end walls with a gangway door window
+    for xe, sg in ((x0 + 0.002, 1), (x1 - 0.002, -1)):
+        if kind == "cab" and sg < 0:
+            continue
+        mb.box((xe + sg * 0.01, 0, 2.05), (0.02, 0.86, 1.80), M["door"])
+        mb.box((xe + sg * 0.022, 0, 2.45), (0.004, 0.50, 0.70), M["sglass"])
+    # half-lowered roller blinds on some windows
+    for (a, b) in segs:
+        for s in (-1, 1):
+            if (int(a * 3) + s) % 3 == 0:
+                zt = S.win_z[1] - 0.02
+                mb.box(((a + b) / 2, s * (wi(S, zt) - 0.02), zt - 0.20), (min(2.0, b - a - 0.4), 0.006, 0.40), M["blind"])
 
 
 def side_lamps(mb, M, S, x, z=2.99):
@@ -777,20 +843,114 @@ def bogie(mb, M, x, motor=False):
     mb.beam((x - 0.2, -0.5, 0.55), (x + 0.2, 0.5, 0.55), 0.06, 0.06, M["grey"])                 # lateral damper
     mb.box((x, 0, 0.83), (0.30, 0.50, 0.12), frame)                                             # centre pivot
     for ax in (-1.05, 1.05):
-        for s in (-1, 1):
-            mb.cyl((x + ax, s * 0.60, 0.43), (0, 1, 0), 0.43, 0.13, M["wheel"], seg=24)          # tread
-            mb.cyl((x + ax, s * 0.525, 0.43), (0, 1, 0), 0.455, 0.022, M["wheel"], seg=24)       # flange
-            mb.cyl((x + ax, s * 0.62, 0.43), (0, 1, 0), 0.36, 0.10, M["grey"], seg=20)           # dished web
-            mb.cyl((x + ax, s * 0.62, 0.43), (0, 1, 0), 0.13, 0.15, M["dkgrey"], seg=12)         # hub
-            if not motor:
-                mb.cyl((x + ax, s * 0.28, 0.43), (0, 1, 0), 0.30, 0.07, M["brakedisc"], seg=20)  # axle disc
-        mb.cyl((x + ax, 0, 0.43), (0, 1, 0), 0.08, 1.12, M["grey"], seg=10)
+        # (wheels, axle and axle discs are separate rotating wheelset objects, see wheelset_mesh)
         if motor:
             mb.cyl((x + ax * 0.50, -0.10, 0.49), (0, 1, 0), 0.25, 0.66, M["under"], seg=16)      # traction motor
             mb.box((x + ax * 0.78, 0.36, 0.43), (0.62, 0.12, 0.46), M["under"])                  # gear case
     mb.box((x - 1.50, 0.62, 0.58), (0.08, 0.22, 0.26), M["dkgrey"])                             # ATS pickup
     mb.box((x + 1.50, -0.30, 0.20), (0.08, 0.40, 0.06), M["dkgrey"])
     return mb
+
+
+_WS_MESH = {}
+
+
+def wheelset_mesh(M, motor, coll):
+    """one wheelset (axle along Y, centred at the origin) shared by every axle of that type"""
+    key = "ws_m" if motor else "ws_t"
+    if key in _WS_MESH:
+        return _WS_MESH[key]
+    mb = MB(key)
+    for s in (-1, 1):
+        mb.cyl((0, s * 0.60, 0), (0, 1, 0), 0.43, 0.13, M["wheel"], seg=28)            # tread
+        mb.cyl((0, s * 0.525, 0), (0, 1, 0), 0.455, 0.022, M["wheel"], seg=28)         # flange
+        mb.cyl((0, s * 0.63, 0), (0, 1, 0), 0.37, 0.10, M["grey"], seg=24)             # dished web
+        mb.cyl((0, s * 0.64, 0), (0, 1, 0), 0.13, 0.15, M["dkgrey"], seg=14)           # hub
+        # visible features so the rotation reads: hub bolts, web holes, a white paint mark
+        for k in range(6):
+            a = k * math.pi / 3
+            mb.cyl((0.095 * math.cos(a), s * 0.72, 0.095 * math.sin(a)), (0, 1, 0), 0.016, 0.02, M["chrome"], seg=6)
+        for k in range(4):
+            a = k * math.pi / 2 + 0.4
+            mb.cyl((0.25 * math.cos(a), s * 0.685, 0.25 * math.sin(a)), (0, 1, 0), 0.035, 0.012, M["black"], seg=10)
+        mb.box((0.0, s * 0.69, 0.31), (0.025, 0.01, 0.10), M["white"])
+        if not motor:
+            mb.cyl((0, s * 0.28, 0), (0, 1, 0), 0.30, 0.07, M["brakedisc"], seg=24)    # axle-mounted disc
+            for k in range(8):
+                a = k * math.pi / 4
+                mb.cyl((0.12 * math.cos(a), s * 0.315, 0.12 * math.sin(a)), (0, 1, 0), 0.014, 0.012, M["dkgrey"], seg=6)
+    mb.cyl((0, 0, 0), (0, 1, 0), 0.08, 1.12, M["grey"], seg=12)
+    ob = mb.build(coll)
+    smooth(ob, 40)
+    _WS_MESH[key] = ob
+    return ob
+
+
+def add_wheelsets(parent, M, coll, name, motor):
+    tmpl = wheelset_mesh(M, motor, coll)
+    k = 0
+    for b in (-BOGIE, BOGIE):
+        for ax in (-1.05, 1.05):
+            ob = bpy.data.objects.new(f"{name}_ws{k}", tmpl.data)
+            coll.objects.link(ob)
+            ob.parent = parent
+            ob.location = (b + ax, 0.0, 0.43)
+            k += 1
+
+
+def door_leaves(parent, S, M, coll, name, door_list, leaf_windows, zones, n_leaves=2, slide_dirs=None):
+    """sliding door leaves as separate child objects (named <car>_door<i>_<L|R>_<a|b>).
+    They sit 50-75 mm inside the outer skin and slide into the wall pocket."""
+    leaf_mat = M[getattr(S, "door_mat", None) or "door"]
+    for di, (x0, x1, z0, z1) in enumerate(door_list):
+        d = (x0 + x1) / 2
+        hw = (x1 - x0) / 2
+        spans = [(x0, d, "a"), (d, x1, "b")] if n_leaves == 2 else [(x0, x1, (slide_dirs or "b")[di] if slide_dirs else "b")]
+        for side in (-1, 1):
+            for (xa, xb, tag) in spans:
+                mb = MB(f"{name}_door{di}_{'L' if side > 0 else 'R'}_{tag}")
+                win = None
+                for w in leaf_windows:
+                    if xa - 0.01 <= w[0] <= xb + 0.01 and x0 <= w[0] <= x1:
+                        win = w
+                        break
+                zl = sorted({z0 + 0.005, z1 - 0.005} | {z for zz in zones for z in zz[:2] if z0 < z < z1}
+                            | {z for (z, _) in S.width_table if z0 < z < z1} | ({win[1] - win[3] / 2, win[1] + win[3] / 2} if win else set()))
+                xl = [xa + 0.004, xb - 0.004]
+                if win:
+                    xl = sorted(xl + [win[0] - win[2] / 2, win[0] + win[2] / 2])
+                yo = lambda z: side * (S.width(z) - 0.050)
+                yi = lambda z: side * (S.width(z) - 0.075)
+
+                def zone_mat(zc):
+                    for (za, zb, m, skip) in zones:
+                        if not skip and za <= zc <= zb:
+                            return M[m]
+                    return leaf_mat
+                for za, zb in zip(zl, zl[1:]):
+                    for xa2, xb2 in zip(xl, xl[1:]):
+                        if win and abs((xa2 + xb2) / 2 - win[0]) < win[2] / 2 and abs((za + zb) / 2 - win[1]) < win[3] / 2:
+                            continue
+                        zc = (za + zb) / 2
+                        mb.poly([(xa2, yo(za), za), (xb2, yo(za), za), (xb2, yo(zb), zb), (xa2, yo(zb), zb)], zone_mat(zc), (0, side, 0))
+                        mb.poly([(xa2, yi(za), za), (xb2, yi(za), za), (xb2, yi(zb), zb), (xa2, yi(zb), zb)], M["door"], (0, -side, 0))
+                # edges
+                for x in (xl[0], xl[-1]):
+                    for za, zb in zip(zl, zl[1:]):
+                        mb.poly([(x, yo(za), za), (x, yi(za), za), (x, yi(zb), zb), (x, yo(zb), zb)], M["rubber"], (1 if x > d else -1, 0, 0))
+                # rubber seal on the meeting edge, window gasket and glass
+                xm = xl[-1] if tag == "a" else xl[0]
+                if n_leaves == 2:
+                    mb.box((xm, side * (S.width(1.9) - 0.046), (z0 + z1) / 2), (0.018, 0.012, z1 - z0 - 0.02), M["rubber"])
+                if win:
+                    wx0, wx1 = win[0] - win[2] / 2, win[0] + win[2] / 2
+                    wz0, wz1 = win[1] - win[3] / 2, win[1] + win[3] / 2
+                    ym = side * (S.width(win[1]) - 0.0625)
+                    for (pa, pb) in (((wx0, wz0), (wx1, wz0)), ((wx0, wz1), (wx1, wz1)), ((wx0, wz0), (wx0, wz1)), ((wx1, wz0), (wx1, wz1))):
+                        mb.beam((pa[0], ym, pa[1]), (pb[0], ym, pb[1]), 0.022, 0.03, M["rubber"])
+                    mb.poly([(wx0, ym, wz0), (wx1, ym, wz0), (wx1, ym, wz1), (wx0, ym, wz1)], M["sglass"], (0, side, 0))
+                ob = mb.build(coll)
+                ob.parent = parent
 
 
 def underfloor(mb, M, kind, seed):
@@ -1107,6 +1267,10 @@ def make_car(S, M, kind, coll):
     smooth(body, 30)
     det = MB(f"{S.key}_{kind}_details")
     glass_panes(det, S, M, [w for w in car.windows if w[0] < xi1] + [w for w in car.door_windows if w[0] < xi1])
+    # door sills / thresholds
+    for (dx0, dx1, dz0, _) in car.doors:
+        for s_ in (-1, 1):
+            det.box(((dx0 + dx1) / 2, s_ * (S.width(dz0) - 0.03), dz0 + 0.008), (dx1 - dx0, 0.07, 0.016), M["light_grey"])
     if cab:  # cab side windows stay dark (no saloon behind them)
         glass_panes(det, S, M, [w for w in car.windows if w[0] >= xi1] + [w for w in car.door_windows if w[0] >= xi1], m=M["win"])
     inner = MB(f"{S.key}_{kind}_saloon")
@@ -1164,6 +1328,8 @@ def make_car(S, M, kind, coll):
     sal = inner.build(coll)
     smooth(sal, 35)
     obj = join([body, d, sal] + extra, f"{S.key}_{kind}")
+    add_wheelsets(obj, M, coll, f"{S.key}_{kind}", motor=(kind == "mid_panto" or (kind == "mid" and S.key in ("115", "211"))))
+    door_leaves(obj, S, M, coll, f"{S.key}_{kind}", car.doors, car.leaf_windows, S.side_zones)
     return obj
 
 
@@ -1283,8 +1449,8 @@ def make_green(S, M, coll):
     hollow(endB, SA, M, coll, B0 + 0.06, B1 - 0.08, lv=lvA)
     DI0, DI1 = D0 + 0.62, D1 - 0.62
     hollow(dd, TD, M, coll, DI0, DI1, floor=G["dd_floor"], cant=G["dd_cant"], top=G["dd_top"], lv=lvD)
-    for ob, rects, grooves in ((endA, winA + dwin[:1], [doors[0]]), (endB, winB + dwin[1:], [doors[1]])):
-        g = side_cutter(SA, M, groove_rects([(a, b, c, d, False) for (a, b, c, d) in grooves]), coll, "gcut", M["gap"], depth=0.012)
+    for ob, rects, grooves in ((endA, winA, [doors[0]]), (endB, winB, [doors[1]])):
+        g = side_cutter(SA, M, [((a + b) / 2, (c + d_) / 2, b - a, d_ - c, 0.0) for (a, b, c, d_) in grooves], coll, "dcut", M["gap"], depth=WALL + 0.06)
         apply_boolean(ob, g)
         delete(g)
         wc = side_cutter(SA, M, rects, coll, "wcut", M["rubber"], depth=WALL + 0.06)
@@ -1296,7 +1462,7 @@ def make_green(S, M, coll):
     for ob in (endA, endB, dd):
         smooth(ob, 30)
     det = MB("green_details")
-    glass_panes(det, SA, M, winA + winB + dwin)
+    glass_panes(det, SA, M, winA + winB)
     glass_panes(det, TD, M, up + low)
     for s in (-1, 1):  # green-car clover emblems by the doors
         for x in G["marks"]:
@@ -1354,4 +1520,8 @@ def make_green(S, M, coll):
     coupler(det, M, H, 1)
     d = det.build(coll)
     smooth(d, 40)
-    return join([endA, endB, dd, d, gsal], f"{S.key}_green")
+    obj = join([endA, endB, dd, d, gsal], f"{S.key}_green")
+    add_wheelsets(obj, M, coll, f"{S.key}_green", motor=False)
+    lw = [((a + b) / 2, (G["dwin_z"][0] + G["dwin_z"][1]) / 2, (b - a) - 0.40, G["dwin_z"][1] - G["dwin_z"][0], 0.05) for (a, b) in G["doors"]]
+    door_leaves(obj, SA, M, coll, f"{S.key}_green", doors, lw, green_side, n_leaves=1, slide_dirs=["a", "b"])
+    return obj

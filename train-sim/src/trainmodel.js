@@ -1,40 +1,14 @@
 import * as THREE from 'three';
 import { CAR_LEN, BOGIE_C } from './vehicles.js';
+import { makeDestTexture, makeAdTexture, makeTvTexture, InfoDisplay, UI_FONT } from './displays.js';
+
+const WHEEL_R = 0.43;            // tread radius of the modelled wheels (860 mm wheel)
+const DOOR_OPEN_T = 1.9;         // s, pneumatic / linear-motor door stroke
+const DOOR_CLOSE_T = 1.15;
 
 const KIND = { C: 'cab', R: 'cab', M: 'mid', P: 'mid_panto', G: 'green' };
 
-/** canvas texture for an LED / roll-sign destination display */
-export function makeDestTexture(text, type = 'led', color = '#ff8a10') {
-  const c = document.createElement('canvas');
-  c.width = 512; c.height = 96;
-  const g = c.getContext('2d');
-  if (type === 'roll') {
-    g.fillStyle = '#f4f4ee'; g.fillRect(0, 0, 512, 96);
-    g.fillStyle = '#111';
-    g.font = 'bold 64px "Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif';
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(text.replace(/^普通\s*/, ''), 256, 50);
-  } else {
-    g.fillStyle = '#050505'; g.fillRect(0, 0, 512, 96);
-    const [kind, dest] = text.split(/\s+/);
-    g.fillStyle = '#0a8a3a'; g.fillRect(8, 10, 150, 76);
-    g.fillStyle = '#fff';
-    g.font = 'bold 54px "Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif';
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(kind || '普通', 83, 50);
-    g.fillStyle = color;
-    g.font = 'bold 62px "Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif';
-    g.fillText(dest || '', 340, 50);
-    // LED dot mask
-    g.fillStyle = 'rgba(0,0,0,0.45)';
-    for (let x = 0; x < 512; x += 4) g.fillRect(x, 0, 1, 96);
-    for (let y = 0; y < 96; y += 4) g.fillRect(0, y, 512, 1);
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  return t;
-}
+export { makeDestTexture };
 
 // ---------------------------------------------------------------------------
 // shared material upgrades (applied once per glTF material)
@@ -87,6 +61,53 @@ function stainlessPatch(mat, strength = 1) {
   mat.needsUpdate = true;
 }
 
+let fabricTex = null;
+/** moquette weave (small woven pattern) used in object space on seat cushions and the floor speckle */
+function fabricTexture() {
+  if (fabricTex) return fabricTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const img = g.createImageData(128, 128);
+  for (let y = 0; y < 128; y++) {
+    for (let x = 0; x < 128; x++) {
+      const weave = ((x >> 1) + (y >> 1)) % 2 ? 0.86 : 1.0;          // twill-ish weave
+      const fleck = Math.random() < 0.06 ? 0.7 + Math.random() * 0.6 : 1.0;
+      const v = Math.max(0, Math.min(255, 168 * weave * fleck + (Math.random() - 0.5) * 34));
+      const k = (y * 128 + x) * 4;
+      img.data[k] = img.data[k + 1] = img.data[k + 2] = v; img.data[k + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  fabricTex = new THREE.CanvasTexture(c);
+  fabricTex.wrapS = fabricTex.wrapT = THREE.RepeatWrapping;
+  fabricTex.anisotropy = 4;
+  return fabricTex;
+}
+
+/** object-space texture detail for cloth / floor materials (they have no UVs) */
+function detailPatch(mat, scale, amount, roughAdd) {
+  if (mat.userData.patched) return;
+  mat.userData.patched = true;
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.detailMap = { value: fabricTexture() };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;\nvarying vec3 vObjN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjPos = position;\nvObjN = normal;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;\nvarying vec3 vObjN;\nuniform sampler2D detailMap;')
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        vec3 an = abs(normalize(vObjN)); an /= (an.x + an.y + an.z);
+        float d = texture2D(detailMap, vObjPos.zy * ${scale.toFixed(1)}).r * an.x
+                + texture2D(detailMap, vObjPos.xz * ${scale.toFixed(1)}).r * an.y
+                + texture2D(detailMap, vObjPos.xy * ${scale.toFixed(1)}).r * an.z;
+        diffuseColor.rgb *= mix(1.0 - ${amount.toFixed(2)}, 1.0 + ${amount.toFixed(2)} * 0.5, d);
+        roughnessFactor = clamp(roughnessFactor + ${roughAdd.toFixed(2)} * (1.0 - d), 0.0, 1.0);`);
+  };
+  mat.customProgramCacheKey = () => 'detail' + scale + amount;
+  mat.needsUpdate = true;
+}
+
 const UPGRADED = new WeakSet();
 function upgradeMaterial(m) {
   if (!m || UPGRADED.has(m)) return;
@@ -118,12 +139,21 @@ function upgradeMaterial(m) {
     case 'window_glass': case 'front_black':
       m.envMapIntensity = 1.5;
       break;
-    case 'int_wall': case 'int_ceiling': case 'int_floor': case 'seat_partition':
-    case 'seat_e231': case 'seat_e233': case 'seat_211': case 'seat_115': case 'seat_green': case 'seat_priority': case 'headrest_cover': case 'strap':
+    case 'seat_e231': case 'seat_e233': case 'seat_211': case 'seat_115': case 'seat_green': case 'seat_priority': case 'headrest_cover':
+      m.envMapIntensity = 0.3;
+      m.roughness = Math.max(m.roughness, 0.9);
+      detailPatch(m, 38, 0.32, 0.1);
+      break;
+    case 'int_floor':
+      m.envMapIntensity = 0.5;
+      detailPatch(m, 6, 0.18, 0.15);
+      break;
+    case 'int_wall': case 'int_ceiling': case 'seat_partition': case 'strap': case 'strap_belt': case 'strap_priority': case 'roller_blind':
       m.envMapIntensity = 0.45;
       break;
     case 'int_light': case 'int_lcd':
       m.toneMapped = false;
+      if (m.emissive) m.emissiveIntensity = Math.max(m.emissiveIntensity, 1.6);
       break;
     case 'bogie':
       m.color.setRGB(0.055, 0.048, 0.042);
@@ -133,6 +163,27 @@ function upgradeMaterial(m) {
       break;
     default:
   }
+}
+
+/** screens are modelled as thin boxes: show the picture on the faces looking into the car only,
+ *  the edges sample the texture's black bezel (u, v = 0) */
+const SCREEN_FIXED = new WeakSet();
+function screenFrontOnly(geo) {
+  if (SCREEN_FIXED.has(geo) || !geo.attributes.normal || !geo.attributes.uv) return;
+  SCREEN_FIXED.add(geo);
+  const n = geo.attributes.normal, uv = geo.attributes.uv;
+  for (let i = 0; i < n.count; i++) if (Math.abs(n.getZ(i)) < 0.7) uv.setXY(i, 0.002, 0.002);
+  uv.needsUpdate = true;
+}
+
+// advertising posters are shared by every train (fictional, generic)
+let AD_MATS = null;
+function adMaterials() {
+  if (!AD_MATS) {
+    AD_MATS = [0, 1, 2, 3].map((i) => new THREE.MeshStandardMaterial({ map: makeAdTexture(i), roughness: 0.55, envMapIntensity: 0.4 }));
+    AD_MATS.tv = new THREE.MeshBasicMaterial({ map: makeTvTexture(), toneMapped: false });
+  }
+  return AD_MATS;
 }
 
 const SERIES_NO = { e231: ['E231', 'E230', 1000], e233: ['E233', 'E232', 3000], s211: ['211', '210', 3000], s115: ['115', '114', 1000] };
@@ -161,7 +212,7 @@ function numberTexture(text) {
   const g = c.getContext('2d');
   g.clearRect(0, 0, 512, 64);
   g.fillStyle = '#151515';
-  g.font = 'bold 46px "Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif';
+  g.font = `700 46px ${UI_FONT}`;
   g.textBaseline = 'middle';
   g.fillText(text, 6, 34);
   const t = new THREE.CanvasTexture(c);
@@ -203,6 +254,17 @@ export class TrainSet {
     this.sideLampMat = new THREE.MeshStandardMaterial({ color: 0x3a0505, emissive: 0xff1a08, emissiveIntensity: 0, roughness: 0.3 });
     const numbers = carNumbers(veh, formation);
     this.disposables = [];
+    this.wheels = [];          // { obj, sign }   wheelsets (rotate about the axle)
+    this.leaves = [];          // sliding door leaves
+    this.wheelAngle = 0;
+    this.lastS = null;
+    this.doorState = { left: 0, right: 0 };     // 0 closed .. 1 open
+    this.doorTarget = { left: 0, right: 0 };
+    // in-car passenger information display (one canvas shared by every door of this train)
+    this.info = opts.info ? new InfoDisplay(veh.id === 'e233' ? 'lcd' : 'led') : null;
+    const infoOff = new THREE.MeshStandardMaterial({ color: 0x0b0b0d, roughness: 0.25 });
+    this.disposables.push(infoOff);
+    const ads = adMaterials();
     for (let i = 0; i < n; i++) {
       const code = formation[i];
       const tmpl = gltfScene.getObjectByName(`${key}_${KIND[code]}`) || gltfScene.getObjectByName(`${key}_mid`);
@@ -221,9 +283,26 @@ export class TrainSet {
           o.castShadow = false; o.receiveShadow = true;
         }
         if (mname === 'SIDELAMP') o.material = this.sideLampMat;
+        else if (mname === 'LCD_INFO') { screenFrontOnly(o.geometry); o.material = this.info ? this.info.mat : infoOff; }
+        else if (mname === 'LCD_ADTV') { screenFrontOnly(o.geometry); o.material = this.info ? ads.tv : infoOff; }
+        else if (mname && /^AD_\d$/.test(mname)) o.material = ads[Number(mname[3])];
         else if (mname === 'DEST') o.material = destMat;
         else if (mname === 'headlight') o.material = (code === 'C' && isFront) ? lights.headOn : lights.headOff;
         else if (mname === 'taillight') o.material = (code === 'R' && isRear) ? lights.tailOn : lights.tailOff;
+      });
+      // moving parts exported as separate nodes from Blender
+      const isR = code === 'R';
+      obj.updateMatrixWorld(true);
+      obj.traverse((o) => {
+        if (/_ws\d+$/.test(o.name)) this.wheels.push({ obj: o, sign: isR ? -1 : 1 });
+        const m = /_door(\d+)_(L|R)_(a|b)$/.exec(o.name);
+        if (m) {
+          const box = new THREE.Box3().setFromObject(o);
+          const w = box.max.x - box.min.x;
+          // L = the model's left (Blender +Y); a reversed cab car is turned round
+          const left = (m[2] === 'L') !== isR;
+          this.leaves.push({ obj: o, x0: o.position.x, dir: m[3] === 'a' ? -1 : 1, travel: w - 0.01, side: left ? 'left' : 'right' });
+        }
       });
       const holder = new THREE.Group();
       const inner = new THREE.Group();
@@ -254,6 +333,13 @@ export class TrainSet {
   /** place along the route; sFront = s of the leading coupler; offsetFn(s) = lateral offset */
   place(route, sFront, offsetFn, sway = 0) {
     const dir = this.forward ? 1 : -1;
+    // wheels roll with the distance travelled
+    if (this.lastS != null) {
+      const ds = sFront - this.lastS;
+      if (Math.abs(ds) < 50) this.wheelAngle = (this.wheelAngle - (ds * dir) / WHEEL_R) % (Math.PI * 2);
+    }
+    this.lastS = sFront;
+    for (const w of this.wheels) w.obj.rotation.z = this.wheelAngle * w.sign;
     for (let i = 0; i < this.cars.length; i++) {
       const c = sFront - dir * (CAR_LEN / 2 + i * CAR_LEN);
       const sa = c + BOGIE_C, sb = c - BOGIE_C;
@@ -272,6 +358,30 @@ export class TrainSet {
     }
   }
 
+  /** open (true) or close the doors on one side of the train ('left' / 'right' in the running direction) */
+  setDoors(side, open) {
+    this.doorTarget.left = side === 'left' && open ? 1 : 0;
+    this.doorTarget.right = side === 'right' && open ? 1 : 0;
+    if (!open) this.doorTarget.left = this.doorTarget.right = 0;
+  }
+
+  /** door leaf motion + passenger information display */
+  animate(dt, info) {
+    for (const side of ['left', 'right']) {
+      const cur = this.doorState[side], tgt = this.doorTarget[side];
+      if (cur === tgt) continue;
+      const rate = 1 / (tgt > cur ? DOOR_OPEN_T : DOOR_CLOSE_T);
+      this.doorState[side] = tgt > cur ? Math.min(tgt, cur + rate * dt) : Math.max(tgt, cur - rate * dt);
+      const u = this.doorState[side];
+      // opening: quick start, cushioned end; closing: accelerates then a soft cushion just before the bang
+      const k = tgt > cur ? 1 - (1 - u) ** 2.2 : u * u * (3 - 2 * u);
+      for (const l of this.leaves) if (l.side === side) l.obj.position.x = l.x0 + l.dir * l.travel * k;
+    }
+    if (this.info && info) this.info.update(dt, info);
+  }
+
+  get doorsMoving() { return this.doorState.left !== this.doorTarget.left || this.doorState.right !== this.doorTarget.right; }
+
   /** 車側灯: red lamps on the car sides while the doors are open */
   setSideLamps(on) { this.sideLampMat.emissiveIntensity = on ? 3 : 0; }
 
@@ -281,6 +391,7 @@ export class TrainSet {
 
   dispose() {
     this.group.removeFromParent();
+    if (this.info) { this.info.t.dispose(); this.info.mat.dispose(); }
     for (const d of this.disposables || []) d.dispose();
   }
 }
