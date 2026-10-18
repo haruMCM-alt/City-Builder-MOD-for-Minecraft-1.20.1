@@ -271,7 +271,7 @@ class MB:
                     co = me.vertices[me.loops[li].vertex_index].co
                     uv.data[li].uv = uv_of(co.y, co.z)
                 continue
-            if name not in ("DEST", "STOPSIGN"):
+            if name not in ("DEST", "STOPSIGN") and not name.startswith("LCD_"):
                 for li in poly.loop_indices:
                     uv.data[li].uv = (0.0, 0.0)
                 continue

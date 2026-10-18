@@ -30,6 +30,7 @@ import { MelodyPlayer } from './audio/melody.js';
 import { MELODY_CLIPS } from './audio/melody-cues.js';
 import { buildTimetable, fmtTime } from './timetable.js';
 import { HUD } from './hud.js';
+import { CabDisplays } from './cabdisplays.js';
 import { Game } from './game.js';
 
 const $ = (id) => document.getElementById(id);
@@ -49,7 +50,9 @@ const hud = new HUD();
 const gltfs = {};
 let renderer, scene, camera, sun, hemi, composer = null, aoPass = null;
 let world = null, player = null, physics = null, game = null, traffic = null;
-let cab = null, mascon = null;
+let cab = null, mascon = null, cabLcd = null;
+// driver's eye (ref2/cab spec: high cab, eye 2.965 m above rail), car-local three.js coords
+const EYE = { x: 8.32, y: 2.965, z: -0.85, pitch: -0.07 };
 let running = false, paused = false;
 let camMode = 'cab';
 const look = { yaw: 0, pitch: -0.05, drag: false, lx: 0, ly: 0 };
@@ -280,6 +283,8 @@ async function startGame() {
   cab = gltfs.cab.scene.clone(true);
   cab.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
   mascon = cab.getObjectByName('mascon_handle');
+  if (cabLcd) cabLcd.dispose();
+  cabLcd = new CabDisplays(cab);
   player.cars[0].userData.inner.add(cab);
   hud.setup(veh, tt);
   game = new Game({ route, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from });
@@ -396,9 +401,9 @@ function setCamMode(m) {
   if (camera.parent) camera.parent.remove(camera);
   if (inCab) {
     player.cars[0].userData.inner.add(camera);
-    camera.position.set(8.45, 2.42, -0.62);
-    camera.fov = 58;
-    look.yaw = 0; look.pitch = -0.05;
+    camera.position.set(EYE.x, EYE.y, EYE.z);
+    camera.fov = 60;
+    look.yaw = 0; look.pitch = EYE.pitch;
   } else {
     scene.add(camera);
     camera.fov = 50;
@@ -416,8 +421,8 @@ function updateCamera(dt) {
     bob.y += bob.v * dt;
     const t = performance.now() / 1000;
     const vib = Math.min(1, physics.kmh / 100) * 0.006;
-    camera.position.y = 2.42 + bob.y + Math.sin(t * 13.1) * vib * 0.4;
-    camera.position.z = -0.62 + Math.sin(t * 2.3) * vib;
+    camera.position.y = EYE.y + bob.y + Math.sin(t * 13.1) * vib * 0.4;
+    camera.position.z = EYE.z + Math.sin(t * 2.3) * vib;
     camera.rotation.set(look.pitch, -Math.PI / 2 + look.yaw, 0);
   } else if (camMode === 'side') {
     route.pose(physics.s - 12, 16, p);
@@ -495,7 +500,7 @@ function setupInput() {
     look.pitch = Math.max(-0.6, Math.min(0.5, look.pitch - (e.clientY - look.ly) * 0.004));
     look.lx = e.clientX; look.ly = e.clientY;
   });
-  v.addEventListener('dblclick', () => { look.yaw = 0; look.pitch = -0.05; });
+  v.addEventListener('dblclick', () => { look.yaw = 0; look.pitch = EYE.pitch; });
   // on-screen buttons
   const hold = (id, fn) => {
     const el = $(id);
@@ -605,7 +610,12 @@ function simStep(dt) {
 function updateView(dt) {
   player.place(route, physics.s, () => 0, 0.0025 * Math.min(1, physics.kmh / 80));
   world.update(physics.s, 1);
-  if (mascon) mascon.rotation.z = physics.handle * 0.11;
+  if (mascon) {
+    // one-handle T grip: pull toward the driver for power (up to +45°), push forward to brake / EB (−50°)
+    const h = physics.handle, v = physics.veh;
+    mascon.rotation.z = h >= 0 ? (h / v.powerNotches) * 0.785 : (h / (v.brakeNotches + 1)) * 0.873;
+  }
+  if (cabLcd && camMode === 'cab') cabLcd.update(dt, { physics, game, route });
   player.setSideLamps(!!physics.doorsOpen);
   updateCamera(dt);
   const cp = new THREE.Vector3();
