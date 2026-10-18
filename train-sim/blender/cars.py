@@ -43,14 +43,24 @@ DOORS3 = [-6.30, 0.0, 6.30]
 E231 = Series(
     key="e231",
     # half widths: wide body (2,950 mm) with side bulge, narrowing to the roof
-    width_table=[(1.05, 1.36), (1.15, 1.425), (1.35, 1.465), (1.55, 1.475), (2.10, 1.475),
-                 (2.50, 1.468), (2.80, 1.452), (3.03, 1.415)],
-    zb=1.05, cant=3.03, top=3.62, roof_e=0.62,
-    doors=DOORS4, door_w=1.30, door_z=(1.10, 2.90),
-    win_z=(1.86, 2.70), win_r=0.07,
-    # side livery: (z0, z1, material, skip_doors)
-    # side bands continue the front bands at the same height (measured on the face)
-    side_zones=[(1.47, 1.65, "green", True), (1.65, 1.79, "orange", True), (2.87, 3.00, "green", False)],
+    # measured cross-section: widest 2,950 at z 1.5-1.8, tucked in 65 mm per side at the
+    # bottom (0.97), side wall leaning in 45 mm up to the gutter at 3.28, flat roof to 3.655
+    width_table=[(0.97, 1.400), (1.05, 1.415), (1.20, 1.445), (1.45, 1.472), (1.80, 1.475),
+                 (2.40, 1.465), (3.00, 1.442), (3.28, 1.430)],
+    zb=0.97, cant=3.28, top=3.655, roof_e=0.45,
+    doors=[-7.41, -2.47, 2.45, 7.39], door_w=1.30, door_z=(1.15, 2.946),
+    win_z=(1.915, 2.907), win_r=0.06,
+    # side livery: (z0, z1, material, skip_doors) - measured side elevations
+    side_zones=[(1.382, 1.662, "green", True), (1.662, 1.79, "orange", True), (3.083, 3.238, "green", False)],
+    # explicit door centres / windows (cx, width, mullions) per car type
+    layout={
+        "mid": dict(doors=[-7.41, -2.47, 2.45, 7.39],
+                    windows=[(-9.208, 0.683, 0), (-4.947, 2.015, 1), (-0.026, 2.031, 1), (4.919, 2.032, 1), (8.948, 0.699, 0)]),
+        "cab": dict(doors=[6.095, 2.482, -2.446, -7.375],
+                    windows=[(4.280, 0.683, 0), (0.018, 2.014, 1), (-4.927, 2.014, 1), (-9.190, 0.683, 0)]),
+    },
+    side_dest_pos=(-0.05, 3.20, 0.715, 0.17), side_lamp_x=[0.726, -0.673], side_lamp_z=3.20,
+    ac_pos={"mid": (-0.49, 3.27), "mid_panto": (-0.49, 3.27), "cab": (-0.99, 4.46)}, panto_x=7.42,
     crew_mat="crew",                 # the crew door is painted green (itreni side photos)
     nose_r=0.30, rake=(1.95, 0.10),
     front_zones=[(1.05, 1.22, "body"), (1.22, 1.45, "gfrp"), (1.45, 1.52, "body"), (1.52, 1.76, "green"),
@@ -62,28 +72,47 @@ E231 = Series(
 
 E233 = Series(
     key="e233",
-    width_table=E231.width_table,
-    zb=1.05, cant=3.03, top=3.62, roof_e=0.62,
-    doors=DOORS4, door_w=1.30, door_z=(1.10, 2.90),
-    win_z=(1.88, 2.72), win_r=0.05,
-    side_zones=[(1.50, 1.66, "green", True), (1.66, 1.78, "orange", True), (2.87, 3.00, "green", False)],
+    # ref2/e233/SPEC.md: same 2,950 wide body family as the E231, roof 3,620
+    width_table=[(0.97, 1.400), (1.05, 1.415), (1.20, 1.445), (1.45, 1.472), (1.80, 1.475),
+                 (2.40, 1.465), (3.00, 1.442), (3.28, 1.430)],
+    zb=0.97, cant=3.28, top=3.62, roof_e=0.45,
+    doors=[-7.41, -2.47, 2.47, 7.41], door_w=1.30, door_z=(1.13, 2.98),
+    win_z=(1.90, 2.85), win_r=0.06,
+    # bands at the front heights and, on the 3000番台, continuous across the doors
+    side_zones=[(1.41, 1.644, "green", False), (1.644, 1.772, "orange", False), (3.062, 3.215, "green", False)],
+    layout={
+        "mid": dict(doors=[-7.41, -2.47, 2.47, 7.41],
+                    windows=[(-9.0, 0.70, 0), (-4.94, 1.75, 1), (0.0, 1.75, 1), (4.94, 1.75, 1), (9.0, 0.70, 0)]),
+        "cab": dict(doors=[6.05, 2.40, -2.54, -7.48],
+                    windows=[(4.225, 0.70, 0), (-0.07, 1.75, 1), (-5.01, 1.75, 1), (-9.0, 0.70, 0)]),
+    },
+    side_dest_pos=(-0.05, 3.138, 0.60, 0.13), side_lamp_x=[0.60, -0.70], side_lamp_z=3.138,
+    ac_pos={"mid": (-0.49, 3.27), "mid_panto": (-0.49, 3.27), "cab": (-0.99, 4.46)}, panto_x=7.42,
     crew_mat="door",
     nose_r=0.42, rake=(1.40, 0.24), front_nx=0.80,
-    front_zones=[(1.05, 1.36, "silver"), (1.36, 1.62, "green"), (1.62, 1.74, "orange"), (1.74, 3.42, "gfrp"), (3.42, 9, "white")],
-    corner_zones=[(1.05, 1.36, "silver"), (1.36, 1.62, "green"), (1.62, 1.74, "orange"), (1.74, 3.50, "white")],
+    front_zones=[(1.05, 1.36, "silver")], corner_zones=[(1.05, 1.36, "silver")],
     front="e233", skirt="e233v4",
     panto="single", ac="au726", green=True,
 )
 
 S211 = Series(
     key="211",
-    # straight-sided stainless body with a small tumblehome at the bottom
-    width_table=[(1.05, 1.39), (1.20, 1.465), (2.85, 1.465), (3.03, 1.43)],
-    zb=1.05, cant=3.03, top=3.60, roof_e=0.55,
-    doors=DOORS3, door_w=1.30, door_z=(1.10, 2.86),
-    win_z=(1.86, 2.66), win_r=0.03,
-    # orange over green below the windows, orange line along the top
-    side_zones=[(1.48, 1.62, "green", True), (1.62, 1.80, "orange", True), (2.84, 2.96, "orange", True)],
+    # ref2/s211/SPEC.md: widest at the band (1,475 half), leaning in to 1,435 above, tucked to
+    # 1,418 at the bottom (0.986); roof crown 3,652 with a ~300 shoulder
+    width_table=[(0.986, 1.418), (1.20, 1.450), (1.50, 1.472), (1.75, 1.475), (2.20, 1.465), (2.80, 1.445), (3.30, 1.430)],
+    zb=0.986, cant=3.30, top=3.652, roof_e=1.0,
+    doors=[-6.52, 0.0, 6.52], door_w=1.30, door_z=(1.15, 2.98),
+    win_z=(2.005, 2.950), win_r=0.03,
+    # side waist band (thinner than the front one) + a high orange stripe running over the doors
+    side_zones=[(1.540, 1.643, "green", True), (1.643, 1.858, "orange", True), (3.135, 3.270, "orange", False)],
+    layout={
+        "mid": dict(doors=[-6.52, 0.0, 6.52],
+                    windows=[(-8.75, 1.07, 1), (-7.65, 0.50, 0), (-5.204, 0.50, 0), (-4.003, 1.07, 1), (-2.517, 1.07, 1), (-1.316, 0.50, 0),
+                             (1.316, 0.50, 0), (2.517, 1.07, 1), (4.003, 1.07, 1), (5.204, 0.50, 0), (7.65, 0.50, 0), (8.75, 1.07, 1)]),
+        "cab": dict(doors=[6.59, 0.07, -6.45],
+                    windows=[(7.95, 0.90, 0), (5.27, 0.50, 0), (4.07, 1.07, 1), (2.59, 1.07, 1), (1.39, 0.50, 0),
+                             (-1.25, 0.50, 0), (-2.45, 1.07, 1), (-3.93, 1.07, 1), (-5.13, 0.50, 0), (-7.60, 0.50, 0), (-8.75, 1.07, 1)]),
+    },
     crew_mat="door",
     nose_r=0.12, rake=(2.0, 0.04),
     # white painted face: green + orange band carrying the light units
@@ -96,12 +125,22 @@ S211 = Series(
 
 S115 = Series(
     key="115",
-    width_table=[(1.05, 1.36), (1.15, 1.45), (2.80, 1.45), (3.00, 1.41)],
-    zb=1.05, cant=3.00, top=3.66, roof_e=0.70,
-    doors=DOORS3, door_w=1.10, door_z=(1.12, 2.86),
-    win_z=(1.84, 2.62), win_r=0.03,
-    # 湘南色: green lower body, orange from the window line up, green line at the roof edge
-    side_zones=[(1.05, 1.74, "paint_green", False), (1.74, 3.00, "paint_orange", False)],
+    # ref2/s115/SPEC.md: measured front silhouette (2,900 max, 裾絞り to 2,800), quick shoulder, flat roof
+    width_table=[(0.99, 1.400), (1.50, 1.425), (2.00, 1.440), (2.30, 1.448), (2.80, 1.445), (3.075, 1.435), (3.135, 1.418)],
+    zb=0.99, cant=3.135, top=3.58, roof_e=0.35,
+    doors=[-6.096, 0.0, 6.096], door_w=1.30, door_z=(1.15, 2.98),
+    win_z=(1.89, 2.86), win_r=0.04,
+    # 湘南色: orange band 1,711-3,142 all round, green below, green eave strip above
+    side_zones=[(0.99, 1.711, "paint_green", False), (1.711, 3.142, "paint_orange", False), (3.142, 3.30, "paint_green", False)],
+    layout={
+        "mid": dict(doors=[-6.096, 0.0, 6.096],
+                    windows=[(-8.908, 1.056, 0), (-7.70, 0.80, 0), (-4.86, 0.65, 0), (-3.76, 1.055, 0), (-2.335, 1.055, 0), (-1.22, 0.65, 0),
+                             (1.22, 0.65, 0), (2.335, 1.055, 0), (3.76, 1.055, 0), (4.86, 0.65, 0), (7.70, 0.80, 0), (8.908, 1.056, 0)]),
+        "cab": dict(doors=[6.108, 0.012, -6.084],
+                    windows=[(7.877, 0.475, 0), (7.204, 0.343, 0), (4.88, 0.65, 0), (3.76, 1.055, 0), (2.335, 1.055, 0), (1.24, 0.65, 0),
+                             (-1.216, 0.65, 0), (-2.337, 1.055, 0), (-3.762, 1.055, 0), (-4.857, 0.65, 0), (-7.180, 0.343, 0),
+                             (-7.879, 0.475, 0), (-8.908, 1.056, 0)]),
+    },
     crew_mat="paint_orange",
     door_mat="paint_orange",
     nose_r=0.20, rake=(2.95, 0.10),
@@ -194,12 +233,18 @@ def side_material(S, M, car, c, nrm):
     if nrm.z < -0.7:
         return M["under"]
     if c.z > S.cant + 0.005:
+        F = getattr(S, "face", None)
+        if F and F.get("roof_cap") and getattr(car, "kind", "") == "cab" and c.x > H - F["roof_cap"]:
+            return M[F.get("roof_cap_mat", "paint_green")]
         return M[getattr(S, "roof_mat", "roofgrey")]
     for (z0, z1, m, skip) in S.side_zones:
         if z0 <= c.z <= z1:
             if skip and car.in_door(c.x, c.z):
                 break
             return M[m]
+    F = getattr(S, "face", None)
+    if F and F.get("frp_wrap") and getattr(car, "kind", "") == "cab" and c.x > H - F["frp_wrap"]:
+        return M[F.get("frp_mat", "frp")]     # the FRP front mask wraps round onto the side
     if hasattr(car, "in_crew") and car.in_crew(c.x, c.z):
         return M[S.crew_mat]
     if car.in_door(c.x, c.z):
@@ -220,15 +265,27 @@ class Layout:
         self.crew = []
         dz0, dz1 = S.door_z
         hw = S.door_w / 2
-        for d in S.doors:
+        lay = getattr(S, "layout", None)
+        lk = "cab" if kind == "cab" else "mid"
+        self.door_centers = list(lay[lk]["doors"]) if lay and lk in lay else list(S.doors)
+        for d in self.door_centers:
             self.doors.append((d - hw, d + hw, dz0, dz1))
             for sx in (-1, 1):
                 leaf_c = d + sx * hw / 2
                 self.door_windows.append((leaf_c, (S.win_z[0] + 0.06 + S.win_z[1]) / 2, hw - 0.20, S.win_z[1] - S.win_z[0] - 0.02, 0.05))
         wz0, wz1 = S.win_z
         cz, wh = (wz0 + wz1) / 2, wz1 - wz0
-        edges = [-H + 0.30] + sum([[d - hw - 0.28, d + hw + 0.28] for d in sorted(S.doors)], []) + [H - 0.30]
+        edges = [-H + 0.30] + sum([[d - hw - 0.28, d + hw + 0.28] for d in sorted(self.door_centers)], []) + [H - 0.30]
         cab_limit = H - 2.05 if kind == "cab" else H
+        if lay and lk in lay:
+            for (cx, w, mull) in lay[lk]["windows"]:
+                if mull:
+                    pw = (w - 0.06 * mull) / (mull + 1)
+                    for k in range(mull + 1):
+                        self.windows.append((cx - w / 2 + pw / 2 + k * (pw + 0.06), cz, pw, wh, S.win_r))
+                else:
+                    self.windows.append((cx, cz, w, wh, S.win_r))
+            edges = []
         for a, b in zip(edges[0::2], edges[1::2]):
             b = min(b, cab_limit)
             span = b - a
@@ -511,6 +568,7 @@ def weld(ob, dist=1e-5):
     bm = bmesh.new()
     bm.from_mesh(ob.data)
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=dist)
+    bmesh.ops.dissolve_degenerate(bm, dist=1e-6, edges=bm.edges)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     bm.to_mesh(ob.data)
     bm.free()
@@ -592,10 +650,10 @@ def wi(S, z):
     return S.width(z) - WALL
 
 
-def seat_segments(S, x0, x1, gap=0.10):
+def seat_segments(S, x0, x1, gap=0.10, doors=None):
     hw = S.door_w / 2
     cuts = [x0]
-    for d in sorted(S.doors):
+    for d in sorted(doors if doors is not None else S.doors):
         if x0 < d < x1:
             cuts += [d - hw - gap, d + hw + gap]
     cuts.append(x1)
@@ -618,7 +676,7 @@ def long_seat(mb, M, S, a, b, s, seat):
         xm = a + ln * 3 / 7
         mb.cyl((xm, s * (ws - 0.64), (f + 3.36) / 2), (0, 0, 1), 0.018, 3.36 - f, M["pole"], seg=8)
     # luggage rack + strap rail with hanging straps
-    zr = 2.66
+    zr = max(2.66, S.win_z[1] + 0.07)
     mb.box((xc, s * (wi(S, zr) - 0.18), zr), (ln - 0.06, 0.32, 0.018), M["pole"])
     mb.cyl((xc, s * (wi(S, zr) - 0.34), zr + 0.01), (1, 0, 0), 0.012, ln - 0.06, M["pole"], seg=6)
     ys = s * (ws - 0.68)
@@ -651,9 +709,10 @@ def box_seats(mb, M, S, a, b, s, seat):
     mb.box(((a + b) / 2, s * (wi(S, zr) - 0.18), zr), (b - a - 0.06, 0.32, 0.018), M["pole"])
 
 
-def saloon(mb, M, S, x0, x1, kind):
+def saloon(mb, M, S, x0, x1, kind, doors=None):
+    doors = doors if doors is not None else S.doors
     seat = M.get("seat_" + S.key, M["seat_e231"])
-    segs = seat_segments(S, x0, x1)
+    segs = seat_segments(S, x0, x1, doors=doors)
     for i, (a, b) in enumerate(segs):
         end = (i == 0 and kind != "cab_rev") or i == len(segs) - 1
         for s in (-1, 1):
@@ -664,26 +723,28 @@ def saloon(mb, M, S, x0, x1, kind):
                 long_seat(mb, M, S, a, b, s, M["seat_prio"] if prio else seat)
     # ceiling, light strips, door LCDs
     xc, ln = (x0 + x1) / 2, x1 - x0
-    mb.box((xc, 0, 3.43), (ln - 0.02, 1.90, 0.02), M["int_ceiling"])
+    zc = 3.50 if S.cant > 3.2 else 3.43
+    mb.box((xc, 0, zc), (ln - 0.02, 1.90, 0.02), M["int_ceiling"])
     for s in (-1, 1):
-        mb.box((xc, s * 0.62, 3.405), (ln - 0.3, 0.15, 0.03), M["int_light"])
+        mb.box((xc, s * 0.62, zc - 0.025), (ln - 0.3, 0.15, 0.03), M["int_light"])
     hw = S.door_w / 2
-    for d in S.doors:
+    for d in doors:
         if not (x0 < d < x1):
             continue
         for s in (-1, 1):
             if S.key in ("e231", "e233"):
-                mb.box((d, s * (wi(S, 3.0) - 0.05), 3.0), (0.56, 0.06, 0.17), M["lcd"])
+                zl = S.door_z[1] + 0.10
+                mb.box((d, s * (wi(S, zl) - 0.05), zl), (0.56, 0.06, 0.17), M["lcd"])
             # door pocket side poles (yellow on JR East commuter cars near doors? keep stainless)
             for sx in (-1, 1):
                 mb.cyl((d + sx * (hw + 0.06), s * (wi(S, 2.0) - 0.07), 2.0), (0, 0, 1), 0.016, 1.3, M["pole"], seg=8)
 
 
-def side_lamps(mb, M, S, x):
+def side_lamps(mb, M, S, x, z=2.99):
     for s in (-1, 1):
-        y = s * (S.width(2.99) + 0.012)
-        mb.box((x, y, 2.99), (0.11, 0.026, 0.075), M["sidelamp"])
-        mb.box((x, y - s * 0.008, 2.99), (0.14, 0.012, 0.10), M["dkgrey"])
+        y = s * (S.width(z) + 0.012)
+        mb.box((x, y, z), (0.11, 0.026, 0.075), M["sidelamp"])
+        mb.box((x, y - s * 0.008, z), (0.14, 0.012, 0.10), M["dkgrey"])
 
 
 # ---------------------------------------------------------------------------
@@ -749,9 +810,9 @@ def underfloor(mb, M, kind, seed):
 
 
 def coupler(mb, M, x, sgn, front=False):
-    mb.box((x + sgn * 0.30, 0, 0.86), (0.60, 0.20, 0.16), M["dkgrey"])
-    mb.box((x + sgn * 0.62, 0, 0.86), (0.10, 0.36, 0.30), M["dkgrey"])
-    mb.box((x + sgn * 0.70, -0.09, 0.86), (0.10, 0.10, 0.10), M["grey"])
+    mb.box((x + sgn * 0.30, 0, 0.88), (0.60, 0.20, 0.16), M["dkgrey"])
+    mb.box((x + sgn * 0.62, 0, 0.88), (0.10, 0.36, 0.30), M["dkgrey"])
+    mb.box((x + sgn * 0.70, -0.09, 0.88), (0.10, 0.10, 0.10), M["grey"])
     if front:
         mb.box((x + sgn * 0.48, 0, 0.66), (0.24, 0.34, 0.12), M["dkgrey"])        # electrical coupler
         for y in (-0.22, 0.22):
@@ -808,17 +869,20 @@ def panto_pg16(mb, M, x, roof_z):
     mb.box((x, 0, base + 0.20), (1.7, 1.2, 0.06), M["panto"])
 
 
-def roof_ac(mb, M, S, x, roof_z):
+def roof_ac(mb, M, S, x, roof_z, length=2.7):
     if S.ac == "au726":
         # AU726: low stainless unit with ribbed grilles and two fan openings
-        outline = [(-1.35, 0.0), (1.35, 0.0), (1.30, 0.30), (1.10, 0.38), (-1.10, 0.38), (-1.30, 0.30)]
+        hl = length / 2
+        outline = [(-hl, 0.0), (hl, 0.0), (hl - 0.05, 0.30), (hl - 0.25, 0.38), (-hl + 0.25, 0.38), (-hl + 0.05, 0.30)]
         prism(mb, outline, lambda u, v, d: (x + u, d, roof_z - 0.03 + v), -0.98, 0.98, M["silver"])
+        # the grilled AU726 part sits at the rear end of a long plain cover (cab cars)
+        gx = x - (hl - 1.25) if length > 3.6 else x
         for s in (-1, 1):
             for k in range(14):
-                mb.box((x - 0.95 + k * 0.146, s * 0.99, roof_z + 0.16), (0.05, 0.02, 0.22), M["grille"])
+                mb.box((gx - 0.95 + k * 0.146, s * 0.99, roof_z + 0.16), (0.05, 0.02, 0.22), M["grille"])
         for dx in (-0.55, 0.55):
-            mb.cyl((x + dx, 0, roof_z + 0.36), (0, 0, 1), 0.32, 0.03, M["grille"], seg=20)
-            mb.cyl((x + dx, 0, roof_z + 0.37), (0, 0, 1), 0.06, 0.02, M["silver"], seg=10)
+            mb.cyl((gx + dx, 0, roof_z + 0.36), (0, 0, 1), 0.32, 0.03, M["grille"], seg=20)
+            mb.cyl((gx + dx, 0, roof_z + 0.37), (0, 0, 1), 0.06, 0.02, M["silver"], seg=10)
     elif S.ac == "au75s":
         outline = [(-1.6, 0.0), (1.6, 0.0), (1.55, 0.36), (-1.55, 0.36)]
         prism(mb, outline, lambda u, v, d: (x + u, d, roof_z - 0.02 + v), -0.95, 0.95, M["light_grey"])
@@ -944,39 +1008,42 @@ def skirt(mb, S, M):
             mb.box((xs - 0.25, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])
         return
     if S.skirt == "e233v4":
-        # E233-3000: big white plate with a deep U notch from the top, slots on the right wing
-        outline = [(-1.30, 0.63), (-0.70, 0.63), (-0.33, 0.30), (0.33, 0.30), (0.70, 0.63), (1.30, 0.63),
-                   (1.26, 0.22), (1.05, 0.10), (-1.05, 0.10), (-1.26, 0.22)]
-        xs = H + 0.02
+        # ref2/e233/SPEC.md: two silver plates z 239-647 (outer |y| 1,283, top edge to |y| 711,
+        # diagonal to (|y| 367, z 338), vertical to the bottom); dark centre section set back;
+        # two slots on the right plate, a notch on the left plate
+        xs = H + 0.05
 
         def ax(u, v, d):
-            return (xs + d + (0.63 - v) * 0.08, u, v)
-        prism(mb, outline, ax, -0.06, 0.0, M["skirtw"])
-        for k in range(3):
-            mb.box(ax(0.92, 0.49 - k * 0.05, 0.004), (0.01, 0.30, 0.022), M["black"])
+            return (xs + (0.647 - v) * 0.25 + d, u, v)
         for s in (-1, 1):
-            mb.poly([ax(s * 1.30, 0.63, -0.06), (xs - 0.75, s * 1.22, 0.63), (xs - 0.75, s * 1.10, 0.30), ax(s * 1.26, 0.22, -0.06)], M["skirtw"], (0, s, 0))
-            mb.beam((xs - 0.6, s * 0.95, 0.92), (xs - 0.05, s * 1.05, 0.60), 0.06, 0.08, M["dkgrey"])
-            mb.box((xs - 0.25, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])
-        mb.box((xs - 0.35, 0, 0.66), (0.3, 2.3, 0.06), M["dkgrey"])
+            plate = [(s * 0.367, 0.239), (s * 1.283, 0.239), (s * 1.283, 0.647), (s * 0.711, 0.647), (s * 0.367, 0.338)]
+            prism(mb, plate, ax, -0.05, 0.0, M["silver"])
+            mb.poly([ax(s * 1.283, 0.647, -0.05), (H - 0.65, s * 1.22, 0.647), (H - 0.65, s * 1.15, 0.30), ax(s * 1.283, 0.239, -0.05)], M["silver"], (0, s, 0))
+            mb.beam((H - 0.55, s * 0.95, 0.94), (H + 0.05, s * 1.05, 0.66), 0.06, 0.08, M["dkgrey"])
+            mb.box((H - 0.20, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])
+        mb.box((xs - 0.12, 0, 0.361), (0.05, 0.734, 0.244), M["dkgrey"])                         # centre section
+        for (z0, z1) in ((0.530, 0.559), (0.489, 0.518)):
+            mb.box(ax(0.936, (z0 + z1) / 2, 0.004), (0.012, 0.236, z1 - z0), M["black"])
+        mb.box(ax(-0.9685, 0.6235, 0.004), (0.012, 0.137, 0.047), M["black"])
+        mb.box((H - 0.30, 0, 0.70), (0.3, 2.3, 0.06), M["dkgrey"])
         return
     if S.skirt == "e231v4":
-        # E231-1000: low white plate, chamfered outer corners, shallow V notch at the bottom,
-        # wrapping back at the sides; equipment and coupler visible above it
-        outline = [(-1.30, 0.63), (1.30, 0.63), (1.27, 0.42), (1.06, 0.13), (0.36, 0.13), (0.20, 0.25),
-                   (-0.20, 0.25), (-0.36, 0.13), (-1.06, 0.13), (-1.27, 0.42)]
-        xs = H + 0.02
+        # ref2/e231/SPEC.md: light silver-grey plate, half-width 1,255, ends 690→200 tall with 45° lower
+        # chamfers (~230), trapezoid notch in the top edge (±690 top, ±306 bottom, 348 deep),
+        # V-pointed in plan and ≈450 proud of the face at the bottom
+        outline = [(-1.255, 0.69), (-0.69, 0.69), (-0.306, 0.342), (0.306, 0.342), (0.69, 0.69), (1.255, 0.69),
+                   (1.255, 0.43), (1.025, 0.20), (-1.025, 0.20), (-1.255, 0.43)]
 
         def ax(u, v, d):
-            return (xs + d + (0.63 - v) * 0.10, u, v)
+            return (H + 0.10 + (0.69 - v) * 0.40 + 0.14 * (1 - abs(u) / 1.255) + d, u, v)
         prism(mb, outline, ax, -0.05, 0.0, M["skirtw"])
         for s in (-1, 1):
             # side wings bending back towards the bogie
-            mb.poly([ax(s * 1.30, 0.63, -0.05), (xs - 0.75, s * 1.22, 0.63), (xs - 0.75, s * 1.10, 0.30), ax(s * 1.27, 0.42, -0.05)], M["skirtw"], (0, s, 0))
-            mb.beam((xs - 0.6, s * 0.95, 0.92), (xs - 0.05, s * 1.05, 0.60), 0.06, 0.08, M["dkgrey"])   # stays
-            mb.box((xs - 0.25, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])                        # air hose cocks
-            mb.cyl((xs - 0.12, s * 0.45, 0.70), (0, 0, 1), 0.025, 0.25, M["rubber"], seg=6)
-        mb.box((xs - 0.35, 0, 0.66), (0.3, 2.3, 0.06), M["dkgrey"])                                     # cross beam
+            mb.poly([ax(s * 1.255, 0.69, -0.05), (H - 0.70, s * 1.20, 0.69), (H - 0.70, s * 1.12, 0.32), ax(s * 1.255, 0.43, -0.05)], M["skirtw"], (0, s, 0))
+            mb.beam((H - 0.55, s * 0.95, 0.94), (H + 0.05, s * 1.05, 0.66), 0.06, 0.08, M["dkgrey"])    # stays
+            mb.box((H - 0.20, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])                         # air hose cocks
+            mb.cyl((H - 0.08, s * 0.45, 0.70), (0, 0, 1), 0.025, 0.25, M["rubber"], seg=6)
+        mb.box((H - 0.30, 0, 0.70), (0.3, 2.3, 0.06), M["dkgrey"])                                      # cross beam
         return
     if S.skirt == "none":
         mb.box((x0 - 0.10, 0, 0.98), (0.20, 2.5, 0.12), M["dkgrey"])
@@ -1014,10 +1081,11 @@ def front_rect_skirt_slot(mb, x0, y, M):
         mb.box((x0 + (1.02 - z) * 0.30 + 0.004, 0.75, z), (0.01, 0.30, 0.02), M["black"])
 
 
-def side_dest(mb, S, M, x, z):
+def side_dest(mb, S, M, x, z, w=0.84, h=0.16):
     for s in (-1, 1):
         y = s * (S.width(z) + 0.004)
-        mb.poly([(x - 0.42, y, z - 0.08), (x + 0.42, y, z - 0.08), (x + 0.42, y, z + 0.08), (x - 0.42, y, z + 0.08)], M["dest"], (0, s, 0))
+        mb.box((x, y - s * 0.002, z), (w + 0.05, 0.012, h + 0.05), M["black"])
+        mb.poly([(x - w / 2, y + s * 0.005, z - h / 2), (x + w / 2, y + s * 0.005, z - h / 2), (x + w / 2, y + s * 0.005, z + h / 2), (x - w / 2, y + s * 0.005, z + h / 2)], M["dest"], (0, s, 0))
 
 
 # ---------------------------------------------------------------------------
@@ -1042,15 +1110,25 @@ def make_car(S, M, kind, coll):
     if cab:  # cab side windows stay dark (no saloon behind them)
         glass_panes(det, S, M, [w for w in car.windows if w[0] >= xi1] + [w for w in car.door_windows if w[0] >= xi1], m=M["win"])
     inner = MB(f"{S.key}_{kind}_saloon")
-    saloon(inner, M, S, xi0, xi1, kind)
-    side_lamps(det, M, S, -H + 0.55)
-    side_dest(det, S, M, S.doors[1] + 1.25, S.win_z[1] + 0.13)
+    saloon(inner, M, S, xi0, xi1, kind, car.door_centers)
+    if getattr(S, "side_dest_pos", None):
+        sx, sz, sw, sh = S.side_dest_pos
+        side_dest(det, S, M, sx, sz, sw, sh)
+        for lx in S.side_lamp_x:
+            side_lamps(det, M, S, lx, S.side_lamp_z)
+    else:
+        side_lamps(det, M, S, -H + 0.55)
+        side_dest(det, S, M, S.doors[1] + 1.25, S.win_z[1] + 0.13)
     for b in (-BOGIE, BOGIE):
         bogie(det, M, b, motor=(kind == "mid_panto" or (kind == "mid" and S.key in ("115", "211"))))
     underfloor(det, M, kind, hash((S.key, kind)) & 0xffff)
-    roof_ac(det, M, S, -0.5 if kind != "mid_panto" else -3.6, S.top - 0.02)
+    if getattr(S, "ac_pos", None):
+        acx, acl = S.ac_pos[kind]
+        roof_ac(det, M, S, acx, S.top - 0.02, acl)
+    else:
+        roof_ac(det, M, S, -0.5 if kind != "mid_panto" else -3.6, S.top - 0.02)
     if kind == "mid_panto":
-        (panto_ps33 if S.panto == "single" else panto_pg16)(det, M, 5.4, S.top - 0.03)
+        (panto_ps33 if S.panto == "single" else panto_pg16)(det, M, getattr(S, "panto_x", 5.4), S.top - 0.03)
     gangway(det, M, -H, -1, top=S.door_z[1] + 0.05)
     coupler(det, M, -H, -1)
     extra = []
@@ -1089,33 +1167,71 @@ def make_car(S, M, kind, coll):
     return obj
 
 
+GREEN_DEFAULT = dict(
+    A1=-4.85, B0=7.55, doors=[(-5.75, -4.95), (7.65, 8.45)], door_z=(1.10, 2.92),
+    end_zb=1.05, end_cant=3.03, end_top=3.62,
+    side=[(1.45, 1.70, "green", True), (1.70, 1.78, "orange", True), (3.05, 3.24, "green", False)],
+    winA=[(-8.95, 0.95), (-7.85, 0.95), (-6.75, 0.95)], winB=[], win_z=(1.87, 2.69),
+    dwin_z=(2.03, 2.81),
+    dd_zb=0.70, dd_cant=3.56, dd_top=4.07, dd_floor=0.84,
+    up=[(-3.17 + k * 2.26, 2.00) for k in range(5)], up_z=(2.58, 3.30),
+    low=[(-3.17 + k * 2.26, 1.95) for k in range(5)], low_z=(1.30, 1.94),
+    band=[(2.05, 2.44, "green", False), (2.44, 2.53, "orange", False)],
+    ac=[(-H + 1.6, 2.4), (H - 1.2, 1.6)], marks=[-4.62, 7.30], side_dest=-8.2,
+)
+# サロE231/E230-1000, ref2/e231/SPEC.md §5.4 (20,000 mm photo scale → ×0.975 to our 19.5 m body)
+GREEN_E231 = dict(
+    A1=-5.24, B0=5.16, doors=[(-6.10, -5.29), (5.28, 6.14)], door_z=(1.15, 2.946),
+    end_zb=0.97, end_cant=3.28, end_top=3.655,
+    side=None,                                   # = the normal side bands of the series
+    winA=[(-8.775, 0.78), (-7.84, 0.78), (-6.88, 0.79)], winB=[(6.91, 0.80), (7.87, 0.81)], win_z=(1.915, 2.907),
+    dwin_z=(2.00, 2.85),
+    dd_zb=0.66, dd_cant=3.62, dd_top=4.08, dd_floor=0.76,
+    up=[(-3.755, 0.698), (-2.339, 1.640), (-0.449, 1.657), (1.427, 1.640), (3.319, 1.655)], up_z=(2.698, 3.535),
+    low=[(-3.755, 0.698), (-2.339, 1.640), (-0.449, 1.657), (1.427, 1.640), (3.319, 1.655)], low_z=(0.939, 1.810),
+    band=[(1.925, 2.358, "green", False), (2.368, 2.567, "orange", False)],
+    ac=[(-8.03, 2.35), (8.11, 2.35)], marks=[-5.05, 4.95], side_dest=-8.30,
+)
+
+
+# サロE233/E232-3000, ref2/e233/SPEC.md (positions ×0.975 to our 19.5 m body)
+GREEN_E233 = dict(
+    A1=-4.85, B0=4.85, doors=[(-5.685, -4.885), (4.885, 5.685)], door_z=(1.13, 2.945),
+    end_zb=0.97, end_cant=3.28, end_top=3.62,
+    side=[(1.41, 1.645, "green", True), (1.645, 1.772, "orange", True), (3.06, 3.20, "green", False)],
+    winA=[(-9.0, 0.60), (-7.43, 0.81), (-6.48, 0.81)], winB=[(6.32, 0.70), (7.15, 0.68), (9.0, 0.60)], win_z=(1.904, 2.775),
+    dwin_z=(2.00, 2.80),
+    dd_zb=0.62, dd_cant=3.32, dd_top=4.07, dd_floor=0.86,
+    up=[(-3.411, 0.65), (-2.07, 1.544), (-0.309, 1.491), (1.426, 1.49), (3.266, 1.477)], up_z=(2.598, 3.307),
+    low=[(-3.411, 0.65), (-2.07, 1.544), (-0.309, 1.491), (1.426, 1.49), (3.266, 1.477)], low_z=(1.042, 1.792),
+    band=[(1.924, 2.313, "green", False), (2.313, 2.494, "orange", False)],
+    ac=[(-8.0, 2.35), (8.0, 2.35)], marks=[-4.62, 4.62], side_dest=8.3, side_dest_z=3.13,
+)
+
+
 def make_green(S, M, coll):
-    """Double-deck green car (サロE231/E230 style): flat-floor ends, low-slung double-deck centre."""
+    """Double-deck green car (サロ): single-deck end sections with doors, low-slung double-deck centre."""
+    G = {"e231": GREEN_E231, "e233": GREEN_E233}.get(S.key, GREEN_DEFAULT)
     mats = M
-    lvA = sorted({1.45, 1.70, 1.78, 1.85, 2.72, 3.05, 3.24, 1.10, 2.90})
+    green_side = G["side"] or S.side_zones
+    lvA = sorted({1.10, 1.45, 1.70, 1.78, 1.85, 2.72, 2.90} | {z for zz in green_side for z in zz[:2]} | set(G["win_z"]))
     car_end = Layout(S, "green_end")
     car_end.doors, car_end.windows, car_end.door_windows, car_end.crew = [], [], [], []
-    # sections along x
-    A0, A1 = -H, -4.85
-    B0, B1 = 7.55, H
+    A0, A1 = -H, G["A1"]
+    B0, B1 = G["B0"], H
     D0, D1 = A1 - 0.05, B0 + 0.05
-    doors = [(-5.75, -4.95, 1.10, 2.92), (7.65, 8.45, 1.10, 2.92)]
+    dz = G["door_z"]
+    doors = [(a, b, dz[0], dz[1]) for (a, b) in G["doors"]]
     car_end.doors = doors
+    SA = Series(**{**S.__dict__, "side_zones": green_side, "door_z": dz})
 
-    green_side = [(1.45, 1.70, "green", True), (1.70, 1.78, "orange", True), (3.05, 3.24, "green", False)]
-    SA = Series(**{**S.__dict__, "side_zones": green_side, "door_z": (1.10, 2.92)})
-
-    def section(x0, x1, zb, cant, top, levels, zones, name, taper=None):
+    def section(x0, x1, zb, cant, top, levels, zones, name):
         T = Series(**{**S.__dict__, "side_zones": zones})
         mb = MB(name)
         loop, _ = profile(T, levels, zb=zb, cant=cant, top=top)
         zc = (zb + top) / 2
         xs = sorted({x0, x1} | {d for (a, b, _, _) in doors for d in (a, b) if x0 < d < x1})
-        rows = []
-        for x in xs:
-            rows.append([(x, y, z) for (y, z) in loop])
-        if taper:
-            rows = taper(rows)
+        rows = [[(x, y, z) for (y, z) in loop] for x in xs]
         ids = loft(mb, rows, lambda c, n: side_material(T, mats, car_end, c, n), zc)
         mb.faces.append((list(reversed(ids[0])), mb._mi(mats["body"]), False))
         mb.faces.append((list(ids[-1]), mb._mi(mats["body"]), False))
@@ -1123,12 +1239,12 @@ def make_green(S, M, coll):
         fix_normals(ob)
         return ob
 
-    endA = section(A0, A1, 1.05, 3.03, 3.62, lvA, green_side, "green_endA")
-    endB = section(B0, B1, 1.05, 3.03, 3.62, lvA, green_side, "green_endB")
-    # double-deck centre: lofted with rounded drop at both ends (bottom and roof)
-    lvD = sorted({1.22, 1.29, 1.95, 2.05, 2.44, 2.53, 2.60, 3.32})
-    # thick green band with orange on top between the decks (itreni side photos)
-    zones_D = [(2.05, 2.44, "green", False), (2.44, 2.53, "orange", False)]
+    ez = (G["end_zb"], G["end_cant"], G["end_top"])
+    endA = section(A0, A1, *ez, lvA, green_side, "green_endA")
+    endB = section(B0, B1, *ez, lvA, green_side, "green_endB")
+    # double-deck centre: lofted with a rounded drop at both ends (bottom and roof)
+    zones_D = G["band"]
+    lvD = sorted({1.22} | {z for zz in zones_D for z in zz[:2]} | set(G["up_z"]) | set(G["low_z"]))
     TD = Series(**{**S.__dict__, "side_zones": zones_D})
     mbD = MB("green_dd")
     rows = []
@@ -1137,33 +1253,37 @@ def make_green(S, M, coll):
     xs += [D1 - (0.55 * (1 - math.cos(math.pi / 2 * k / n_end))) for k in range(n_end, -1, -1)]
     for x in xs:
         e = min(x - D0, D1 - x)
-        f = min(1.0, e / 0.55)
-        f = math.sin(f * math.pi / 2)
-        zb = 1.05 - (1.05 - 0.70) * f
-        top = 3.62 + (4.07 - 3.62) * f
-        cant = 3.38 + (3.56 - 3.38) * f
-        lp, _ = profile(TD, lvD, zb=zb, cant=cant, top=top)
+        f = math.sin(min(1.0, e / 0.55) * math.pi / 2)
+        zb = ez[0] - (ez[0] - G["dd_zb"]) * f
+        top = ez[2] + (G["dd_top"] - ez[2]) * f
+        cant = ez[1] + 0.35 * (1 - f) * 0 + (G["dd_cant"] - ez[1]) * f
+        lp, _ = profile(TD, [z for z in lvD if zb < z < cant], zb=zb, cant=cant, top=top)
         rows.append([(x, y, z) for (y, z) in lp])
     TD.cant = 99.0
+
     class NoDoors:
         def in_door(self, x, z):
             return False
     nd = NoDoors()
-    ids = loft(mbD, rows, lambda c, n: mats["roofgrey"] if n.z > 0.45 else side_material(TD, mats, nd, c, n), (0.7 + 4.07) / 2)
+    ids = loft(mbD, rows, lambda c, n: mats["roofgrey"] if n.z > 0.45 else side_material(TD, mats, nd, c, n), (G["dd_zb"] + G["dd_top"]) / 2)
     mbD.faces.append((list(reversed(ids[0])), mbD._mi(mats["body"]), False))
     mbD.faces.append((list(ids[-1]), mbD._mi(mats["body"]), False))
     dd = mbD.build(coll)
+    weld(dd, 1e-6)
     fix_normals(dd)
     # windows
-    winA = [(-8.95, 2.28, 0.95, 0.82, 0.10), (-7.85, 2.28, 0.95, 0.82, 0.10), (-6.75, 2.28, 0.95, 0.82, 0.10)]
-    dwin = [(-5.35, 2.42, 0.42, 0.78, 0.05), (8.05, 2.42, 0.42, 0.78, 0.05)]
-    up = [(-3.17 + k * 2.26, 2.94, 2.00, 0.72, 0.16) for k in range(5)]
-    low = [(-3.17 + k * 2.26, 1.62, 1.95, 0.64, 0.08) for k in range(5)]
+    wz0, wz1 = G["win_z"]
+    rect = lambda cx, w, z0, z1, r: (cx, (z0 + z1) / 2, w, z1 - z0, r)
+    winA = [rect(cx, w, wz0, wz1, 0.08) for (cx, w) in G["winA"]]
+    winB = [rect(cx, w, wz0, wz1, 0.08) for (cx, w) in G["winB"]]
+    dwin = [rect((a + b) / 2, (b - a) - 0.40, G["dwin_z"][0], G["dwin_z"][1], 0.05) for (a, b) in G["doors"]]
+    up = [rect(cx, w, *G["up_z"], 0.14) for (cx, w) in G["up"]]
+    low = [rect(cx, w, *G["low_z"], 0.08) for (cx, w) in G["low"]]
     hollow(endA, SA, M, coll, A0 + 0.08, A1 - 0.06, lv=lvA)
     hollow(endB, SA, M, coll, B0 + 0.06, B1 - 0.08, lv=lvA)
     DI0, DI1 = D0 + 0.62, D1 - 0.62
-    hollow(dd, TD, M, coll, DI0, DI1, floor=0.84, cant=3.56, top=4.07, lv=lvD)
-    for ob, rects, grooves in ((endA, winA + dwin[:1], [doors[0]]), (endB, dwin[1:], [doors[1]])):
+    hollow(dd, TD, M, coll, DI0, DI1, floor=G["dd_floor"], cant=G["dd_cant"], top=G["dd_top"], lv=lvD)
+    for ob, rects, grooves in ((endA, winA + dwin[:1], [doors[0]]), (endB, winB + dwin[1:], [doors[1]])):
         g = side_cutter(SA, M, groove_rects([(a, b, c, d, False) for (a, b, c, d) in grooves]), coll, "gcut", M["gap"], depth=0.012)
         apply_boolean(ob, g)
         delete(g)
@@ -1176,13 +1296,13 @@ def make_green(S, M, coll):
     for ob in (endA, endB, dd):
         smooth(ob, 30)
     det = MB("green_details")
-    glass_panes(det, SA, M, winA + dwin)
+    glass_panes(det, SA, M, winA + winB + dwin)
     glass_panes(det, TD, M, up + low)
     for s in (-1, 1):  # green-car clover emblems by the doors
-        for x in (-4.62, 7.30):
+        for x in G["marks"]:
             y = s * (S.width(2.6) + 0.004)
             det.poly([(x - 0.13, y, 2.48), (x + 0.13, y, 2.48), (x + 0.13, y, 2.74), (x - 0.13, y, 2.74)], M["green_mark"], (0, s, 0))
-    side_dest(det, SA, M, -8.2, 2.86)
+    side_dest(det, SA, M, G["side_dest"], G.get("side_dest_z", 3.20 if S.key == "e231" else wz1 + 0.12))
     for b in (-BOGIE, BOGIE):
         bogie(det, M, b)
     side_lamps(det, M, SA, -H + 0.55)
@@ -1201,24 +1321,31 @@ def make_green(S, M, coll):
         for yy in (y0 + 0.02, y1 - 0.02, (y0 + y1) / 2):
             gi.box((x - 0.02, s * yy, floor + 0.56), (0.42, 0.05, 0.05), M["dkgrey"])        # arm rests
 
-    for fl, xs_ in ((0.84, [DI0 + 0.75 + k * 0.97 for k in range(int((DI1 - DI0 - 0.8) / 0.97))]),
-                    (2.44, [DI0 + 0.65 + k * 0.97 for k in range(int((DI1 - DI0 - 0.7) / 0.97))]),
-                    (FLOOR, [-9.0, -8.03, -7.06])):
+    upper_floor = (G["band"][0][0] + G["up_z"][0]) / 2 + 0.05
+    for fl, xs_ in ((G["dd_floor"], [DI0 + 0.75 + k * 0.97 for k in range(int((DI1 - DI0 - 0.8) / 0.97))]),
+                    (upper_floor, [DI0 + 0.65 + k * 0.97 for k in range(int((DI1 - DI0 - 0.7) / 0.97))]),
+                    (FLOOR, [x for (x, _) in G["winA"]])):
         for x in xs_:
             for s_ in (-1, 1):
                 recl_row(x, fl, s_)
     # deck slab between the levels, ceilings and light strips
-    gi.box(((DI0 + DI1) / 2, 0, 2.40), (DI1 - DI0 - 0.02, 2 * wi(S, 2.4) - 0.02, 0.08), M["int_floor"])
-    gi.box(((DI0 + DI1) / 2, 0, 3.94), (DI1 - DI0 - 0.02, 1.80, 0.02), M["int_ceiling"])
+    zs = upper_floor - 0.04
+    zc_up = G["dd_top"] - 0.13
+    gi.box(((DI0 + DI1) / 2, 0, zs), (DI1 - DI0 - 0.02, 2 * wi(S, zs) - 0.02, 0.08), M["int_floor"])
+    gi.box(((DI0 + DI1) / 2, 0, zc_up), (DI1 - DI0 - 0.02, 1.80, 0.02), M["int_ceiling"])
+    zce = 3.50 if G["end_cant"] > 3.2 else 3.43
     for s_ in (-1, 1):
-        gi.box(((DI0 + DI1) / 2, s_ * 0.60, 2.345), (DI1 - DI0 - 0.4, 0.14, 0.02), M["int_light"])
-        gi.box(((DI0 + DI1) / 2, s_ * 0.60, 3.92), (DI1 - DI0 - 0.4, 0.14, 0.02), M["int_light"])
-        gi.box(((A0 + A1) / 2, s_ * 0.62, 3.405), (A1 - A0 - 0.4, 0.15, 0.03), M["int_light"])
-    gi.box(((A0 + A1) / 2, 0, 3.43), (A1 - A0 - 0.2, 1.90, 0.02), M["int_ceiling"])
+        gi.box(((DI0 + DI1) / 2, s_ * 0.60, zs - 0.055), (DI1 - DI0 - 0.4, 0.14, 0.02), M["int_light"])
+        gi.box(((DI0 + DI1) / 2, s_ * 0.60, zc_up - 0.02), (DI1 - DI0 - 0.4, 0.14, 0.02), M["int_light"])
+        gi.box(((A0 + A1) / 2, s_ * 0.62, zce - 0.025), (A1 - A0 - 0.4, 0.15, 0.03), M["int_light"])
+    gi.box(((A0 + A1) / 2, 0, zce), (A1 - A0 - 0.2, 1.90, 0.02), M["int_ceiling"])
     gsal = gi.build(coll)
     smooth(gsal, 35)
-    det.box((-H + 1.6, 0, 3.62 + 0.15), (2.4, 1.8, 0.32), M["silver"])
-    det.box((H - 1.2, 0, 3.62 + 0.15), (1.6, 1.8, 0.32), M["silver"])
+    for (acx, acl) in G["ac"]:
+        det.box((acx, 0, G["end_top"] + 0.13), (acl, 1.8, 0.32), M["silver"])
+        for k in range(int(acl / 0.16)):
+            for s_ in (-1, 1):
+                det.box((acx - acl / 2 + 0.1 + k * 0.16, s_ * 0.905, G["end_top"] + 0.13), (0.05, 0.02, 0.22), M["grille"])
     for s in (-1, 1):
         det.cyl((1.2, s * 0.95, 0.62), (1, 0, 0), 0.16, 2.2, M["silver"], seg=12)
     gangway(det, M, -H, -1, top=2.95)

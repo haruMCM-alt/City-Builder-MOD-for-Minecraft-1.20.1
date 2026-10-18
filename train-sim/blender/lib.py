@@ -50,11 +50,11 @@ def materials():
         dkgrey=mat("dark_grey", (0.10, 0.10, 0.11), 0.2, 0.7),
         grey=mat("grey", (0.38, 0.39, 0.40), 0.3, 0.6),
         roof=mat("roof", (0.30, 0.31, 0.32), 0.2, 0.8),
-        # band colours sampled from sunlit reference photos (sRGB #f39a28 / #2fa860)
-        orange=mat("shonan_orange", (0.896, 0.323, 0.021), 0.0, 0.40),
-        green=mat("shonan_green", (0.028, 0.392, 0.117), 0.0, 0.40),
-        paint_orange=mat("paint_orange", (0.8714, 0.2232, 0.007), 0.0, 0.35),
-        paint_green=mat("paint_green", (0.0212, 0.1144, 0.0452), 0.0, 0.35),
+                orange=mat("shonan_orange", (0.922, 0.254, 0.0129), 0.0, 0.40),       # #F68A1E (measured)
+        green=mat("shonan_green", (0.0137, 0.429, 0.0908), 0.0, 0.40),        # #1FAF55 (measured)
+        frp=mat("frp_grey", (0.693, 0.693, 0.708), 0.0, 0.38),               # #D9D9DB front mask
+        paint_orange=mat("paint_orange", (0.693, 0.141, 0.027), 0.0, 0.35),     # 黄かん色 #D9692E (measured)
+        paint_green=mat("paint_green", (0.0273, 0.0612, 0.0369), 0.0, 0.35),    # 緑2号 #2E4636 (measured)
         light_grey=mat("light_grey", (0.82, 0.83, 0.84), 0.1, 0.4),
         head=mat("headlight", (1, 1, 0.95), 0, 0.2, (1.0, 0.97, 0.85), 6.0),
         tail=mat("taillight", (0.5, 0.02, 0.02), 0, 0.3, (1.0, 0.05, 0.03), 3.0),

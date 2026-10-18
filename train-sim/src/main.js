@@ -426,9 +426,9 @@ function updateCamera(dt) {
     camera.lookAt(q.x, q.y + 2.0, q.z);
   } else if (camMode === 'front') {
     // ahead of the train, like a platform-end photo of the cab
-    route.pose(physics.s + 15, 3.4, p);
-    camera.position.set(p.x, p.y + 2.0, p.z);
-    route.pose(physics.s - 9, 0.2, q);
+    route.pose(physics.s + 11, 2.7, p);
+    camera.position.set(p.x, p.y + 1.7, p.z);
+    route.pose(physics.s - 8, 0.0, q);
     camera.lookAt(q.x, q.y + 1.9, q.z);
   } else if (camMode === 'chase') {
     route.pose(physics.s - 70, 0, p);
