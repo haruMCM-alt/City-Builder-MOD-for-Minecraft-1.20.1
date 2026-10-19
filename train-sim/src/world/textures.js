@@ -1,6 +1,7 @@
 // Procedural canvas textures for the scenery (no external images needed).
 import * as THREE from 'three';
 import { rng, fbm } from './noise.js';
+import { UI_FONT } from '../displays.js';
 
 function canvas(w, h = w) {
   const c = document.createElement('canvas');
@@ -73,6 +74,26 @@ function noiseCanvas(w, scale, ramp, seed) {
   }
   g.putImageData(img, 0, 0);
   return c;
+}
+
+/** dirt: faint vertical rain streaks below window sills, grime noise, darker toward the bottom */
+function weather(g, w, h, R, amt = 1, sills = []) {
+  for (const [x0, x1, y] of sills) {
+    for (let x = x0; x < x1; x += 2 + R() * 4) {
+      const len = 6 + R() * 26;
+      const grd = g.createLinearGradient(0, y, 0, y + len);
+      grd.addColorStop(0, `rgba(60,55,50,${0.10 * amt})`);
+      grd.addColorStop(1, 'rgba(60,55,50,0)');
+      g.fillStyle = grd; g.fillRect(x, y, 1 + R() * 2, len);
+    }
+  }
+  for (let i = 0; i < w * h / 90; i++) {
+    g.fillStyle = `rgba(${R() < 0.5 ? '40,38,35' : '255,255,250'},${0.025 * amt})`;
+    g.fillRect(R() * w, R() * h, 1 + R() * 3, 1 + R() * 3);
+  }
+  const grd = g.createLinearGradient(0, 0, 0, h);
+  grd.addColorStop(0, 'rgba(0,0,0,0)'); grd.addColorStop(1, `rgba(40,36,30,${0.06 * amt})`);
+  g.fillStyle = grd; g.fillRect(0, 0, w, h);
 }
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -222,15 +243,15 @@ export function makeTextures() {
   T.facadeShop = facadeShop(R);
   T.facadeFactory = facadeFactory();
   T.facadeHouse.n = normalFrom(T.facadeHouse.image, 1.5);
+  T.facadeApt.n = normalFrom(T.facadeApt.image, 1.2);
+  T.facadeMansion.n = normalFrom(T.facadeMansion.image, 1.2);
 
   // ---- water ripples (normal map)
   T.waterN = normalFrom(noiseCanvas(256, 14, (n) => { const v = n * 255; return [v, v, v]; }, 31), 6);
 
-  // ---- vegetation sprites
-  T.treeBroad = treeSprite(R, 'broad');
-  T.treeConifer = treeSprite(R, 'conifer');
-  T.treeBamboo = treeSprite(R, 'bamboo');
-  T.shrub = treeSprite(R, 'shrub');
+  // ---- shop / company signs (fictional names only)
+  T.signs = signAtlas(R);
+  // (trees live in trees.js)
   return T;
 }
 
@@ -258,7 +279,11 @@ function facadeHouse(R) {
       g.fillStyle = '#d8d8d4'; g.fillRect(x + w / 2 - 1, y, 2, h);
     }
     g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(x - 3, y + h + 3, w + 6, 2);
+    // aluminium sill and a little rain streaking under it
+    g.fillStyle = '#b9bcbe'; g.fillRect(x - 5, y + h + 2, w + 10, 3);
+    weather(g, 0, 0, R, 1.2, [[x - 2, x + w + 2, y + h + 5]]);
   }
+  weather(g, 512, 104, R, 0.8);
   return tex(c);
 }
 
@@ -281,6 +306,7 @@ function facadeApartment(R) {
     g.fillStyle = '#a9a7a1'; g.fillRect(x0 + 248, 0, 8, 124);
   }
   g.fillStyle = '#bfbbb3'; g.fillRect(0, 112, 512, 12);
+  weather(g, 512, 124, R, 1.0, [[0, 512, 112]]);
   return tex(c);
 }
 
@@ -301,6 +327,7 @@ function facadeMansion(R) {
     g.fillStyle = '#b5ae9f'; g.fillRect(x0 + 250, 0, 6, 124);
   }
   g.fillStyle = '#c3bcae'; g.fillRect(0, 108, 512, 16);
+  weather(g, 512, 124, R, 1.0, [[0, 512, 108]]);
   return tex(c);
 }
 
@@ -312,6 +339,11 @@ function facadeOffice(R) {
   grd.addColorStop(0, '#6f8ea6'); grd.addColorStop(0.5, '#3a5268'); grd.addColorStop(1, '#5e7a90');
   g.fillStyle = grd; g.fillRect(0, 0, 256, 244);
   for (let i = 0; i < 6; i++) { g.fillStyle = `rgba(255,255,255,${0.05 + R() * 0.08})`; g.fillRect(R() * 256, 0, 20 + R() * 60, 244); }
+  // interior: ceiling lights and half-drawn blinds behind some panes
+  for (let x = 0; x < 256; x += 64) {
+    g.fillStyle = 'rgba(230,236,240,0.18)'; g.fillRect(x + 8, 10, 50, 6);
+    if (R() < 0.5) { g.fillStyle = `rgba(215,215,205,${0.25 + R() * 0.25})`; g.fillRect(x + 5, 16, 59, 30 + R() * 90); }
+  }
   g.fillStyle = '#b8bec4';
   for (let x = 0; x < 256; x += 64) g.fillRect(x, 0, 5, 244);
   g.fillRect(0, 190, 256, 54);
@@ -351,50 +383,43 @@ function facadeFactory() {
   return tex(c);
 }
 
-function treeSprite(R, kind) {
-  const c = canvas(256, 512);
+// Sign atlas 1024 × 1024: lower half = 16 wide boards (512 × 64), upper half = 8 vertical
+// blade signs (128 × 512). All names are made up.
+const WIDE_SIGNS = [
+  ['さくら食堂', '#c8302c', '#fff'], ['ふくや商店', '#1e6bb8', '#fff'], ['ミヤタ電器', '#ffffff', '#1a4f9c'], ['焼鳥 とり吉', '#2a2420', '#f2c14e'],
+  ['クリーニング 白鳥', '#e8f2fb', '#1e6bb8'], ['かとう歯科医院', '#ffffff', '#2a8a4a'], ['あおば学習塾', '#2a8a4a', '#fff'], ['みどり不動産', '#f6f1e3', '#2d6a3e'],
+  ['パン工房 こむぎ', '#7a4a2a', '#fbe9c8'], ['中華料理 福来', '#d4231c', '#ffe066'], ['花のアトリエ', '#f7d6e0', '#a0304d'], ['そば処 一休', '#1d2a3a', '#f4efe1'],
+  ['ひかり整骨院', '#ffffff', '#e0701c'], ['美容室 Lino', '#222222', '#f0f0f0'], ['北関東精機株式会社', '#ffffff', '#123c7a'], ['東栄ビルディング', '#0f3b6e', '#ffffff'],
+];
+const TALL_SIGNS = [
+  ['喫茶', '#7a3fa0', '#fff'], ['薬', '#2a8a4a', '#fff'], ['居酒屋', '#c8302c', '#fff'], ['歯科', '#ffffff', '#1e6bb8'],
+  ['ラーメン', '#f0a020', '#222'], ['理容', '#ffffff', '#c8302c'], ['カラオケ', '#e0115f', '#fff'], ['不動産', '#1e6bb8', '#fff'],
+];
+
+function signAtlas() {
+  const c = canvas(1024);
   const g = c.getContext('2d');
-  g.clearRect(0, 0, 256, 512);
-  if (kind === 'bamboo') {
-    for (let i = 0; i < 26; i++) {
-      const x = 30 + R() * 196;
-      g.strokeStyle = `rgb(${90 + R() * 40},${120 + R() * 40},${50 + R() * 20})`;
-      g.lineWidth = 3 + R() * 2;
-      g.beginPath(); g.moveTo(x, 512); g.quadraticCurveTo(x + (R() - 0.5) * 30, 250, x + (R() - 0.5) * 70, 40 + R() * 80); g.stroke();
-    }
-    leaves(g, R, 128, 170, 120, 170, 2600, [[70, 110, 40], [110, 150, 60], [50, 80, 30]], 3, 7);
-  } else if (kind === 'conifer') {
-    g.fillStyle = '#4a3020'; g.fillRect(122, 380, 12, 132);
-    for (let y = 30; y < 420; y += 3) {
-      const w = (y - 20) * 0.26;
-      for (let k = 0; k < 6; k++) {
-        const l = 30 + R() * 50;
-        g.fillStyle = `rgb(${l * 0.5},${l + 25},${l * 0.5})`;
-        g.beginPath(); g.ellipse(128 + (R() - 0.5) * 2 * w, y + R() * 4, 4 + R() * 6, 3 + R() * 3, R() * 3, 0, 7); g.fill();
-      }
-    }
-  } else if (kind === 'shrub') {
-    leaves(g, R, 128, 380, 115, 120, 3000, [[60, 95, 40], [90, 130, 55], [40, 70, 30]], 4, 9);
-  } else {
-    g.strokeStyle = '#5a4030'; g.lineWidth = 12;
-    g.beginPath(); g.moveTo(128, 512); g.lineTo(126, 300); g.stroke();
-    g.lineWidth = 5;
-    for (let k = 0; k < 5; k++) { g.beginPath(); g.moveTo(127, 360 - k * 20); g.lineTo(128 + (R() - 0.5) * 160, 200 - R() * 100); g.stroke(); }
-    leaves(g, R, 128, 210, 118, 190, 5200, [[55, 95, 35], [95, 135, 55], [35, 65, 25], [120, 150, 70]], 4, 10);
-  }
-  const t = tex(c, { repeat: false });
-  t.premultiplyAlpha = false;
-  return t;
+  g.fillStyle = '#777'; g.fillRect(0, 0, 1024, 1024);
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  WIDE_SIGNS.forEach(([name, bg, fg], i) => {
+    const col = i % 2, row = Math.floor(i / 2);
+    const x = col * 512, y = 1024 - (row + 1) * 64;
+    g.fillStyle = bg; g.fillRect(x, y, 512, 64);
+    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(x, y + 60, 512, 4);
+    g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 2; g.strokeRect(x + 3, y + 3, 506, 58);
+    g.fillStyle = fg; g.font = `700 40px ${UI_FONT}`;
+    g.fillText(name, x + 256, y + 33, 480);
+  });
+  TALL_SIGNS.forEach(([name, bg, fg], i) => {
+    const x = i * 128;
+    g.fillStyle = bg; g.fillRect(x, 0, 128, 512);
+    g.strokeStyle = 'rgba(0,0,0,0.3)'; g.lineWidth = 6; g.strokeRect(x + 3, 3, 122, 506);
+    g.fillStyle = fg;
+    const chars = [...name];
+    const step = Math.min(110, 470 / chars.length);
+    g.font = `700 ${Math.floor(step * 0.82)}px ${UI_FONT}`;
+    chars.forEach((ch, k) => g.fillText(ch, x + 64, 256 + (k - (chars.length - 1) / 2) * step));
+  });
+  return tex(c, { repeat: false, aniso: 8 });
 }
 
-function leaves(g, R, cx, cy, rx, ry, n, cols, rmin, rmax) {
-  for (let i = 0; i < n; i++) {
-    const a = R() * Math.PI * 2, d = Math.sqrt(R());
-    const x = cx + Math.cos(a) * rx * d, y = cy + Math.sin(a) * ry * d;
-    // darker underneath, lighter on top-left (sun)
-    const shade = 0.65 + 0.5 * ((cy - y) / ry * 0.5 + 0.5) - 0.15 * ((x - cx) / rx);
-    const col = cols[Math.floor(R() * cols.length)];
-    g.fillStyle = `rgb(${col[0] * shade},${col[1] * shade},${col[2] * shade})`;
-    g.beginPath(); g.ellipse(x, y, rmin + R() * (rmax - rmin), (rmin + R() * (rmax - rmin)) * 0.7, R() * 3, 0, 7); g.fill();
-  }
-}

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CAR_LEN, BOGIE_C } from './vehicles.js';
 import { makeDestTexture, makeAdTexture, makeTvTexture, InfoDisplay, UI_FONT } from './displays.js';
+import { passengerMesh } from './world/people.js';
 
 const WHEEL_R = 0.43;            // tread radius of the modelled wheels (860 mm wheel)
 const DOOR_OPEN_T = 1.9;         // s, pneumatic / linear-motor door stroke
@@ -186,6 +187,39 @@ function adMaterials() {
   return AD_MATS;
 }
 
+/** cushion centres of the long seats, found from the seat material's up-facing top faces (cached per car type) */
+const SEAT_CACHE = new Map();
+function seatCushions(tmpl, obj) {
+  if (SEAT_CACHE.has(tmpl.name)) return SEAT_CACHE.get(tmpl.name);
+  const pts = [];
+  const v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+  obj.traverse((o) => {
+    const n = o.isMesh && o.material && o.material.name;
+    if (!n || !/^seat_(e231|e233|211|115|priority)$/.test(n)) return;
+    const pos = o.geometry.attributes.position, idx = o.geometry.index;
+    const tri = idx ? idx.count / 3 : pos.count / 3;
+    for (let t = 0; t < tri; t++) {
+      for (let k = 0; k < 3; k++) v[k].fromBufferAttribute(pos, idx ? idx.getX(t * 3 + k) : t * 3 + k).applyMatrix4(o.matrixWorld);
+      e1.subVectors(v[1], v[0]); e2.subVectors(v[2], v[0]);
+      const nn = e1.cross(e2).normalize();
+      const cy = (v[0].y + v[1].y + v[2].y) / 3;
+      // cushion tops: horizontal faces 0.40-0.47 m above the 1.17 m floor
+      if (Math.abs(nn.y) > 0.95 && cy > 1.57 && cy < 1.64) pts.push({ x: (v[0].x + v[1].x + v[2].x) / 3, z: (v[0].z + v[1].z + v[2].z) / 3 });
+    }
+  });
+  // two triangles per cushion: merge centroids closer than 0.2 m
+  pts.sort((a, b) => a.z - b.z || a.x - b.x);
+  const seats = [];
+  for (const p of pts) {
+    const s = seats.find((q) => Math.abs(q.x - p.x) < 0.2 && Math.abs(q.z - p.z) < 0.2);
+    if (s) { s.x = (s.x + p.x) / 2; s.z = (s.z + p.z) / 2; } else seats.push({ ...p });
+  }
+  const out = seats.filter((s) => Math.abs(s.z) > 0.6);
+  SEAT_CACHE.set(tmpl.name, out);
+  return out;
+}
+
 const SERIES_NO = { e231: ['E231', 'E230', 1000], e233: ['E233', 'E232', 3000], s211: ['211', '210', 3000], s115: ['115', '114', 1000] };
 /** car type + number painted on the body side ("モハE231-1012") */
 function carNumbers(veh, formation) {
@@ -301,9 +335,18 @@ export class TrainSet {
           const w = box.max.x - box.min.x;
           // L = the model's left (Blender +Y); a reversed cab car is turned round
           const left = (m[2] === 'L') !== isR;
-          this.leaves.push({ obj: o, x0: o.position.x, dir: m[3] === 'a' ? -1 : 1, travel: w - 0.01, side: left ? 'left' : 'right' });
+          this.leaves.push({ obj: o, x0: o.position.x, dir: m[3] === 'a' ? -1 : 1, travel: w - 0.01, side: left ? 'left' : 'right', car: i, cx: (box.max.x + box.min.x) / 2 + (m[3] === 'a' ? w / 2 : -w / 2) });
         }
       });
+      // passengers (not in the double-deck green cars; fewer on passing trains)
+      if (code !== 'G' && opts.passengers !== false) {
+        const seats = seatCushions(tmpl, obj);
+        const doorX = [];
+        for (const l of this.leaves) if (l.car === i && l.dir < 0 && l.side === 'left') doorX.push(l.cx);
+        const rnd = mulberry(i * 7919 + (opts.forward === false ? 101 : 1));
+        const pm = passengerMesh(seats, doorX.length ? doorX : [-4.9, 0, 4.9], 1.17, rnd, opts.forward === false ? 0.35 : 0.42);
+        if (pm) { obj.add(pm); this.disposables.push(pm.geometry); }
+      }
       const holder = new THREE.Group();
       const inner = new THREE.Group();
       inner.add(obj);
@@ -394,4 +437,13 @@ export class TrainSet {
     if (this.info) { this.info.t.dispose(); this.info.mat.dispose(); }
     for (const d of this.disposables || []) d.dispose();
   }
+}
+
+function mulberry(a) {
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }

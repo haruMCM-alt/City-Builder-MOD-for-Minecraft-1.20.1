@@ -1,10 +1,12 @@
 // Streams the scenery around the train in 200 m chunks.
 import * as THREE from 'three';
+import { stationProtos, PERSON_KEYS, SIT_KEYS, departureBoardTexture, clockTexture } from './people.js';
 import { PLATFORM_LEN, PF_EDGE, SIDE_PF_W, RIVERS } from '../route.js';
 import { makeTextures } from './textures.js';
 import { Environment, GROUND_Y } from './sky.js';
 import { LandBuilder, MATERIAL_KEYS, carGeometry, carColor } from './land.js';
 import { GeoBuffer, Frame, TILE, boxWalls, flatTop, solid } from './buildings.js';
+import { makeTreeKinds } from './trees.js';
 import { rng, hash2 } from './noise.js';
 
 const CHUNK = 200;
@@ -137,7 +139,7 @@ class InstanceBatch {
       for (const p of parts) {
         const im = new THREE.InstancedMesh(p.geometry, p.material, it.m.length);
         it.m.forEach((m, i) => im.setMatrixAt(i, m));
-        if (it.c.some((c) => c)) it.c.forEach((c, i) => im.setColorAt(i, c || new THREE.Color(1, 1, 1)));
+        if (!p.noColor && it.c.some((c) => c)) it.c.forEach((c, i) => im.setColorAt(i, c || new THREE.Color(1, 1, 1)));
         im.castShadow = cast && !p.noShadow;
         im.receiveShadow = true;
         im.computeBoundingSphere();
@@ -147,30 +149,6 @@ class InstanceBatch {
     }
     return out;
   }
-}
-
-/** two crossed planes, pivot at the bottom centre */
-function crossedPlanes(w, h) {
-  const g1 = new THREE.PlaneGeometry(w, h); g1.translate(0, h / 2, 0);
-  const g2 = g1.clone(); g2.rotateY(Math.PI / 2);
-  const g3 = g1.clone(); g3.rotateY(Math.PI / 4);
-  const pos = [], uv = [], idx = [];
-  let base = 0;
-  for (const g of [g1, g2, g3]) {
-    const p = g.getAttribute('position'), u = g.getAttribute('uv');
-    for (let i = 0; i < p.count; i++) { pos.push(p.getX(i), p.getY(i), p.getZ(i)); uv.push(u.getX(i), u.getY(i)); }
-    for (const i of g.index.array) idx.push(i + base);
-    base += p.count;
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  // normals pointing up-ish so foliage is lit like a volume
-  const n = new Float32Array(pos.length);
-  for (let i = 0; i < pos.length; i += 3) { n[i] = 0; n[i + 1] = 1; n[i + 2] = 0; }
-  g.setAttribute('normal', new THREE.BufferAttribute(n, 3));
-  g.setIndex(idx);
-  return g;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,8 +213,8 @@ export class World {
       post: std({ color: 0x9a9a9a, roughness: 0.6, metalness: 0.4 }),
       // land buffers
       house: std({ map: T.facadeHouse, normalMap: T.facadeHouse.n, vertexColors: true, roughness: 0.85 }),
-      apt: std({ map: T.facadeApt, vertexColors: true, roughness: 0.8 }),
-      mansion: std({ map: T.facadeMansion, vertexColors: true, roughness: 0.7 }),
+      apt: std({ map: T.facadeApt, normalMap: T.facadeApt.n, vertexColors: true, roughness: 0.8 }),
+      mansion: std({ map: T.facadeMansion, normalMap: T.facadeMansion.n, vertexColors: true, roughness: 0.7 }),
       office: std({ map: T.facadeOffice, vertexColors: true, roughness: 0.15, metalness: 0.4 }),
       shop: std({ map: T.facadeShop, vertexColors: true, roughness: 0.6 }),
       factory: std({ map: T.facadeFactory, vertexColors: true, roughness: 0.55, metalness: 0.3 }),
@@ -252,17 +230,13 @@ export class World {
       levee: std({ map: T.grass, vertexColors: true, roughness: 1 }),
       far: std({ vertexColors: true, roughness: 0.9 }),
       carBody: std({ vertexColors: true, roughness: 0.25, metalness: 0.6 }),
+      sign: std({ map: T.signs, roughness: 0.45, emissive: 0xffffff, emissiveMap: T.signs, emissiveIntensity: 0.12, side: THREE.DoubleSide }),
     };
     this.M.water.normalScale.set(0.35, 0.35);
     for (const k of MATERIAL_KEYS) if (!this.M[k]) console.warn('missing material', k);
     this.M.dirt.map = T.soil;
-    const tree = (t) => std({ map: t, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.9 });
-    this.treeKinds = {
-      broad: { geo: crossedPlanes(9, 10), mat: tree(T.treeBroad) },
-      conifer: { geo: crossedPlanes(5, 14), mat: tree(T.treeConifer) },
-      bamboo: { geo: crossedPlanes(8, 13), mat: tree(T.treeBamboo) },
-      shrub: { geo: crossedPlanes(3, 2.5), mat: tree(T.shrub) },
-    };
+    // volumetric trees: leaf-cluster cards around a trunk (see trees.js)
+    this.treeKinds = makeTreeKinds();
     this.sleeperGeo = new THREE.BoxGeometry(0.24, 0.19, 2.0);
     this.sleeperGeo.translate(0, -0.25, 0);
     this.fastenerGeo = new THREE.BoxGeometry(0.16, 0.06, 0.12);
@@ -278,13 +252,14 @@ export class World {
     for (const p of this.P.signal || []) {
       if (p.material.name === 'SIG_G') { p.material = p.material.clone(); p.material.emissiveIntensity = 4; }
     }
+    Object.assign(this.P, stationProtos());
     this.P.sleeper = [{ geometry: this.sleeperGeo, material: this.M.sleeper, noShadow: true }];
     this.P.sleeperWood = [{ geometry: this.sleeperGeo, material: this.M.sleeperWood, noShadow: true }];
     this.P.fastener = [{ geometry: this.fastenerGeo, material: this.M.rail, noShadow: true }];
     this.P.car = [{ geometry: this.carGeo, material: this.M.carBody }];
     const pierGeo = new THREE.BoxGeometry(1, 1, 1); pierGeo.translate(0, 0.5, 0);
     this.P.pier = [{ geometry: pierGeo, material: this.M.concrete }];
-    for (const [k, v] of Object.entries(this.treeKinds)) this.P['tree_' + k] = [{ geometry: v.geo, material: v.mat }];
+    for (const [k, parts] of Object.entries(this.treeKinds)) this.P['tree_' + k] = parts;
   }
 
   initMovingCars() {
@@ -524,7 +499,7 @@ export class World {
 
     // land use beside the line
     const B = {};
-    for (const key of ['house', 'apt', 'mansion', 'office', 'shop', 'factory', 'roofTile', 'roofMetal', 'concrete', 'plain', 'glass', 'paddy', 'field', 'road', 'asphalt', 'levee', 'far', 'dirt']) B[key] = new GeoBuffer();
+    for (const key of ['house', 'apt', 'mansion', 'office', 'shop', 'factory', 'roofTile', 'roofMetal', 'concrete', 'plain', 'glass', 'sign', 'paddy', 'field', 'road', 'asphalt', 'levee', 'far', 'dirt']) B[key] = new GeoBuffer();
     const inst = { trees: [], cars: [], poles: [], roadsPar: [], crossRoads: [] };
     const R = rng(k * 31 + 7);
     const roads = this.land.build(k, s0, s1, B, inst);
@@ -898,6 +873,58 @@ export class World {
   }
 
   // -------------------------------------------------------------------------
+  /** passengers: two queues at each door position (behind the tactile strip), loiterers, people on benches */
+  placePeople(st, pfm, a, b, H, batch, benchAt, centre) {
+    const r = this.route;
+    const R = rng(st.index * 977 + (pfm.side || 0) * 31 + 5);
+    const busy = st.area === 'city' ? 0.75 : st.area === 'suburb' ? 0.5 : 0.3;
+    const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
+    const p1 = {}, p2 = {};
+    const put = (key, s, lat, latFace, scale, dy = 0) => {
+      r.pose(s, lat, p1); r.pose(s + 0.01, latFace, p2);
+      // face toward (s, latFace): yaw of the direction from p1 to p2 (local +X forward)
+      const dx = p2.x - p1.x, dz = p2.z - p1.z;
+      Q.setFromAxisAngle(Y, Math.atan2(-dz, dx) + (R() - 0.5) * 0.5);
+      V.set(p1.x, p1.y + H + dy, p1.z);
+      S.set(scale, scale, scale);
+      M4.compose(V, Q, S);
+      batch.add(key, M4);
+    };
+    // the track edges of this platform (and which way is "towards the track")
+    const edges = pfm.island ? [pfm.edgeA, pfm.edgeB] : [pfm.side > 0 ? pfm.edgeB : pfm.edgeA];
+    for (const edge of edges) {
+      for (let car = 0; car < 15; car++) {
+        for (const d of [-7.41, -2.47, 2.45, 7.39]) {
+          const sd = st.s - 10 - car * 20 + d;
+          if (sd < a + 3 || sd > b - 3 || R() > busy) continue;
+          const e = edge(sd), c = centre(sd);
+          const inward = Math.sign(c - e);
+          const n = 1 + Math.floor(R() * (st.area === 'city' ? 6 : 3));
+          for (let k = 0; k < n; k++) {
+            const col = k % 2 ? 1 : -1, row = Math.floor(k / 2);
+            const lat = e + inward * (1.75 + row * 0.62 + R() * 0.1);
+            if (Math.abs(lat - c) > Math.abs(e - c) + 0.1) break;     // ran out of platform width
+            put(PERSON_KEYS[Math.floor(R() * PERSON_KEYS.length)], sd + col * (0.42 + R() * 0.08), lat, e, 0.93 + R() * 0.13);
+          }
+        }
+      }
+    }
+    // people wandering / standing near the middle of the platform
+    for (let s = a + 12; s < b - 8; s += 9 + R() * 14) {
+      if (R() > busy) continue;
+      const c = centre(s);
+      const w = Math.abs(pfm.edgeA(s) - pfm.edgeB(s)) / 2 - 2.2;
+      put(PERSON_KEYS[Math.floor(R() * PERSON_KEYS.length)], s, c + (R() - 0.5) * 2 * Math.max(0, w), c + (R() - 0.5) * 8, 0.92 + R() * 0.14);
+    }
+    // someone on most benches
+    for (const s of benchAt) {
+      if (R() > busy + 0.15) continue;
+      const lat = centre(s) + (pfm.island ? 0 : 0.8 * (pfm.side || 1));
+      const k = 1 + Math.floor(R() * 2);
+      for (let i = 0; i < k; i++) put(SIT_KEYS[Math.floor(R() * SIT_KEYS.length)], s + (i - 0.5) * 0.9 + (R() - 0.5) * 0.2, lat + (pfm.island ? 0.25 : 0.25 * (pfm.side || 1)), pfm.island ? lat + 5 : lat - 5 * (pfm.side || 1), 0.95 + R() * 0.08, 0.0);
+    }
+  }
+
   buildStation(st) {
     const r = this.route;
     const group = new THREE.Group();
@@ -948,10 +975,15 @@ export class World {
       const centre = (s) => (pfm.edgeA(s) + pfm.edgeB(s)) / 2;
       const roofFrom = st.area === 'city' ? a + 10 : st.s - 200;
       for (let s = roofFrom; s < b - 5; s += 10) place('platform_roof', s, centre(s), H, 0, new THREE.Vector3(1, 1, Math.min(1.3, Math.abs(pfm.edgeA(s) - pfm.edgeB(s)) / 6.4)));
+      const benchAt = [];
       for (let s = a + 30; s < b - 20; s += 37) {
         if (Math.abs(s - (st.s - 160)) < 14) continue;
-        place(Math.floor(s / 37) % 3 === 0 ? 'vending_machine' : 'bench', s, centre(s) + (pfm.island ? 0 : 0.8 * (pfm.side || 1)), H, Math.PI / 2 * (pfm.side || 1));
+        const vend = Math.floor(s / 37) % 3 === 0;
+        place(vend ? 'vending_machine' : 'bench', s, centre(s) + (pfm.island ? 0 : 0.8 * (pfm.side || 1)), H, Math.PI / 2 * (pfm.side || 1));
+        if (!vend) benchAt.push(s);
+        else place('trash_bins', s + 2.4, centre(s) + (pfm.island ? 0 : 0.8 * (pfm.side || 1)), H, Math.PI / 2 * (pfm.side || 1));
       }
+      this.placePeople(st, pfm, a, b, H, batch, benchAt, centre);
       const i = st.index;
       const tex = stationSignTexture(st, r.stations[i - 1], r.stations[i + 1]);
       textures.push(tex);
@@ -970,6 +1002,38 @@ export class World {
           group.add(m);
         }
         place('utility_pole', s, c, H - 5.2, 0, new THREE.Vector3(0.4, 0.62, 0.4));
+      }
+      // hanging departure boards (発車標) and clocks under the roof, near the stairs
+      const dbt = departureBoardTexture(st, pfm.side === -1 ? 1 : 0);
+      textures.push(dbt);
+      const dbm = new THREE.MeshBasicMaterial({ map: dbt, toneMapped: false });
+      const dbc = new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.5, metalness: 0.4 });
+      const ck = this.clockTex || (this.clockTex = clockTexture());
+      const ckm = new THREE.MeshStandardMaterial({ map: ck, roughness: 0.4 });
+      materials.push(dbm, dbc, ckm);
+      const dbg = new THREE.PlaneGeometry(1.9, 0.48), dbBox = new THREE.BoxGeometry(0.16, 0.56, 2.0), ckg = new THREE.CircleGeometry(0.22, 24);
+      disposables.push(dbg, dbBox, ckg);
+      for (const sb of [st.s - 185, st.s - 135, st.s - 60]) {
+        if (sb < a + 8 || (st.area !== 'city' && sb < st.s - 200)) continue;
+        const c = centre(sb);
+        r.pose(sb, c, p);
+        const box = new THREE.Mesh(dbBox, dbc);
+        box.position.set(p.x, p.y + H + 2.75, p.z); box.rotation.y = p.yaw;
+        group.add(box);
+        for (const f of [1, -1]) {
+          const m = new THREE.Mesh(dbg, dbm);
+          m.position.set(p.x + Math.cos(p.yaw) * 0.085 * f, p.y + H + 2.75, p.z - Math.sin(p.yaw) * 0.085 * f);
+          m.rotation.y = p.yaw + (f === 1 ? Math.PI / 2 : -Math.PI / 2);
+          group.add(m);
+        }
+        // a clock beside the board
+        r.pose(sb + 2.2, c, p);
+        for (const f of [1, -1]) {
+          const m = new THREE.Mesh(ckg, ckm);
+          m.position.set(p.x + Math.cos(p.yaw) * 0.03 * f, p.y + H + 2.85, p.z - Math.sin(p.yaw) * 0.03 * f);
+          m.rotation.y = p.yaw + (f === 1 ? Math.PI / 2 : -Math.PI / 2);
+          group.add(m);
+        }
       }
       // stairs up to the bridge concourse (橋上駅舎) or down from the viaduct
       const B2 = new GeoBuffer();

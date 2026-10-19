@@ -19,6 +19,30 @@ const SanitizeShader = {
       gl_FragColor = vec4(clamp(c.rgb, 0.0, 32.0), 1.0);
     }`,
 };
+// final grade in display space: filmic contrast, saturation, warm highlights / cool shadows,
+// a soft vignette and fine film grain (hides banding in the sky gradients)
+const GradeShader = {
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uVig: { value: 0.22 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime; uniform float uVig; varying vec2 vUv;
+    float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main() {
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      c = mix(vec3(l), c, 1.14);                                   // saturation
+      c = (c - 0.5) * 1.10 + 0.5 + 0.012;                          // contrast around mid grey
+      c = clamp(c, 0.0, 1.0);
+      // split toning: cool shadows, slightly warm mid-highlights (not the sky: keep saturated blues blue)
+      float sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+      vec3 warm = mix(vec3(1.025, 1.0, 0.965), vec3(1.0), smoothstep(0.08, 0.25, sat * step(c.r, c.b)));
+      c *= mix(vec3(0.975, 0.99, 1.03), warm, smoothstep(0.2, 0.7, l));
+      vec2 q = vUv - 0.5;
+      c *= 1.0 - uVig * smoothstep(0.25, 0.85, dot(q, q) * 2.2);  // vignette
+      c += (h(vUv * 1024.0 + uTime) - 0.5) * 0.012;                // grain / dither
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+};
+let gradePass = null;
 import { Route } from './route.js';
 import { VEHICLES, DEFAULT_VEHICLE, CAR_LEN, BOGIE_C } from './vehicles.js';
 import { World } from './world/world.js';
@@ -32,6 +56,8 @@ import { buildTimetable, fmtTime } from './timetable.js';
 import { HUD } from './hud.js';
 import { CabDisplays } from './cabdisplays.js';
 import { loadFonts } from './displays.js';
+import { VehiclePreview } from './preview.js';
+let preview = null;
 import { Game } from './game.js';
 
 const $ = (id) => document.getElementById(id);
@@ -105,9 +131,9 @@ function initRenderer() {
   // sky, image based lighting and fog come from the World's Environment
   camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.25, 30000);
   camera.rotation.order = 'YXZ';
-  hemi = new THREE.HemisphereLight(0xcfe3ff, 0x6b6250, 0.35);
+  hemi = new THREE.HemisphereLight(0xcfe3ff, 0x6b6250, 0.22);
   scene.add(hemi);
-  sun = new THREE.DirectionalLight(0xfff1dc, 3.0);
+  sun = new THREE.DirectionalLight(0xfff0d8, 3.5);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera;
@@ -125,7 +151,7 @@ function initRenderer() {
 
 /** post-processing chain for the chosen quality: HDR + MSAA, (GTAO), bloom, tone mapping */
 function setupComposer(q) {
-  if (composer) { composer.dispose(); composer = null; aoPass = null; }
+  if (composer) { composer.dispose(); composer = null; aoPass = null; gradePass = null; }
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setPixelRatio(q === 'low' ? 1 : Math.min(window.devicePixelRatio, 1.5));
   sun.shadow.mapSize.set(q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024, q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024);
@@ -141,11 +167,14 @@ function setupComposer(q) {
     aoPass.blendIntensity = 0.85;
     composer.addPass(aoPass);
   }
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.28, 0.45, 0.95));
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.22, 0.5, 0.92));
   composer.addPass(new OutputPass());
+  gradePass = new ShaderPass(GradeShader);
+  composer.addPass(gradePass);
 }
 
 function draw() {
+  if (gradePass) gradePass.uniforms.uTime.value = (performance.now() % 10000) / 10;
   if (composer) composer.render();
   else renderer.render(scene, camera);
 }
@@ -164,6 +193,7 @@ function buildMenu() {
   vl.querySelectorAll('.veh').forEach((b) => b.addEventListener('click', () => {
     settings.vehicle = b.dataset.id; store.set('vehicle', settings.vehicle);
     vl.querySelectorAll('.veh').forEach((x) => x.classList.toggle('sel', x === b));
+    showPreview();
     updateFormationNote();
   }));
   const carsSel = $('carsSel');
@@ -258,7 +288,19 @@ function updateAnnStatus() {
 // ---------------------------------------------------------------------------
 // game start
 // ---------------------------------------------------------------------------
+/** 3D studio preview of the selected vehicle in the menu */
+function showPreview() {
+  const veh = VEHICLES[settings.vehicle];
+  if (!gltfs[veh.id]) return;
+  try {
+    if (!preview) preview = new VehiclePreview($('vehPreview'));
+    preview.setVehicle(gltfs[veh.id].scene, veh, modelKey(veh));
+    preview.start();
+  } catch (e) { console.warn('preview unavailable', e); }
+}
+
 async function startGame() {
+  if (preview) preview.stop();
   $('menu').classList.add('hidden');
   $('loading').classList.remove('hidden');
   await sound.init();
@@ -293,7 +335,7 @@ async function startGame() {
   if (carLights) carLights.removeFromParent();
   carLights = new THREE.Group();
   for (const x of [-6.5, -2.2, 2.2, 6.5]) {
-    const l = new THREE.PointLight(0xfff6ea, 2.2, 7.5, 1.6);
+    const l = new THREE.PointLight(0xfff6ea, 1.5, 7.5, 1.6);
     l.position.set(x, 3.25, 0);
     carLights.add(l);
   }
@@ -303,7 +345,12 @@ async function startGame() {
   AXLES = axleOffsets(formation.length);
   // cab interior on the leading car
   cab = gltfs.cab.scene.clone(true);
-  cab.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+  // the cab has its own roof: let it cast/receive sun shadows (sun patches through the windscreen)
+  cab.traverse((o) => { if (o.isMesh) { o.castShadow = !(o.material && o.material.name && o.material.name.startsWith('LCD_')); o.receiveShadow = true; } });
+  // soft fill under the ceiling (the cab otherwise only gets sky light through the glass)
+  const cabFill = new THREE.PointLight(0xf4f1ea, 0.9, 4.5, 1.5);
+  cabFill.position.set(8.6, 3.25, 0);
+  cab.add(cabFill);
   mascon = cab.getObjectByName('mascon_handle');
   if (cabLcd) cabLcd.dispose();
   cabLcd = new CabDisplays(cab);
@@ -342,6 +389,7 @@ function backToMenu() {
   $('pause').classList.add('hidden');
   $('menu').classList.remove('hidden');
   updateAnnStatus();
+  if (preview) preview.start();
 }
 
 // ---------------------------------------------------------------------------
@@ -701,6 +749,14 @@ function updateSound() {
     }
   }
   sound.crossing(bells);
+  // ambience: platform murmur near stations, birds in the countryside
+  const lsS = listenerS();
+  const st = route.stationNear(lsS, 260);
+  const near = st ? Math.max(0, 1 - Math.abs(st.s - 140 - lsS) / 260) : 0;
+  const busy = st ? (st.area === 'city' ? 1 : st.area === 'suburb' ? 0.65 : 0.4) : 0;
+  let area = 'city', bestD = Infinity;
+  for (const x of route.stations) { const d = Math.abs(x.s - lsS); if (d < bestD) { bestD = d; area = x.area; } }
+  sound.ambience({ station: near * busy * (physics.kmh < 30 ? 1 : 0.4), rural: area === 'rural' ? 1 : area === 'suburb' ? 0.4 : 0.12 });
 }
 
 /** scene, camera and HUD for the current state */
@@ -778,6 +834,7 @@ async function boot() {
     await Promise.all([loadAssets(), loadFonts()]);
     $('startBtn').disabled = false;
     $('startBtn').textContent = '運転開始';
+    showPreview();
     // a nice idle backdrop: the selected train at 上野
     $('bootLoad').classList.add('hidden');
   } catch (e) {

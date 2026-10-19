@@ -31,6 +31,7 @@
     <div class="cols">
       <div class="col">
         <h2>車両</h2>
+        <canvas id="vehPreview" class="veh-preview" width="640" height="260" aria-label="選択中の車両の3Dプレビュー"></canvas>
         <div id="vehList" class="veh-list"></div>
       </div>
       <div class="col">
@@ -39,7 +40,7 @@
         <div class="row"><label>到着</label><select id="toSel"></select></div>
         <div class="row"><label>両数</label><select id="carsSel"><option value="15">15両（グリーン車付）</option><option value="10">10両</option></select></div>
         <p id="formNote" class="note"></p>
-        <div class="row"><label>E231の音</label><select id="vvvfSel">
+        <div class="row"><label>VVVF音</label><select id="vvvfSel">
           <option value="new">機器更新車（現在の主流）</option>
           <option value="old">未更新車（日立 SC59A/SC77・「墜落」）</option>
         </select></div>

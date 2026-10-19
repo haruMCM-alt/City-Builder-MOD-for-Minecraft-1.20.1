@@ -9,7 +9,7 @@ const NEAR = 420;         // detailed band either side
 const FAR = 1500;         // low-detail silhouettes
 const BASE_Y = GROUND_Y - 0.12;   // buildings sink slightly into the ground plane
 
-export const MATERIAL_KEYS = ['house', 'apt', 'mansion', 'office', 'shop', 'factory', 'roofTile', 'roofMetal', 'concrete', 'plain', 'glass', 'paddy', 'field', 'road', 'asphalt', 'levee', 'far', 'water', 'dirt'];
+export const MATERIAL_KEYS = ['house', 'apt', 'mansion', 'office', 'shop', 'factory', 'roofTile', 'roofMetal', 'concrete', 'plain', 'glass', 'sign', 'paddy', 'field', 'road', 'asphalt', 'levee', 'far', 'water', 'dirt'];
 
 /** road segments for one chunk, decided from deterministic hashes so neighbours agree */
 export function crossingRoadsNear(route, s0, s1) {
@@ -114,12 +114,24 @@ export class LandBuilder {
     const r = this.route;
     const p = r.pose(sc, lc, {});
     const lu = this.landUse(sc, lc, p.x, p.z);
+    // level of detail for the buildings of this cell: full close to the line, silhouettes far away
+    const al = Math.abs(lc);
+    // (non-enumerable: the chunk builder iterates B expecting only GeoBuffers)
+    Object.defineProperty(B, 'lod', { value: al < 80 ? 2 : al < 170 ? 1 : 0, writable: true, enumerable: false, configurable: true });
     const yaw = p.yaw + (side > 0 ? 0 : Math.PI);   // buildings face the line
     const jit = () => (R() - 0.5) * 3;
     const place = (fn, ...args) => {
       const q = r.pose(sc + jit(), lc + jit() * side, {});
       const F = new Frame(q.x, BASE_Y, q.z, yaw + Math.PI / 2 + (R() - 0.5) * 0.08);
-      return fn(B, F, R, ...args);
+      const res = fn(B, F, R, ...args);
+      // garden hedges / shrubs the builder asked for (local u, w, scale)
+      if (res && res.shrubs) {
+        for (const [u, w, sc] of res.shrubs) {
+          const [x, , z] = F.p(u, 0, w);
+          inst.trees.push({ kind: 'shrub', x, z, s: sc * (0.8 + R() * 0.4), rot: R() * 6.28 });
+        }
+      }
+      return res;
     };
     const tree = (kind, s2, l2, scl) => {
       const q = r.pose(s2, l2, {});

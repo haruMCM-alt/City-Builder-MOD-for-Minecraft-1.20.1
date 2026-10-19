@@ -18,7 +18,7 @@ export const VEHICLES = {
     id: 'e231',
     name: 'E231系1000番台',
     tag: '近郊形・グリーン車付',
-    desc: '宇都宮線の主力。三菱IGBT-VVVFインバータ。',
+    desc: '宇都宮線の主力。日立IGBT-VVVF（機器更新車／未更新車の音を選べます）。',
     glb: 'assets/models/e231.glb',
     maxSpeed: 120,
     accel: 2.5, // km/h/s at full power (start)
@@ -84,7 +84,7 @@ export const VEHICLES = {
     id: 'e233',
     name: 'E233系3000番台',
     tag: '近郊形・グリーン車付',
-    desc: '上野東京ラインでも活躍。低い唸りのIGBT-VVVF。',
+    desc: '上野東京ラインでも活躍。日立IGBT-VVVF（SC98）、525 Hz から始まる音。',
     glb: 'assets/models/e233.glb',
     maxSpeed: 120,
     accel: 2.5,

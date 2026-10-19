@@ -128,6 +128,20 @@ export class SoundEngine {
     this.melFilter.connect(this.master);
     this.melFilter.connect(melDelay); melDelay.connect(melFb).connect(melDelay); melDelay.connect(melWet).connect(this.master);
 
+    // ambience: platform crowd murmur (filtered noise with a syllable-rate flutter) and bird calls
+    const crowd = this.loopSource(this.pinkBuf);
+    const cf1 = ctx.createBiquadFilter(); cf1.type = 'bandpass'; cf1.frequency.value = 650; cf1.Q.value = 0.7;
+    const cf2 = ctx.createBiquadFilter(); cf2.type = 'peaking'; cf2.frequency.value = 2400; cf2.gain.value = 5; cf2.Q.value = 1.2;
+    const flutter = ctx.createGain(); flutter.gain.value = 0.6;
+    const fl1 = ctx.createOscillator(); fl1.frequency.value = 4.3;
+    const fl2 = ctx.createOscillator(); fl2.frequency.value = 6.9;
+    const flG = ctx.createGain(); flG.gain.value = 0.22;
+    fl1.connect(flG); fl2.connect(flG); flG.connect(flutter.gain); fl1.start(); fl2.start();
+    this.crowdG = ctx.createGain(); this.crowdG.gain.value = 0;
+    crowd.connect(cf1).connect(cf2).connect(flutter).connect(this.crowdG).connect(this.worldBus);
+    this.birdBufs = [0, 1, 2, 3].map((k) => this.makeBird(k));
+    this.nextBird = 0;
+
     this.chimeBus = ctx.createGain();
     this.chimeBus.connect(this.master);
     this.atsBus = ctx.createGain();
@@ -269,6 +283,26 @@ export class SoundEngine {
       const click = lp * Math.exp(-t * 95) * 0.75;
       const ring = Math.sin(2 * Math.PI * ring1 * t) * Math.exp(-t * 42) * 0.13 + Math.sin(2 * Math.PI * ring2 * t) * Math.exp(-t * 58) * 0.06;
       d[i] = thump + click + ring;
+    }
+    return b;
+  }
+
+  /** a short bird call: a few frequency-swept whistles (wagtail / bulbul-like) */
+  makeBird(seed) {
+    const ctx = this.ctx, sr = ctx.sampleRate;
+    const notes = 2 + (seed % 3) * 2;
+    const len = Math.floor(sr * (0.12 * notes + 0.1));
+    const b = ctx.createBuffer(1, len, sr);
+    const d = b.getChannelData(0);
+    let ph = 0;
+    for (let n = 0; n < notes; n++) {
+      const t0 = n * 0.12, dur = 0.06 + (seed % 2) * 0.03;
+      const f0 = 2800 + seed * 450 + (n % 2) * 700, f1 = f0 + (seed % 2 ? 1500 : -900);
+      for (let i = Math.floor(t0 * sr); i < Math.min(len, Math.floor((t0 + dur) * sr)); i++) {
+        const u = (i / sr - t0) / dur;
+        ph += 2 * Math.PI * (f0 + (f1 - f0) * u) / sr;
+        d[i] += Math.sin(ph + 0.6 * Math.sin(ph * 0.5)) * Math.sin(Math.PI * u) ** 2 * 0.5;
+      }
     }
     return b;
   }
@@ -476,6 +510,24 @@ export class SoundEngine {
       this.lastCamStep = step;
     }
     this.jump = false;
+  }
+
+  /**
+   * ambience around the listener
+   * station: 0..1 how close the listener is to a platform with people; rural: 0..1 countryside
+   */
+  ambience({ station = 0, rural = 0 }) {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    this.crowdG.gain.setTargetAtTime(0.06 * station, t, 0.6);
+    // birds: occasional calls from random spots around the listener (outside or with doors open)
+    if (rural > 0.05 && t > this.nextBird) {
+      this.nextBird = t + 1.5 + Math.random() * 6 / rural;
+      const a = Math.random() * Math.PI * 2, d = 15 + Math.random() * 60, L = this.L;
+      oneShot(this.ctx, L, this.worldBus, this.birdBufs[Math.floor(Math.random() * 4)],
+        { x: L.pos.x + Math.cos(a) * d, y: L.pos.y + 3 + Math.random() * 8, z: L.pos.z + Math.sin(a) * d },
+        { gain: 0.5 * rural, ref: 10, rate: 0.9 + Math.random() * 0.2 });
+    }
   }
 
   /** a wheel crossing a rail joint at world position pos; own = our train (else a passing one) */
