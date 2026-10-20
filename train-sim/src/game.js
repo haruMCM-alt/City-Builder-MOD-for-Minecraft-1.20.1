@@ -6,7 +6,8 @@ import { CUES } from './audio/announce-cues.js';
  * triggering the in-car announcements.
  */
 export class Game {
-  constructor({ route, physics, timetable, sound, announcer, melody, hud, fromIdx }) {
+  constructor({ route, physics, timetable, sound, announcer, melody, hud, fromIdx, service }) {
+    this.service = service || null;
     this.route = route;
     this.ph = physics;
     this.tt = timetable;
@@ -78,7 +79,9 @@ export class Game {
       const row = this.current;
       if (!this.introPlayed && this.ti === 1 && this.stateT > 2) {
         this.introPlayed = true;
-        if (this.fromIdx === 0 && ann.has('intro')) ann.play('intro', {});
+        // the recorded intro names the local train; rapid services only get it from the speech synthesizer
+        const local = !this.service || !this.service.stops;
+        if (this.fromIdx === 0 && ann.has('intro') && (local || ann.mode !== 'file')) ann.play('intro', {});
       }
       const ml = row.dep != null ? this.melodyLength() : 0;
       if (row.dep != null && this.clock >= row.dep - 12 - (ml ? ml + 1.5 : 0)) {

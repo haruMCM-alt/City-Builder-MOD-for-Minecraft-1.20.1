@@ -62,6 +62,7 @@ export class LandBuilder {
     const r = this.route;
     const R = rng(k * 9176 + 3);
     const roads = crossingRoadsNear(r, s0 - 100, s1 + 100);
+    this.roads = roads;
     const p = {};
     const world = (s, l) => r.pose(s, l, p);
     const occupied = new Set();
@@ -98,6 +99,18 @@ export class LandBuilder {
     return roads;
   }
 
+  /**
+   * building frame at (s, l): local u runs along the track, the front (local -w) faces the line.
+   * (Frame rotates the opposite way to three.js' yaw, hence -yaw.)
+   */
+  frameAt(s, l, extraYaw = 0) {
+    const r = this.route;
+    const q = r.pose(s, l, {}), t = r.pose(s, 0, {});
+    let th = -q.yaw;
+    if (-Math.sin(th) * (t.x - q.x) + Math.cos(th) * (t.z - q.z) > 0) th += Math.PI;
+    return new Frame(q.x, BASE_Y, q.z, th + extraYaw);
+  }
+
   landUse(s, l, wx, wz) {
     const r = this.route;
     let u = r.density(s);
@@ -121,8 +134,7 @@ export class LandBuilder {
     const yaw = p.yaw + (side > 0 ? 0 : Math.PI);   // buildings face the line
     const jit = () => (R() - 0.5) * 3;
     const place = (fn, ...args) => {
-      const q = r.pose(sc + jit(), lc + jit() * side, {});
-      const F = new Frame(q.x, BASE_Y, q.z, yaw + Math.PI / 2 + (R() - 0.5) * 0.08);
+      const F = this.frameAt(sc + jit(), lc + jit() * side, (R() - 0.5) * 0.08);
       const res = fn(B, F, R, ...args);
       // garden hedges / shrubs the builder asked for (local u, w, scale)
       if (res && res.shrubs) {
@@ -132,6 +144,21 @@ export class LandBuilder {
         }
       }
       return res;
+    };
+    // factories are big (up to 70 m × 40 m): never centre them in the 24 m cell like a house,
+    // put the front wall on the cell's inner edge and grow away from the line, and only where
+    // the railway boundary, stations and crossing roads stay clear along the whole length
+    const placeFactory = () => {
+      const w = 30 + R() * 40, d = 18 + R() * 22;
+      for (let ss = s - 2; ss <= s + w + 2; ss += 6) if (this.edge(ss, side) + 4 > l) return false;
+      if ((this.roads || []).some((rd) => rd.s > s - rd.w / 2 - 4 && rd.s < s + w + rd.w / 2 + 4)) return false;
+      const F = this.frameAt(s + w / 2, side * (l + 2 + d / 2));
+      factory(B, F, R, w, d);
+      // claim the cells it covers so nothing else is built inside it
+      for (let a = 0; a <= Math.ceil(w / CELL); a++) for (let b = 0; b <= Math.ceil((d + 2) / CELL); b++) {
+        occupied.add(`${Math.floor(s / CELL) + a},${Math.floor(l / CELL) + b},${side}`);
+      }
+      return true;
     };
     const tree = (kind, s2, l2, scl) => {
       const q = r.pose(s2, l2, {});
@@ -144,8 +171,7 @@ export class LandBuilder {
         const big = (Math.floor(s / CELL) % 2 === 0) && (Math.floor(l / CELL) % 2 === 0) && R() < 0.55;
         if (big) {
           for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) occupied.add(`${Math.floor(s / CELL) + a},${Math.floor(l / CELL) + b},${side}`);
-          const q = r.pose(sc + CELL / 2, lc + side * CELL / 2, {});
-          const F = new Frame(q.x, BASE_Y, q.z, yaw + Math.PI / 2);
+          const F = this.frameAt(sc + CELL / 2, lc + side * CELL / 2);
           if (x < 0.55) mansion(B, F, R, near ? 15 : 12);
           else office(B, F, R);
         } else if (x < 0.35) place(house);
@@ -160,7 +186,7 @@ export class LandBuilder {
         if (x < 0.62) { place(house); if (R() < 0.6) tree(R() < 0.7 ? 'broad' : 'conifer', sc + 8, lc + side * (R() * 8), 0.75); }
         else if (x < 0.78) place(apartment);
         else if (x < 0.84) place(shopRow);
-        else if (x < 0.88) { if (lu.n > 0.5) place(factory); else this.parking(B, inst, R, sc, lc); }
+        else if (x < 0.88) { if (!(lu.n > 0.5 && placeFactory())) this.parking(B, inst, R, sc, lc); }
         else if (x < 0.95) this.fieldCell(B, inst, R, sc, lc, side, 'field');
         else tree('broad', sc, lc, 1.1);
         break;
@@ -171,7 +197,7 @@ export class LandBuilder {
           place(house);
           // farmhouse with windbreak trees (屋敷林) behind
           if (R() < 0.7) for (let t = 0; t < 3; t++) tree(R() < 0.6 ? 'conifer' : 'broad', sc + (R() - 0.5) * 20, lc + side * (8 + R() * 6), 1.15);
-        } else if (x < 0.62) { place(factory); }
+        } else if (x < 0.62) { if (!placeFactory()) this.fieldCell(B, inst, R, sc, lc, side, 'field'); }
         else if (x < 0.78) this.fieldCell(B, inst, R, sc, lc, side, 'field');
         else if (x < 0.9) { for (let t = 0; t < 4; t++) tree(R() < 0.5 ? 'conifer' : 'broad', sc + (R() - 0.5) * 20, lc + (R() - 0.5) * 20, 1.2); }
         else { for (let t = 0; t < 5; t++) tree('bamboo', sc + (R() - 0.5) * 16, lc + (R() - 0.5) * 16, 1.0); }
@@ -186,8 +212,7 @@ export class LandBuilder {
           if ((Math.floor(sc / CELL) % 4) === 0 && (Math.floor(Math.abs(lc) / CELL) % 2) === 0) {
             const q = r.pose(sc + CELL, lc, {});
             for (let g = 0; g < 3; g++) {
-              const qq = r.pose(sc + CELL * 0.5, lc + side * (g * 7 - 7), {});
-              greenhouse(B, new Frame(qq.x, BASE_Y, qq.z, yaw + Math.PI / 2), R, 40);
+              greenhouse(B, this.frameAt(sc + CELL * 0.5, lc + side * (g * 7 - 7)), R, 40);
               void q;
             }
           }
@@ -307,7 +332,7 @@ export class LandBuilder {
         }
         const n = lu.kind === 'city' ? 3 : lu.kind === 'suburb' ? 2 : 1;
         for (let i = 0; i < n; i++) {
-          const F = new Frame(q.x + (R() - 0.5) * 50, BASE_Y, q.z + (R() - 0.5) * 50, q.yaw + Math.PI / 2);
+          const F = new Frame(q.x + (R() - 0.5) * 50, BASE_Y, q.z + (R() - 0.5) * 50, -q.yaw);
           const tall = lu.kind === 'city' ? 8 + R() * 40 : 5 + R() * 4;
           const c = pick([[0.78, 0.76, 0.72], [0.70, 0.70, 0.70], [0.82, 0.80, 0.76], [0.60, 0.62, 0.64]], R());
           farBlock(B, F, 10 + R() * 18, 8 + R() * 12, tall, c);

@@ -53,6 +53,7 @@ import { Announcer } from './audio/announce.js';
 import { MelodyPlayer } from './audio/melody.js';
 import { MELODY_CLIPS } from './audio/melody-cues.js';
 import { buildTimetable, fmtTime } from './timetable.js';
+import { SERVICES, DEFAULT_SERVICE } from './services.js';
 import { HUD } from './hud.js';
 import { CabDisplays } from './cabdisplays.js';
 import { loadFonts } from './displays.js';
@@ -99,7 +100,9 @@ const settings = {
   shadows: store.get('shadows', true),
   quality: store.get('quality', 'high'),
   vvvf: store.get('vvvf', 'new'),
+  service: store.get('service', DEFAULT_SERVICE),
 };
+if (!SERVICES[settings.service]) settings.service = DEFAULT_SERVICE;
 if (!VEHICLES[settings.vehicle]) settings.vehicle = DEFAULT_VEHICLE;
 
 // ---------------------------------------------------------------------------
@@ -211,6 +214,10 @@ function buildMenu() {
     updateFormationNote();
   };
   fromSel.addEventListener('change', fix); toSel.addEventListener('change', fix);
+  const svcSel = $('svcSel');
+  svcSel.innerHTML = Object.values(SERVICES).map((x) => `<option value="${x.id}">${x.name}${x.original ? '（ゲームオリジナル）' : ''}</option>`).join('');
+  svcSel.value = settings.service;
+  svcSel.addEventListener('change', () => { settings.service = svcSel.value; store.set('service', settings.service); updateFormationNote(); });
   const vvvfSel = $('vvvfSel');
   vvvfSel.value = settings.vvvf;
   vvvfSel.addEventListener('change', () => { settings.vvvf = vvvfSel.value; store.set('vvvf', settings.vvvf); });
@@ -251,6 +258,9 @@ function updateFormationNote() {
   const f = v.formations[settings.cars] || v.formations[15];
   const g = (f.match(/G/g) || []).length;
   const st = route.stations;
+  const svc = SERVICES[settings.service];
+  const nStops = route.stations.filter((x, i) => i >= settings.from && i <= settings.to && (i === settings.from || i === settings.to || !svc.stops || svc.stops.includes(x.name))).length;
+  if ($('svcNote')) $('svcNote').textContent = `${svc.desc}（この区間の停車駅 ${nStops} 駅）`;
   $('formNote').textContent = `${f.length}両編成${g ? `（グリーン車 ${g}両）` : ''} ・ ${st[settings.from].name} → ${st[settings.to].name}  ${((st[settings.to].s - st[settings.from].s) / 1000).toFixed(1)} km`;
 }
 
@@ -326,9 +336,11 @@ async function startGame() {
 
   if (world) { teardown(); }
   world = new World(renderer, scene, route, gltfs.env, settings.quality);
-  const tt = buildTimetable(route, veh, formation.length, settings.from, settings.to);
+  const service = SERVICES[settings.service];
+  const tt = buildTimetable(route, veh, formation.length, settings.from, settings.to, service);
+  announcer.serviceName = service.short === '快速' ? '快速ラビット' : service.name;
   physics = new TrainPhysics(veh, formation.length);
-  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: '普通 宇都宮', destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', info: true });
+  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', info: true, service });
   scene.add(player.group);
   // the passenger view rides in the first motor car
   carIdx = Math.max(1, formation.indexOf('P'));
@@ -356,14 +368,14 @@ async function startGame() {
   cabLcd = new CabDisplays(cab);
   player.cars[0].userData.inner.add(cab);
   hud.setup(veh, tt);
-  game = new Game({ route, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from });
+  game = new Game({ route, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from, service });
   traffic = new Traffic();
   world.preload(physics.s);
   setCamMode('cab');
   $('loading').classList.add('hidden');
   $('hud').classList.remove('hidden');
   $('ttPanel').innerHTML = tt.map((r) => `<tr><td>${r.station.name}</td><td>${r.arr ? fmtTime(r.arr, true) : ''}</td><td>${r.dep ? fmtTime(r.dep, true) : ''}</td></tr>`).join('');
-  hud.message(`${veh.name} ${formation.length}両<br><small>${tt[0].station.name} ${fmtTime(tt[0].dep)} 発 → ${tt[tt.length - 1].station.name} ${fmtTime(tt[tt.length - 1].arr)} 着</small>`, 'info', 5);
+  hud.message(`${service.name} ${veh.name} ${formation.length}両<br><small>${tt[0].station.name} ${fmtTime(tt[0].dep)} 発 → ${tt[tt.length - 1].station.name} ${fmtTime(tt[tt.length - 1].arr)} 着</small>`, 'info', 5);
   running = true;
   paused = false;
   resultShown = false;
@@ -776,6 +788,8 @@ function updateView(dt) {
     next: tgt ? tgt.station : null,
     arriving: game.state === 'arrived' || (game.state === 'running' && tgt && tgt.station.s - physics.s < 700),
     carNo: player.cars.length - carIdx,          // 1号車 is the Ueno end
+    kind: game.service ? game.service.short : '普通',
+    dest: game.tt[game.tt.length - 1].station.name,
     clock: fmtTime(game.clock, false),
   });
   updateCamera(dt);

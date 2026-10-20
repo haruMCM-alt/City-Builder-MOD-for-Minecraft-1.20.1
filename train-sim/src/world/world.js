@@ -1039,7 +1039,7 @@ export class World {
       const B2 = new GeoBuffer();
       const sStair = st.s - 160;
       r.pose(sStair, centre(sStair), p);
-      const F = new Frame(p.x, p.y + H, p.z, p.yaw);
+      const F = new Frame(p.x, p.y + H, p.z, -p.yaw);
       const up = !elevated;
       const stH = up ? 6.6 : 3.0;
       boxWalls(B2, F, 12, 3.2, 0, stH, TILE.office, [0.92, 0.95, 1]);
@@ -1055,32 +1055,32 @@ export class World {
       const big = st.area === 'city';
       const len = big ? 34 : 16;
       r.pose(sC, (latL + latR) / 2, p);
-      const F = new Frame(p.x, p.y + 7.6, p.z, p.yaw);
+      const F = new Frame(p.x, p.y + 7.6, p.z, -p.yaw);
       boxWalls(B, F, len, latL - latR, 0, big ? 6.5 : 4.6, TILE.office, [1, 1, 1]);
       flatTop(Bp, F, len, latL - latR, big ? 6.5 : 4.6, [0.7, 0.71, 0.73]);
       // columns between tracks
       for (const lat of [latL - 2, (latL + latR) / 2, latR + 2]) {
         r.pose(sC, lat, p);
-        solid(Bp, new Frame(p.x, GROUND_Y, p.z, p.yaw), 0, 0, 0, 7.6 - GROUND_Y + p.y, 1.0, 1.0, [0.8, 0.8, 0.78]);
+        solid(Bp, new Frame(p.x, GROUND_Y, p.z, -p.yaw), 0, 0, 0, 7.6 - GROUND_Y + p.y, 1.0, 1.0, [0.8, 0.8, 0.78]);
       }
       // entrance stairs/buildings on both sides
       for (const lat of [latL + 6, latR - 6]) {
         r.pose(sC, lat, p);
-        const F2 = new Frame(p.x, GROUND_Y, p.z, p.yaw);
+        const F2 = new Frame(p.x, GROUND_Y, p.z, -p.yaw);
         boxWalls(B, F2, len, 10, 0, 7.6 + (big ? 6.5 : 4.6) - GROUND_Y, TILE.office, [1, 1, 1]);
         flatTop(Bp, F2, len, 10, 7.6 + (big ? 6.5 : 4.6) - GROUND_Y, [0.7, 0.71, 0.73]);
       }
     } else {
       // station building under / beside the viaduct
       r.pose(st.s - 150, latL + 10, p);
-      const F = new Frame(p.x, GROUND_Y, p.z, p.yaw);
+      const F = new Frame(p.x, GROUND_Y, p.z, -p.yaw);
       boxWalls(B, F, 80, 14, 0, 12, TILE.office, [1, 1, 1]);
       flatTop(Bp, F, 80, 14, 12, [0.7, 0.71, 0.73]);
     }
     if (st.area === 'city') {
       // terminal / major station: big station building + department store
       r.pose(st.s - 130, latL + (elevated ? 40 : 30), p);
-      const F = new Frame(p.x, GROUND_Y, p.z, p.yaw);
+      const F = new Frame(p.x, GROUND_Y, p.z, -p.yaw);
       boxWalls(B, F, 110, 40, 0, 28 + (st.index % 3) * 8, TILE.office, [0.95, 0.97, 1]);
       flatTop(Bp, F, 110, 40, 28 + (st.index % 3) * 8, [0.6, 0.6, 0.6]);
     }

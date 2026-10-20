@@ -68,7 +68,14 @@ export function makeDestTexture(text, type = 'led', color = '#ff8a10') {
     g.fillStyle = '#141414';
     g.font = `700 64px ${UI_FONT}`;
     g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(dest || kind, 256, 52);
+    g.fillText(dest || kind, kind && kind !== '普通' && dest ? 300 : 256, 52);
+    if (kind && kind !== '普通' && dest) {
+      g.fillStyle = kind === '快速' ? '#c8281a' : '#1f4fb0';
+      g.fillRect(14, 20, 120, 64);
+      g.fillStyle = '#ffffff'; g.font = `700 ${kind.length > 2 ? 30 : 44}px ${UI_FONT}`;
+      g.fillText(kind, 74, 52);
+      g.fillStyle = '#141414';
+    }
     g.font = `400 18px ${UI_FONT}`;
     g.fillText(dest === '宇都宮' ? 'Utsunomiya' : dest === '上野' ? 'Ueno' : '', 256, 94);
     return t;
@@ -78,12 +85,18 @@ export function makeDestTexture(text, type = 'led', color = '#ff8a10') {
   // 128 × 21 LEDs at 6 px pitch
   dotMatrix(g, 0, 1, 128, 21, 6, (mg, cols, rows) => {
     mg.textBaseline = 'middle';
-    mg.fillStyle = '#18c048';
+    const k = kind || '普通';
+    // kind box: 普通 green, 快速 orange-red, 特別快速 blue; long names are squeezed to fit
+    mg.fillStyle = k === '快速' ? '#e8501a' : k === '特別快速' ? '#1f5fd0' : '#18c048';
     mg.fillRect(1, 1, 33, rows - 2);
     mg.fillStyle = '#ffffff';
     mg.font = `16px ${LED_FONT}`;
     mg.textAlign = 'center';
-    mg.fillText(kind || '普通', 17.5, rows / 2 + 1);
+    const tw = mg.measureText(k).width;
+    const sx = Math.min(1, 31 / tw);
+    mg.save(); mg.translate(17.5, 0); mg.scale(sx, 1);
+    mg.fillText(k, 0, rows / 2 + 1);
+    mg.restore();
     mg.fillStyle = color;
     mg.font = `16px ${LED_FONT}`;
     mg.fillText(dest || '', 82, rows / 2 + 1);
@@ -125,7 +138,8 @@ export class InfoDisplay {
     g.fillStyle = '#f68b1e'; g.fillRect(0, 0, W, 46);
     g.fillStyle = '#ffffff'; g.textBaseline = 'middle';
     g.font = `700 24px ${UI_FONT}`; g.textAlign = 'left';
-    g.fillText(this.phase === 1 ? 'Utsunomiya Line  for Utsunomiya' : '宇都宮線  普通  宇都宮行', 16, 24);
+    const kindEn = { 普通: 'Local', 快速: 'Rapid', 特別快速: 'Special Rapid' }[info.kind] || 'Local';
+    g.fillText(this.phase === 1 ? `${kindEn}  for ${info.dest === '宇都宮' || !info.dest ? 'Utsunomiya' : info.dest}` : `宇都宮線  ${info.kind || '普通'}  ${info.dest || '宇都宮'}行`, 16, 24);
     g.textAlign = 'right'; g.font = `700 22px ${UI_FONT}`;
     g.fillText(info.carNo ? `${info.carNo}号車` : '', W - 16, 24);
     const st = info.next;

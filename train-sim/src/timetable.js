@@ -4,6 +4,7 @@
 // simulated minimum run time for the selected train.
 
 import { tractiveAccel, resistance } from './vehicles.js';
+import { stopsAt } from './services.js';
 
 const ANCHORS = { 上野: 8 * 3600 + 51 * 60, 赤羽: 9 * 3600 + 2 * 60, 浦和: 9 * 3600 + 10 * 60, 大宮: 9 * 3600 + 18 * 60, 蓮田: 9 * 3600 + 28 * 60, 久喜: 9 * 3600 + 39 * 60, 古河: 9 * 3600 + 53 * 60, 小山: 10 * 3600 + 7 * 60, 宇都宮: 10 * 3600 + 34 * 60 };
 
@@ -32,7 +33,28 @@ export function minRunTime(route, veh, sA, sB, trainLen) {
   return t + 8;
 }
 
-export function buildTimetable(route, veh, nCars, from, to) {
+export function buildTimetable(route, veh, nCars, from, to, service = null) {
+  const local = buildLocal(route, veh, nCars, from, to);
+  if (!service || !service.stops) return local;
+  // rapid services: leave at the same time as the local would, then run stop to stop
+  // on a slightly padded minimum run time (passing stations are not in the table)
+  const st = route.stations;
+  const trainLen = nCars * 20;
+  const idx = [];
+  for (let i = from; i <= to; i++) if (i === from || i === to || stopsAt(service, st[i])) idx.push(i);
+  const rows = idx.map((i) => ({ station: st[i], arr: null, dep: null, dwell: st[i].dwell || (st[i].area === 'city' ? 35 : 25) }));
+  let t = local[0].dep;
+  rows[0].dep = t;
+  for (let k = 1; k < rows.length; k++) {
+    t += minRunTime(route, veh, rows[k - 1].station.s, rows[k].station.s, trainLen) * 1.07;
+    t = Math.round(t / 5) * 5;
+    rows[k].arr = t;
+    if (k < rows.length - 1) { t += rows[k].dwell; rows[k].dep = t; }
+  }
+  return rows;
+}
+
+function buildLocal(route, veh, nCars, from, to) {
   const st = route.stations;
   const trainLen = nCars * 20;
   const rows = st.map((x) => ({ station: x, arr: null, dep: null, dwell: x.dwell || (x.area === 'city' ? 35 : 25) }));

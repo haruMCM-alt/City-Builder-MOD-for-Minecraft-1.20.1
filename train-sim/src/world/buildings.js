@@ -453,8 +453,8 @@ export function shopRow(B, F, R) {
   return { w, d: d + 1.1 };
 }
 
-export function factory(B, F, R) {
-  const w = 30 + R() * 50, d = 20 + R() * 25, H = 7 + R() * 4;
+export function factory(B, F, R, W, D) {
+  const w = W ?? 30 + R() * 50, d = D ?? 20 + R() * 25, H = 7 + R() * 4;
   const col = pick([[0.85, 0.88, 0.9], [0.75, 0.82, 0.88], [0.9, 0.88, 0.82], [0.7, 0.74, 0.7]], R());
   boxWalls(B.factory, F, w, d, 0, H, TILE.factory, col);
   const rc = pick([[0.45, 0.55, 0.62], [0.55, 0.55, 0.55], [0.35, 0.45, 0.4]], R());
