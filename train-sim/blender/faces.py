@@ -86,13 +86,15 @@ def paint_e231(P: Painter, S):
 
 def features_e231(det, S, M, fp, fr, extra, add_logo):
     for s in (-1, 1):
-        # lamp unit: headlight inboard, red tail-light lens on the outboard half
+        # lower lamp unit: the inboard half is an unlit clear lens, only the outboard red
+        # tail light lights up (the E231's headlights are the two round lamps up top)
         hi0, hi1 = sorted((s * 0.64, s * 0.93))
-        fr(det, M["head"], hi0, hi1, 1.19, 1.38, eps=0.004, r=0.015)
+        fr(det, M["lens"], hi0, hi1, 1.19, 1.38, eps=0.004, r=0.015)
         ti0, ti1 = sorted((s * 0.95, s * 1.215))
         fr(det, M["tail"], ti0, ti1, 1.19, 1.38, eps=0.004, r=0.015)
-        # HID headlights in the top corners of the black panel
-        det.cyl(fp(s * 0.92, 3.35, 0.004), (1, 0, 0), 0.05, 0.004, M["head"], seg=16)
+        # headlights: round lamps either side of the destination display, in a dark bezel
+        det.cyl(fp(s * 0.92, 3.35, 0.003), (1, 0, 0), 0.085, 0.003, M["black"], seg=24)
+        det.cyl(fp(s * 0.92, 3.35, 0.007), (1, 0, 0), 0.068, 0.004, M["head"], seg=24)
         # light-grey lower plates either side of the coupler gap
         y0, y1 = sorted((s * 0.333, s * 1.30))
         det.box((fp(0, 0.96)[0] - 0.05, (y0 + y1) / 2, 0.9625), (0.10, y1 - y0, 0.105), M["light_grey"])
