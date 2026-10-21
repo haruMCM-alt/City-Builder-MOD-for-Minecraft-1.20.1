@@ -155,7 +155,7 @@ export class Announcer extends ClipPlayer {
       return this.playRange(id, c[0], c[1]);
     }
     if (this.mode === 'tts' && 'speechSynthesis' in window) {
-      const text = ttsText(id, { ...ctx, kind: this.serviceName || '普通' });
+      const text = ttsText(id, { ...ctx, kind: this.serviceName || '普通', dest: this.destName || '宇都宮' });
       if (!text) return 0;
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'ja-JP'; u.rate = 0.95; u.pitch = 1.1;
@@ -192,11 +192,11 @@ export class Announcer extends ClipPlayer {
 function ttsText(id, ctx) {
   const st = ctx.station;
   const side = ctx.door === 'right' ? '右' : '左';
-  if (id === 'intro') return `この電車は、宇都宮線、${ctx.kind || '普通'}、宇都宮行きです。まもなく発車いたします。`;
+  if (id === 'intro') return `この電車は、宇都宮線、${ctx.kind || '普通'}、${ctx.dest || '宇都宮'}行きです。まもなく発車いたします。`;
   if (!st) return '';
   if (id.startsWith('dep:')) {
     const term = ctx.terminal ? '終点、' : '';
-    return `今日も、JR東日本をご利用くださいまして、ありがとうございます。この電車は、宇都宮線、${ctx.kind || '普通'}、宇都宮行きです。次は、${term}${st.name}、${st.name}です。`;
+    return `今日も、JR東日本をご利用くださいまして、ありがとうございます。この電車は、宇都宮線、${ctx.kind || '普通'}、${ctx.dest || '宇都宮'}行きです。次は、${term}${st.name}、${st.name}です。`;
   }
   if (id.startsWith('arr:')) {
     const term = ctx.terminal ? '終点、' : '';

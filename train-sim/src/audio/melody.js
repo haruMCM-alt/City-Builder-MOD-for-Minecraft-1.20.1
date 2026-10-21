@@ -1,31 +1,38 @@
 // Departure melodies (発車メロディ) played on the platform before the doors close.
 
 import { ClipPlayer, LOCAL_MELODY_URL } from './announce.js';
-import { MELODY_CLIPS, DEFAULT_ASSIGN, MELODY_EXPECTED_DURATION } from './melody-cues.js';
+import { MELODY_CLIPS, DEFAULT_ASSIGN, DEFAULT_ASSIGN_UP, MELODY_EXPECTED_DURATION } from './melody-cues.js';
 
-const STORE_KEY = 'tsim.melodyAssign';
+const STORE_KEYS = { down: 'tsim.melodyAssign', up: 'tsim.melodyAssignUp' };
+const DEFAULTS = { down: DEFAULT_ASSIGN, up: DEFAULT_ASSIGN_UP };
 
 export class MelodyPlayer extends ClipPlayer {
   constructor(sound) {
     super(sound, 'melBus', MELODY_EXPECTED_DURATION);
-    this.assign = { ...DEFAULT_ASSIGN };
+    this.enabled = true;
+    this.setDirection('down');
+  }
+
+  /** separate per-station assignments for 宇都宮方面 (down) and 上野方面 (up) departures */
+  setDirection(dir) {
+    this.dir = dir === 'up' ? 'up' : 'down';
+    this.assign = { ...DEFAULTS[this.dir] };
     try {
-      const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+      const saved = JSON.parse(localStorage.getItem(STORE_KEYS[this.dir]) || 'null');
       if (saved && typeof saved === 'object') Object.assign(this.assign, saved);
     } catch { /* storage unavailable */ }
-    this.enabled = true;
   }
 
   tryLocal() { return super.tryLocal(LOCAL_MELODY_URL); }
 
   setAssign(station, no) {
     this.assign[station] = no;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(this.assign)); } catch { /* ignore */ }
+    try { localStorage.setItem(STORE_KEYS[this.dir], JSON.stringify(this.assign)); } catch { /* ignore */ }
   }
 
   resetAssign() {
-    this.assign = { ...DEFAULT_ASSIGN };
-    try { localStorage.removeItem(STORE_KEY); } catch { /* ignore */ }
+    this.assign = { ...DEFAULTS[this.dir] };
+    try { localStorage.removeItem(STORE_KEYS[this.dir]); } catch { /* ignore */ }
   }
 
   clip(no) { return MELODY_CLIPS.find((c) => c.no === no); }

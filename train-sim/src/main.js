@@ -54,6 +54,7 @@ import { MelodyPlayer } from './audio/melody.js';
 import { MELODY_CLIPS } from './audio/melody-cues.js';
 import { buildTimetable, fmtTime } from './timetable.js';
 import { SERVICES, DEFAULT_SERVICE } from './services.js';
+import { TrackView } from './trackview.js';
 import { HUD } from './hud.js';
 import { CabDisplays } from './cabdisplays.js';
 import { loadFonts } from './displays.js';
@@ -78,6 +79,8 @@ const hud = new HUD();
 const gltfs = {};
 let renderer, scene, camera, sun, hemi, composer = null, aoPass = null;
 let world = null, player = null, physics = null, game = null, traffic = null;
+// the line as seen in the running direction (下り or 上り); physics / game positions are in its coordinates
+let view = null;
 let cab = null, mascon = null, cabLcd = null;
 let carIdx = 1, carLights = null;     // passenger view: which car, and its saloon lights
 // driver's eye (ref2/cab spec: high cab, eye 2.965 m above rail), car-local three.js coords
@@ -101,7 +104,9 @@ const settings = {
   quality: store.get('quality', 'high'),
   vvvf: store.get('vvvf', 'new'),
   service: store.get('service', DEFAULT_SERVICE),
+  dir: store.get('dir', 'down'),
 };
+if (settings.dir !== 'up') settings.dir = 'down';
 if (!SERVICES[settings.service]) settings.service = DEFAULT_SERVICE;
 if (!VEHICLES[settings.vehicle]) settings.vehicle = DEFAULT_VEHICLE;
 
@@ -203,9 +208,27 @@ function buildMenu() {
   carsSel.value = String(settings.cars);
   carsSel.addEventListener('change', () => { settings.cars = Number(carsSel.value); store.set('cars', settings.cars); updateFormationNote(); });
   const fromSel = $('fromSel'), toSel = $('toSel');
-  const opts = route.stations.map((s, i) => `<option value="${i}">${s.name}</option>`).join('');
-  fromSel.innerHTML = opts; toSel.innerHTML = opts;
-  fromSel.value = String(settings.from); toSel.value = String(settings.to);
+  const fillStations = () => {
+    const list = menuView().stations;
+    const opts = list.map((s, i) => `<option value="${i}">${s.name}</option>`).join('');
+    fromSel.innerHTML = opts; toSel.innerHTML = opts;
+    settings.from = Math.min(settings.from, list.length - 2);
+    settings.to = Math.min(Math.max(settings.to, settings.from + 1), list.length - 1);
+    fromSel.value = String(settings.from); toSel.value = String(settings.to);
+  };
+  fillStations();
+  melody.setDirection(settings.dir);
+  const dirSel = $('dirSel');
+  dirSel.value = settings.dir;
+  dirSel.addEventListener('change', () => {
+    settings.dir = dirSel.value; store.set('dir', settings.dir);
+    melody.setDirection(settings.dir);
+    // a new direction starts from its first station
+    settings.from = 0; settings.to = route.stations.length - 1;
+    store.set('from', settings.from); store.set('to', settings.to);
+    fillStations();
+    updateFormationNote();
+  });
   const fix = () => {
     let f = Number(fromSel.value), t = Number(toSel.value);
     if (t <= f) { t = Math.min(route.stations.length - 1, f + 1); toSel.value = String(t); }
@@ -253,15 +276,22 @@ function buildMenu() {
   updateMelStatus();
 }
 
+/** a TrackView for the menu's direction (cached) */
+let _menuView = null;
+function menuView() {
+  if (!_menuView || _menuView.dir !== settings.dir) _menuView = new TrackView(route, settings.dir);
+  return _menuView;
+}
+
 function updateFormationNote() {
   const v = VEHICLES[settings.vehicle];
   const f = v.formations[settings.cars] || v.formations[15];
   const g = (f.match(/G/g) || []).length;
-  const st = route.stations;
+  const st = menuView().stations;
   const svc = SERVICES[settings.service];
-  const nStops = route.stations.filter((x, i) => i >= settings.from && i <= settings.to && (i === settings.from || i === settings.to || !svc.stops || svc.stops.includes(x.name))).length;
+  const nStops = st.filter((x, i) => i >= settings.from && i <= settings.to && (i === settings.from || i === settings.to || !svc.stops || svc.stops.includes(x.name))).length;
   if ($('svcNote')) $('svcNote').textContent = `${svc.desc}（この区間の停車駅 ${nStops} 駅）`;
-  $('formNote').textContent = `${f.length}両編成${g ? `（グリーン車 ${g}両）` : ''} ・ ${st[settings.from].name} → ${st[settings.to].name}  ${((st[settings.to].s - st[settings.from].s) / 1000).toFixed(1)} km`;
+  $('formNote').textContent = `${f.length}両編成${g ? `（グリーン車 ${g}両）` : ''} ・ ${st[settings.from].name} → ${st[settings.to].name}  ${(Math.abs(st[settings.to].realS - st[settings.from].realS) / 1000).toFixed(1)} km`;
 }
 
 function updateMelStatus() {
@@ -276,7 +306,10 @@ function updateMelStatus() {
 function buildMelodyAssign() {
   const list = $('melAssignList');
   const opts = MELODY_CLIPS.map((c) => `<option value="${c.no}">No.${c.no}${c.retired ? '（使用終了）' : ''} ・ ${(c.end - c.start).toFixed(0)}秒</option>`).join('');
-  list.innerHTML = route.stations.slice(0, -1).map((st) => `
+  const dirName = settings.dir === 'up' ? '上野方面（上り）' : '宇都宮方面（下り）';
+  document.querySelector('#melAssign h2').textContent = `発車メロディの割り当て ・ ${dirName}`;
+  document.querySelector('#melAssign .note').textContent = `録音には駅名が入っていないため、初期値は収録順からの推定です。▶で試聴して、各駅で${dirName}へ発車するときに鳴らす曲を選んでください（方向ごとにこのブラウザに保存されます）。`;
+  list.innerHTML = menuView().stations.slice(0, -1).map((st) => `
     <div class="ma-row"><span class="ma-st">${st.name}</span>
       <select data-st="${st.name}">${opts}</select>
       <button class="ma-play" data-st="${st.name}" aria-label="${st.name}のメロディを試聴">▶</button></div>`).join('');
@@ -335,12 +368,15 @@ async function startGame() {
   sun.castShadow = settings.shadows;
 
   if (world) { teardown(); }
+  view = new TrackView(route, settings.dir);
   world = new World(renderer, scene, route, gltfs.env, settings.quality);
+  world.dir = view.sign;
   const service = SERVICES[settings.service];
-  const tt = buildTimetable(route, veh, formation.length, settings.from, settings.to, service);
+  const tt = buildTimetable(view, veh, formation.length, settings.from, settings.to, service);
+  announcer.destName = tt[tt.length - 1].station.name;
   announcer.serviceName = service.short === '快速' ? '快速ラビット' : service.name;
   physics = new TrainPhysics(veh, formation.length);
-  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', info: true, service });
+  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', info: true, service, forward: !view.up });
   scene.add(player.group);
   // the passenger view rides in the first motor car
   carIdx = Math.max(1, formation.indexOf('P'));
@@ -368,9 +404,9 @@ async function startGame() {
   cabLcd = new CabDisplays(cab);
   player.cars[0].userData.inner.add(cab);
   hud.setup(veh, tt);
-  game = new Game({ route, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from, service });
+  game = new Game({ route: view, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from, service, up: view.up });
   traffic = new Traffic();
-  world.preload(physics.s);
+  world.preload(view.toRoute(physics.s));
   setCamMode('cab');
   $('loading').classList.add('hidden');
   $('hud').classList.remove('hidden');
@@ -414,47 +450,53 @@ class Traffic {
     this.pose = {};
   }
   clear() { for (const t of this.list) { t.set.dispose(); if (t.voice) t.voice.dispose(); } this.list = []; }
-  spawn(kind, s) {
+  /** s = spawn position in view coordinates (ahead of us); trains run toward us on the other track */
+  spawn(kind, sView) {
+    const s = view.toRoute(sView);
+    const dirReal = -view.sign;              // they run the opposite way to us
     const pick = kind === 'keihin' ? 'e233' : ['e231', 'e233', 'e231', 's211'][Math.floor(Math.random() * 4)];
     const veh = VEHICLES[pick];
     let formation, opts;
     if (kind === 'keihin') {
       formation = 'CPMMPMMPMR';
-      opts = { key: 'e233', dest: '各駅停車 大船', forward: false, recolor: true };
+      opts = { key: 'e233', dest: view.up ? '各駅停車 大宮' : '各駅停車 大船', forward: dirReal > 0, recolor: true };
     } else {
       formation = Math.random() < 0.6 ? veh.formations[15] : veh.formations[10];
-      opts = { key: modelKey(veh), dest: Math.random() < 0.5 ? '普通 上野' : '快速 小田原', forward: false };
+      opts = view.up
+        ? { key: modelKey(veh), dest: Math.random() < 0.5 ? '普通 宇都宮' : '快速 小金井', forward: true }
+        : { key: modelKey(veh), dest: Math.random() < 0.5 ? '普通 上野' : '快速 小田原', forward: false };
     }
     const set = new TrainSet(gltfs[pick].scene, veh, formation, opts);
     if (opts.recolor) recolorKeihin(set);
     scene.add(set.group);
-    const track = kind === 'keihin' ? (x) => route.extraTracks(x)[1] ?? route.upOffset(x) - 8.8 : (x) => route.upOffset(x);
+    // (the 京浜東北線 runs both ways on its own pair of tracks; main-line traffic uses the track we are not on)
+    const track = kind === 'keihin' ? (x) => route.extraTracks(x)[1] ?? route.upOffset(x) - 8.8 : view.up ? () => 0 : (x) => route.upOffset(x);
     const voice = sound.addTrain(kind === 'keihin' ? VEHICLES.e233 : veh, formation.length);
-    this.list.push({ set, s, v: (kind === 'keihin' ? 75 : 95 + Math.random() * 15) / 3.6, track, passed: false, kind, voice, axles: axleOffsets(formation.length), torque: Math.random() < 0.5 ? 0.3 : 0 });
+    this.list.push({ set, s, dirReal, v: (kind === 'keihin' ? 75 : 95 + Math.random() * 15) / 3.6, track, passed: false, kind, voice, axles: axleOffsets(formation.length), torque: Math.random() < 0.5 ? 0.3 : 0 });
   }
   update(dt, sp) {
     this.timer.up -= dt;
     if (this.timer.up <= 0) {
       this.timer.up = 150 + Math.random() * 200;
       const s = sp + 2600;
-      if (s < route.sMax - 200) this.spawn('main', s);
+      if (s < view.sMax - 200) this.spawn('main', s);
     }
-    if (sp < 29000) {
+    if (view.toRoute(sp) < 29000) {
       this.timer.ex -= dt;
       if (this.timer.ex <= 0) {
         this.timer.ex = 120 + Math.random() * 150;
         this.spawn('keihin', sp + 2400);
       }
     }
-    const lp = listenerS();
+    const lp = view.toRoute(listenerS());
     for (const t of this.list) {
       const prev = t.s;
-      t.s -= t.v * dt;
+      t.s += t.dirReal * t.v * dt;
       t.set.place(route, t.s, t.track, 0.004);
-      // rail joints under every axle (this train runs toward -s; its cars trail behind at +s)
+      // rail joints under every axle (its cars trail behind the front, against its direction)
       if (Math.abs(t.s - lp) < 700) {
         for (const off of t.axles) {
-          const a = prev + off, b = t.s + off;
+          const a = prev - t.dirReal * off, b = t.s - t.dirReal * off;
           if (Math.floor(a / 25) !== Math.floor(b / 25)) {
             const sj = Math.floor(a / 25) * 25;
             const p = route.pose(sj, t.track(sj), this.pose);
@@ -464,7 +506,7 @@ class Traffic {
       }
       if (t.voice) {
         const pos = [0.12, 0.5, 0.88].map((f) => {
-          const sv = t.s + t.set.length * f;
+          const sv = t.s - t.dirReal * t.set.length * f;
           const p = route.pose(sv, t.track(sv), {});
           return { x: p.x, y: p.y + 0.8, z: p.z };
         });
@@ -472,7 +514,8 @@ class Traffic {
       }
     }
     this.list = this.list.filter((t) => {
-      const keep = t.s + t.set.length > sp - 900 && t.s > route.sMin + 100;
+      const tv = view.fromRoute(t.s);     // its front in our coordinates (it comes toward us)
+      const keep = tv + t.set.length > sp - 900 && t.s > route.sMin + 100 && t.s < route.sMax - 100;
       if (!keep) { t.set.dispose(); if (t.voice) t.voice.dispose(); }
       return keep;
     });
@@ -533,34 +576,34 @@ function updateCamera(dt) {
     camera.position.z = E.z + Math.sin(t * 2.3) * vib;
     camera.rotation.set(look.pitch, -Math.PI / 2 + look.yaw, 0);
   } else if (camMode === 'side') {
-    route.pose(physics.s - 12, 16, p);
+    view.pose(physics.s - 12, 16, p);
     camera.position.set(p.x, p.y + 3.2, p.z);
-    route.pose(physics.s - 22, 0, q);
+    view.pose(physics.s - 22, 0, q);
     camera.lookAt(q.x, q.y + 2.0, q.z);
   } else if (camMode === 'front') {
     // ahead of the train, like a platform-end photo of the cab
-    route.pose(physics.s + 11, 2.7, p);
+    view.pose(physics.s + 11, 2.7, p);
     camera.position.set(p.x, p.y + 1.7, p.z);
-    route.pose(physics.s - 8, 0.0, q);
+    view.pose(physics.s - 8, 0.0, q);
     camera.lookAt(q.x, q.y + 1.9, q.z);
   } else if (camMode === 'chase') {
-    route.pose(physics.s - 70, 0, p);
+    view.pose(physics.s - 70, 0, p);
     camera.position.set(p.x, p.y + 22, p.z);
-    route.pose(physics.s + 40, 0, q);
+    view.pose(physics.s + 40, 0, q);
     camera.lookAt(q.x, q.y, q.z);
   } else if (camMode === 'trackside') {
     if (!tracksideCam || physics.s > tracksideCam.s + physics.len + 40) {
       const s = physics.s + 260 + Math.random() * 120;
-      const st = route.structureAt(s).type;
+      const st = view.structureAt(s).type;
       // on viaducts / bridges stand at ground level and look up; else beside the line
       const lat = st === 'ground' ? 6.2 + Math.random() * 1.2 : 18 + Math.random() * 10;
-      route.pose(s, lat, p);
+      view.pose(s, lat, p);
       const gy = st === 'ground' || st === 'embankment' ? p.y : 0;
       tracksideCam = { s, x: p.x, z: p.z, y: gy + 1.6 + Math.random() * 2 };
       sound.cut();
     }
     camera.position.set(tracksideCam.x, tracksideCam.y, tracksideCam.z);
-    route.pose(physics.s - 15, 0, q);
+    view.pose(physics.s - 15, 0, q);
     camera.lookAt(q.x, q.y + 2.2, q.z);
   }
 }
@@ -699,12 +742,12 @@ function simStep(dt) {
   const n = Math.ceil(dt / (1 / 120));
   const target = game.target;
   const stopLimit = game.terminal && target ? target.station.s + 60 : null;
-  if (physics.updateATS(route, stopLimit)) {
+  if (physics.updateATS(view, stopLimit)) {
     hud.message('ATS-P ブレーキ動作 <small>-10</small>', 'bad', 3);
     game.addScore(-10);
   }
   if (physics.ats.braking !== atsWasBraking) { sound.atsBell(physics.ats.braking); atsWasBraking = physics.ats.braking; }
-  physics.grade = route.grade(physics.s - physics.len / 2);
+  physics.grade = view.grade(physics.s - physics.len / 2);
   for (let i = 0; i < n; i++) physics.step(dt / n);
   game.update(dt);
 
@@ -720,7 +763,7 @@ function simStep(dt) {
       if (joint || turnoutBetween(a, b)) {
         if (Math.abs(b - ls) < 600) {
           const sj = joint ? Math.floor(b / 25) * 25 : b;
-          const p = route.pose(sj, 0, _jp);
+          const p = view.pose(sj, 0, _jp);
           sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, physics.kmh, true);
         }
         if ((camMode === 'cab' || camMode === 'car') && off > bobLo && off < bobHi) bob.v -= 0.012 * Math.min(1, physics.kmh / 80);
@@ -744,12 +787,12 @@ function updateSound() {
   const cars = [], bridge = [];
   for (let i = 0; i < player.cars.length; i++) {
     cars.push(player.cars[i].position);
-    const st = route.structureAt(physics.s - (i + 0.5) * CAR_LEN);
+    const st = view.structureAt(physics.s - (i + 0.5) * CAR_LEN);
     bridge.push(st.type === 'bridge' ? (st.river.truss ? 1 : 0.55) : st.type === 'viaduct' ? 0.12 : 0);
   }
-  const fp = route.pose(physics.s - 0.5, 0, {});
+  const fp = view.pose(physics.s - 0.5, 0, {});
   sound.update({
-    v: physics.kmh, torque: physics.torque, brake: physics.brake, curvature: route.curvature(physics.s),
+    v: physics.kmh, torque: physics.torque, brake: physics.brake, curvature: view.curvature(physics.s),
     doorsOpen: physics.doorsOpen === true, cars, front: fp, bridge,
   });
   const bells = [];
@@ -762,7 +805,7 @@ function updateSound() {
   }
   sound.crossing(bells);
   // ambience: platform murmur near stations, birds in the countryside
-  const lsS = listenerS();
+  const lsS = view.toRoute(listenerS());
   const st = route.stationNear(lsS, 260);
   const near = st ? Math.max(0, 1 - Math.abs(st.s - 140 - lsS) / 260) : 0;
   const busy = st ? (st.area === 'city' ? 1 : st.area === 'suburb' ? 0.65 : 0.4) : 0;
@@ -773,14 +816,14 @@ function updateSound() {
 
 /** scene, camera and HUD for the current state */
 function updateView(dt) {
-  player.place(route, physics.s, () => 0, 0.0025 * Math.min(1, physics.kmh / 80));
-  world.update(physics.s, 1);
+  player.place(route, view.toRoute(physics.s), (x) => view.trackOffset(x), 0.0025 * Math.min(1, physics.kmh / 80));
+  world.update(view.toRoute(physics.s), 1);
   if (mascon) {
     // one-handle T grip: pull toward the driver for power (up to +45°), push forward to brake / EB (−50°)
     const h = physics.handle, v = physics.veh;
     mascon.rotation.z = h >= 0 ? (h / v.powerNotches) * 0.785 : (h / (v.brakeNotches + 1)) * 0.873;
   }
-  if (cabLcd && camMode === 'cab') cabLcd.update(dt, { physics, game, route });
+  if (cabLcd && camMode === 'cab') cabLcd.update(dt, { physics, game, route: view });
   player.setSideLamps(!!physics.doorsOpen);
   player.setDoors(game.doorSide, physics.doorsOpen === true);
   const tgt = game.target;
@@ -796,16 +839,16 @@ function updateView(dt) {
   updateSound();
   const cp = new THREE.Vector3();
   camera.getWorldPosition(cp);
-  world.updateFixed(cp, physics.s);
-  const trains = [{ front: physics.s, len: physics.len, dir: 1 }];
-  for (const t of traffic.list) trains.push({ front: t.s, len: t.set.length, dir: -1 });
+  world.updateFixed(cp, view.toRoute(physics.s));
+  const trains = [{ front: view.toRoute(physics.s), len: physics.len, dir: view.sign }];
+  for (const t of traffic.list) trains.push({ front: t.s, len: t.set.length, dir: t.dirReal });
   world.animate(dt, trains, cp);
-  const fp = route.pose(physics.s - 20, 0, {});
+  const fp = view.pose(physics.s - 20, 0, {});
   const sd = world.env.sunDir;
   sun.position.set(fp.x + sd.x * 300, fp.y + sd.y * 300, fp.z + sd.z * 300);
   sun.target.position.set(fp.x, fp.y, fp.z);
-  const limit = route.limitOverTrain(physics.s, physics.len);
-  const ups = route.upcomingLimits(physics.s, 1500).find((l) => l.v < limit) || null;
+  const limit = view.limitOverTrain(physics.s, physics.len);
+  const ups = view.upcomingLimits(physics.s, 1500).find((l) => l.v < limit) || null;
   hud.update(dt, {
     kmh: physics.kmh, limit: Math.min(limit, physics.veh.maxSpeed), pattern: physics.ats.pattern,
     atsNear: physics.ats.near, atsBrake: physics.ats.braking, handle: physics.handle, notchLabel: physics.notchLabel(),
@@ -815,9 +858,12 @@ function updateView(dt) {
   });
 }
 
+/** a turnout at a station throat between view positions a..b (both directions use the same points) */
 function turnoutBetween(a, b) {
+  let lo = view.toRoute(a), hi = view.toRoute(b);
+  if (lo > hi) [lo, hi] = [hi, lo];
   for (const st of route.stations) {
-    for (const t of [st.s - 345, st.s - 338, st.s - 331, st.s + 42, st.s + 49, st.s + 56]) if (a < t && b >= t) return true;
+    for (const t of [st.s - 345, st.s - 338, st.s - 331, st.s + 42, st.s + 49, st.s + 56]) if (lo < t && hi >= t) return true;
   }
   return false;
 }
@@ -864,7 +910,7 @@ boot();
 
 // debugging handle (used by automated tests)
 window.__sim = {
-  get physics() { return physics; }, get game() { return game; }, get world() { return world; },
+  get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; },
   setCamMode, route, sound, announcer, melody, simStep, updateView,
   get renderer() { return renderer; }, get scene() { return scene; }, get camera() { return camera; }, draw,
   /** fast-forward the logic by `sec` seconds in fixed steps (no rendering) */

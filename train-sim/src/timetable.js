@@ -33,25 +33,48 @@ export function minRunTime(route, veh, sA, sB, trainLen) {
   return t + 8;
 }
 
-export function buildTimetable(route, veh, nCars, from, to, service = null) {
-  const local = buildLocal(route, veh, nCars, from, to);
-  if (!service || !service.stops) return local;
-  // rapid services: leave at the same time as the local would, then run stop to stop
-  // on a slightly padded minimum run time (passing stations are not in the table)
+/** stop-to-stop schedule over the given station indices (into route.stations of the view) */
+function sequential(route, veh, nCars, idx, t0, pad) {
   const st = route.stations;
   const trainLen = nCars * 20;
-  const idx = [];
-  for (let i = from; i <= to; i++) if (i === from || i === to || stopsAt(service, st[i])) idx.push(i);
   const rows = idx.map((i) => ({ station: st[i], arr: null, dep: null, dwell: st[i].dwell || (st[i].area === 'city' ? 35 : 25) }));
-  let t = local[0].dep;
+  let t = t0;
   rows[0].dep = t;
   for (let k = 1; k < rows.length; k++) {
-    t += minRunTime(route, veh, rows[k - 1].station.s, rows[k].station.s, trainLen) * 1.07;
+    t += minRunTime(route, veh, rows[k - 1].station.s, rows[k].station.s, trainLen) * pad;
     t = Math.round(t / 5) * 5;
     rows[k].arr = t;
     if (k < rows.length - 1) { t += rows[k].dwell; rows[k].dep = t; }
   }
   return rows;
+}
+
+// up (上り) trains: no recorded times exist, so they get a plausible schedule of their own
+// (a local leaving 宇都宮 at 8:40 reaches 上野 at about 10:2x, like the real ones)
+const UP_FIRST_DEP = 8 * 3600 + 40 * 60;
+
+/**
+ * @param route a Route or TrackView (stations in running order, s increasing)
+ * @param from / to indices into route.stations
+ */
+export function buildTimetable(route, veh, nCars, from, to, service = null) {
+  const st = route.stations;
+  const rapid = service && service.stops;
+  const stopIdx = [];
+  for (let i = from; i <= to; i++) if (i === from || i === to || stopsAt(service || {}, st[i])) stopIdx.push(i);
+  let t0;
+  if (!route.up) {
+    const local = buildLocal(route, veh, nCars, from, to);
+    if (!rapid) return local;
+    t0 = local[0].dep;
+  } else {
+    // departure time at `from`: when the line's local would leave it
+    const all = st.map((_, i) => i);
+    const full = sequential(route, veh, nCars, all, UP_FIRST_DEP, 1.10);
+    t0 = full[from].dep ?? full[from].arr;
+  }
+  // rapid services and up trains run stop to stop on a padded minimum run time
+  return sequential(route, veh, nCars, stopIdx, t0, rapid ? 1.07 : 1.10);
 }
 
 function buildLocal(route, veh, nCars, from, to) {

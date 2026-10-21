@@ -24,7 +24,7 @@
       <div class="line-badge">JU</div>
       <div>
         <h1>宇都宮線 運転シミュレーター</h1>
-        <p class="sub">上野 → 宇都宮 109 km ・ 普通列車 ・ 全23駅</p>
+        <p class="sub">上野 ⇄ 宇都宮 109 km ・ 下り／上り ・ 普通・快速ラビット・特別快速 ・ 全23駅</p>
       </div>
     </header>
 
@@ -36,6 +36,10 @@
       </div>
       <div class="col">
         <h2>運転区間・編成</h2>
+        <div class="row"><label>方向</label><select id="dirSel">
+          <option value="down">下り（上野 → 宇都宮）</option>
+          <option value="up">上り（宇都宮 → 上野）</option>
+        </select></div>
         <div class="row"><label>種別</label><select id="svcSel"></select></div>
         <p id="svcNote" class="note"></p>
         <div class="row"><label>出発</label><select id="fromSel"></select></div>

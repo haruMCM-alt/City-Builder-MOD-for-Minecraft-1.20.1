@@ -53,3 +53,14 @@ export const MELODY_CLIPS = [
 
 /** station name → clip number played before departing (宇都宮方面) */
 export const DEFAULT_ASSIGN = {"東京": 1, "上野": 2, "尾久": 4, "赤羽": 5, "浦和": 7, "さいたま新都心": 8, "大宮": 9, "土呂": 11, "東大宮": 12, "蓮田": 14, "白岡": 15, "新白岡": 17, "久喜": 18, "東鷲宮": 19, "栗橋": 21, "古河": 22, "野木": 24, "間々田": 25, "小山": 26, "小金井": 28, "自治医大": 29, "石橋": 31, "雀宮": 32, "宇都宮": 34};
+
+/**
+ * 上野方面 (up) guess: the recording plays each station's 上り melody just before its 下り one,
+ * so take the clip before the down clip when no other station uses it as its down melody.
+ */
+export const DEFAULT_ASSIGN_UP = (() => {
+  const used = new Set(Object.values(DEFAULT_ASSIGN));
+  const out = {};
+  for (const [st, no] of Object.entries(DEFAULT_ASSIGN)) out[st] = no > 1 && !used.has(no - 1) ? no - 1 : no;
+  return out;
+})();

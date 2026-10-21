@@ -274,8 +274,10 @@ export class World {
   // -------------------------------------------------------------------------
   update(s, budget = 1) {
     const r = this.route;
-    const first = Math.floor((s - BEHIND) / CHUNK);
-    const last = Math.floor((s + AHEAD) / CHUNK);
+    // build far ahead in the running direction (dir = -1 for up trains), a little behind
+    const ahead = this.dir < 0 ? BEHIND : AHEAD, behind = this.dir < 0 ? AHEAD : BEHIND;
+    const first = Math.floor((s - behind) / CHUNK);
+    const last = Math.floor((s + ahead) / CHUNK);
     for (let k = first; k <= last; k++) {
       if (!this.chunks.has(k) && !this.queue.includes(k) && k * CHUNK > r.sMin && k * CHUNK < r.sMax) this.queue.push(k);
     }
@@ -289,12 +291,12 @@ export class World {
       if (k < first - 1 || k > last + 1) { this.disposeChunk(ch); this.chunks.delete(k); }
     }
     for (const st of r.stations) {
-      const near = st.s > s - BEHIND - 50 && st.s - PLATFORM_LEN < s + AHEAD;
+      const near = st.s > s - behind - 50 && st.s - PLATFORM_LEN < s + ahead;
       if (near && !this.stations.has(st.name)) this.stations.set(st.name, this.buildStation(st));
       else if (!near && this.stations.has(st.name)) { this.disposeChunk(this.stations.get(st.name)); this.stations.delete(st.name); }
     }
     for (const rv of RIVERS) {
-      const near = rv.s1 > s - BEHIND - 200 && rv.s0 < s + AHEAD + 800;
+      const near = rv.s1 > s - behind - 200 && rv.s0 < s + ahead + 800;
       if (near && !this.rivers.has(rv.name)) this.rivers.set(rv.name, this.buildRiver(rv));
       else if (!near && this.rivers.has(rv.name)) { this.disposeChunk(this.rivers.get(rv.name)); this.rivers.delete(rv.name); }
     }
@@ -1004,7 +1006,8 @@ export class World {
         place('utility_pole', s, c, H - 5.2, 0, new THREE.Vector3(0.4, 0.62, 0.4));
       }
       // hanging departure boards (発車標) and clocks under the roof, near the stairs
-      const dbt = departureBoardTexture(st, pfm.side === -1 ? 1 : 0);
+      // island platforms serve both directions; the side platform beyond the up track serves up trains
+      const dbt = departureBoardTexture(st, pfm.side === -1 ? 1 : 0, pfm.island ? 'both' : pfm.side === -1 ? 'up' : 'down');
       textures.push(dbt);
       const dbm = new THREE.MeshBasicMaterial({ map: dbt, toneMapped: false });
       const dbc = new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.5, metalness: 0.4 });
@@ -1105,6 +1108,16 @@ export class World {
     post.rotation.y = p.yaw;
     group.add(post);
     place('signal', st.s + 90, ourSide * 2.6, 0);
+    // up (上り) trains stop with their front 300 m further back, on the up track, facing the other way;
+    // the platform is on the same hand of the train (island between the tracks / side platforms outside)
+    const sUp = st.s - 300;
+    const upSide = st.door === 'right' ? 1 : -1;
+    const postUp = post.clone();
+    r.pose(sUp, r.upOffset(sUp) + upSide * 2.3, p);
+    postUp.position.set(p.x, p.y + H - 0.75, p.z);
+    postUp.rotation.y = p.yaw + Math.PI;
+    group.add(postUp);
+    place('signal', sUp - 90, r.upOffset(sUp - 90) + upSide * 2.6, 0, Math.PI);
     sw.build(group, disposables, true);
     const instanced = batch.build(group, this.P);
     this.root.add(group);

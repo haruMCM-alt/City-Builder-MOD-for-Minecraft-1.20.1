@@ -6,7 +6,10 @@ import { CUES } from './audio/announce-cues.js';
  * triggering the in-car announcements.
  */
 export class Game {
-  constructor({ route, physics, timetable, sound, announcer, melody, hud, fromIdx, service }) {
+  constructor({ route, physics, timetable, sound, announcer, melody, hud, fromIdx, service, up }) {
+    // up (上り) trains: the recording is from a down train, so only its direction-neutral
+    // 「まもなく〜」 clips are used (the speech synthesizer covers everything)
+    this.up = !!up;
     this.service = service || null;
     this.route = route;
     this.ph = physics;
@@ -81,7 +84,7 @@ export class Game {
         this.introPlayed = true;
         // the recorded intro names the local train; rapid services only get it from the speech synthesizer
         const local = !this.service || !this.service.stops;
-        if (this.fromIdx === 0 && ann.has('intro') && (local || ann.mode !== 'file')) ann.play('intro', {});
+        if (this.fromIdx === 0 && ann.has('intro') && ((local && !this.up) || ann.mode !== 'file')) ann.play('intro', {});
       }
       const ml = row.dep != null ? this.melodyLength() : 0;
       if (row.dep != null && this.clock >= row.dep - 12 - (ml ? ml + 1.5 : 0)) {
@@ -156,13 +159,13 @@ export class Game {
     const ctx = { station: tgt.station, door: tgt.station.door, terminal: this.terminal };
     if (!this.announced.dep && (kmh > 25 || this.stateT > 15)) {
       this.announced.dep = true;
-      if (this.ann.has(depId)) this.ann.play(depId, ctx);
+      if (this.ann.has(depId) && !(this.up && this.ann.mode === 'file')) this.ann.play(depId, ctx);
     }
     if (!this.announced.arr) {
       const c = CUES[arrId];
       const dur = this.ann.mode === 'file' && c ? c[1] - c[0] : 8;
       let lead = Math.max(380, ph.v * dur * 0.8 + 260);
-      if (CUES[`fin:${sIdx}`] && this.ann.mode === 'file') lead = Math.max(lead, 1500);
+      if (CUES[`fin:${sIdx}`] && this.ann.mode === 'file' && !this.up) lead = Math.max(lead, 1500);
       if (dist < lead) {
         this.announced.arr = true;
         if (this.ann.has(arrId)) this.ann.play(arrId, ctx);
@@ -170,7 +173,7 @@ export class Game {
     }
     // conductor's last words before the terminal (file mode only)
     const finId = `fin:${sIdx}`;
-    if (this.announced.arr && !this.announced.fin && this.ann.mode === 'file' && CUES[finId] && dist < 420 && !this.ann.playing) {
+    if (this.announced.arr && !this.announced.fin && !this.up && this.ann.mode === 'file' && CUES[finId] && dist < 420 && !this.ann.playing) {
       this.announced.fin = true;
       this.ann.play(finId, ctx);
     }
