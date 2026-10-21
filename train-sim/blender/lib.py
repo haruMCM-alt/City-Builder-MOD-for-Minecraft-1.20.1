@@ -58,8 +58,6 @@ def materials():
         light_grey=mat("light_grey", (0.82, 0.83, 0.84), 0.1, 0.4),
         head=mat("headlight", (1, 1, 0.95), 0, 0.2, (1.0, 0.97, 0.85), 6.0),
         tail=mat("taillight", (0.5, 0.02, 0.02), 0, 0.3, (1.0, 0.05, 0.03), 3.0),
-        # unlit clear lens (E231 lower lamp units: only the red tail half lights)
-        lens=mat("lamp_lens", (0.62, 0.64, 0.66), 0.4, 0.08),
         # three.js swaps this one for a canvas texture ("普通 宇都宮")
         dest=mat("DEST", (0.05, 0.03, 0.0), 0, 0.5, (1.0, 0.55, 0.05), 1.5),
         bogie=mat("bogie", (0.05, 0.05, 0.055), 0.4, 0.6),

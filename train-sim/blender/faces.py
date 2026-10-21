@@ -86,12 +86,10 @@ def paint_e231(P: Painter, S):
 
 def features_e231(det, S, M, fp, fr, extra, add_logo):
     for s in (-1, 1):
-        # lower lamp unit: the inboard half is an unlit clear lens, only the outboard red
-        # tail light lights up (the E231's headlights are the two round lamps up top)
-        hi0, hi1 = sorted((s * 0.64, s * 0.93))
-        fr(det, M["lens"], hi0, hi1, 1.19, 1.38, eps=0.004, r=0.015)
+        # no separate lamp unit in the lower black strip: just the tail light behind black glass,
+        # flush with the strip (black when off, red when lit; the headlights are up top)
         ti0, ti1 = sorted((s * 0.95, s * 1.215))
-        fr(det, M["tail"], ti0, ti1, 1.19, 1.38, eps=0.004, r=0.015)
+        fr(det, M["tail"], ti0, ti1, 1.19, 1.38, eps=0.0008, r=0.015)
         # headlights: round lamps either side of the destination display, in a dark bezel
         det.cyl(fp(s * 0.92, 3.35, 0.003), (1, 0, 0), 0.085, 0.003, M["black"], seg=24)
         det.cyl(fp(s * 0.92, 3.35, 0.007), (1, 0, 0), 0.068, 0.004, M["head"], seg=24)

@@ -273,10 +273,11 @@ export class TrainSet {
     const destMat = new THREE.MeshBasicMaterial({ map: destTex, toneMapped: false });
     const lamp = (name, on) => {
       const m = new THREE.MeshStandardMaterial({
-        color: on ? (name === 'head' ? 0xfffbe8 : 0xff2a1a) : 0x222222,
+        // unlit lamps sit behind dark glass: black, not grey (they vanish into the black strip)
+        color: on ? (name === 'head' ? 0xfffbe8 : 0xff2a1a) : (name === 'head' ? 0x1c1c1e : 0x0c0909),
         emissive: on ? (name === 'head' ? 0xfff2cc : 0xff1505) : 0x000000,
         emissiveIntensity: on ? 2.5 : 0,
-        roughness: 0.3,
+        roughness: on ? 0.3 : 0.12,
       });
       return m;
     };
