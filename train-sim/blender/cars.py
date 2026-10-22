@@ -969,14 +969,21 @@ def underfloor(mb, M, kind, seed):
     mb.box((0, 0, 1.0), (L - 2 * 3.0, 0.4, 0.06), M["dkgrey"])
 
 
-def coupler(mb, M, x, sgn, front=False):
-    mb.box((x + sgn * 0.30, 0, 0.88), (0.60, 0.20, 0.16), M["dkgrey"])
-    mb.box((x + sgn * 0.62, 0, 0.88), (0.10, 0.36, 0.30), M["dkgrey"])
-    mb.box((x + sgn * 0.70, -0.09, 0.88), (0.10, 0.10, 0.10), M["grey"])
+# leading coupler face ahead of the band-level face (research/vehicles.md §1): E231 +250-275, E233-3000 +185-210
+FRONT_COUPLER = {"e233": 0.25, "211": 0.36, "115": 0.40}
+
+
+def coupler(mb, M, x, sgn, front=False, reach=0.25):
+    # 密着連結器: shank + head whose face sits `reach` beyond x. Intermediate cars use reach 0.25 so the
+    # heads meet at the 20.0 m coupler pitch; the leading cab's head is only ~0.3 m proud of the body.
+    hx = x + sgn * (reach - 0.05)                       # head centre
+    mb.box((x + sgn * (reach - 0.10) / 2, 0, 0.88), (reach - 0.10, 0.20, 0.16), M["dkgrey"])
+    mb.box((hx, 0, 0.88), (0.10, 0.36, 0.30), M["dkgrey"])
+    mb.box((hx + sgn * 0.04, -0.09, 0.88), (0.04, 0.10, 0.10), M["grey"])
     if front:
-        mb.box((x + sgn * 0.48, 0, 0.66), (0.24, 0.34, 0.12), M["dkgrey"])        # electrical coupler
+        mb.box((x + sgn * (reach - 0.17), 0, 0.66), (0.20, 0.34, 0.12), M["dkgrey"])   # electrical coupler
         for y in (-0.22, 0.22):
-            mb.cyl((x + sgn * 0.45, y, 0.72), (0, 0, 1), 0.025, 0.28, M["rubber"], seg=6)
+            mb.cyl((x + sgn * (reach - 0.22), y, 0.72), (0, 0, 1), 0.025, 0.28, M["rubber"], seg=6)
 
 
 def gangway(mb, M, x, sgn, top=3.00):
@@ -1171,15 +1178,15 @@ def skirt(mb, S, M):
         # ref2/e233/SPEC.md: two silver plates z 239-647 (outer |y| 1,283, top edge to |y| 711,
         # diagonal to (|y| 367, z 338), vertical to the bottom); dark centre section set back;
         # two slots on the right plate, a notch on the left plate
-        xs = H + 0.05
+        xs = H + 0.045                     # measured: top edge ≈ +45, bottom ≈ +110 ahead of the face
 
         def ax(u, v, d):
-            return (xs + (0.647 - v) * 0.25 + d, u, v)
+            return (xs + (0.647 - v) * 0.16 + d, u, v)
         for s in (-1, 1):
             plate = [(s * 0.367, 0.239), (s * 1.283, 0.239), (s * 1.283, 0.647), (s * 0.711, 0.647), (s * 0.367, 0.338)]
             prism(mb, plate, ax, -0.05, 0.0, M["silver"])
             mb.poly([ax(s * 1.283, 0.647, -0.05), (H - 0.65, s * 1.22, 0.647), (H - 0.65, s * 1.15, 0.30), ax(s * 1.283, 0.239, -0.05)], M["silver"], (0, s, 0))
-            mb.beam((H - 0.55, s * 0.95, 0.94), (H + 0.05, s * 1.05, 0.66), 0.06, 0.08, M["dkgrey"])
+            mb.beam((H - 0.55, s * 0.95, 0.94), (H - 0.02, s * 1.05, 0.66), 0.06, 0.08, M["dkgrey"])
             mb.box((H - 0.20, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])
         mb.box((xs - 0.12, 0, 0.361), (0.05, 0.734, 0.244), M["dkgrey"])                         # centre section
         for (z0, z1) in ((0.530, 0.559), (0.489, 0.518)):
@@ -1190,17 +1197,17 @@ def skirt(mb, S, M):
     if S.skirt == "e231v4":
         # ref2/e231/SPEC.md: light silver-grey plate, half-width 1,255, ends 690→200 tall with 45° lower
         # chamfers (~230), trapezoid notch in the top edge (±690 top, ±306 bottom, 348 deep),
-        # V-pointed in plan and ≈450 proud of the face at the bottom
+        # V-pointed in plan; measured (research/vehicles.md): top +50-140, bottom edge ≈ +200 ahead of the face
         outline = [(-1.255, 0.69), (-0.69, 0.69), (-0.306, 0.342), (0.306, 0.342), (0.69, 0.69), (1.255, 0.69),
                    (1.255, 0.43), (1.025, 0.20), (-1.025, 0.20), (-1.255, 0.43)]
 
         def ax(u, v, d):
-            return (H + 0.10 + (0.69 - v) * 0.40 + 0.14 * (1 - abs(u) / 1.255) + d, u, v)
+            return (H + 0.05 + (0.69 - v) * 0.25 + 0.04 * (1 - abs(u) / 1.255) + d, u, v)
         prism(mb, outline, ax, -0.05, 0.0, M["skirtw"])
         for s in (-1, 1):
             # side wings bending back towards the bogie
             mb.poly([ax(s * 1.255, 0.69, -0.05), (H - 0.70, s * 1.20, 0.69), (H - 0.70, s * 1.12, 0.32), ax(s * 1.255, 0.43, -0.05)], M["skirtw"], (0, s, 0))
-            mb.beam((H - 0.55, s * 0.95, 0.94), (H + 0.05, s * 1.05, 0.66), 0.06, 0.08, M["dkgrey"])    # stays
+            mb.beam((H - 0.55, s * 0.95, 0.94), (H - 0.02, s * 1.05, 0.66), 0.06, 0.08, M["dkgrey"])    # stays
             mb.box((H - 0.20, s * 0.62, 0.78), (0.18, 0.16, 0.22), M["dkgrey"])                         # air hose cocks
             mb.cyl((H - 0.08, s * 0.45, 0.70), (0, 0, 1), 0.025, 0.25, M["rubber"], seg=6)
         mb.box((H - 0.30, 0, 0.70), (0.3, 2.3, 0.06), M["dkgrey"])                                      # cross beam
@@ -1313,11 +1320,11 @@ def make_car(S, M, kind, coll):
             det.beam(face_point(S, y0, z0, 0.025), face_point(S, y1, z1, 0.025), 0.016, 0.014, M["black"])
             det.cyl(face_point(S, y0, z0, 0.02), (1, 0, 0), 0.025, 0.03, M["black"], seg=10)
         skirt(det, S, M)
-        coupler(det, M, H - 0.05, 1, front=True)
+        coupler(det, M, H - 0.05, 1, front=True, reach=FRONT_COUPLER.get(S.key, 0.31))
     elif cab:
         front_details(det, S, M, coll, extra)
         skirt(det, S, M)
-        coupler(det, M, H - 0.05, 1, front=True)
+        coupler(det, M, H - 0.05, 1, front=True, reach=FRONT_COUPLER.get(S.key, 0.31))
         if S.key in ("e231", "e233"):
             det.cyl((H - 2.4, 0.0, S.top + 0.08), (0, 0, 1), 0.05, 0.16, M["black"], seg=8)  # antenna
     else:
