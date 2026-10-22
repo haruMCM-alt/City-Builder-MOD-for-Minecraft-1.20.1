@@ -305,10 +305,10 @@ function updateMelStatus() {
 /** per-station melody picker with preview */
 function buildMelodyAssign() {
   const list = $('melAssignList');
-  const opts = MELODY_CLIPS.map((c) => `<option value="${c.no}">No.${c.no}${c.retired ? '（使用終了）' : ''} ・ ${(c.end - c.start).toFixed(0)}秒</option>`).join('');
+  const opts = MELODY_CLIPS.map((c) => `<option value="${c.no}" title="${c.where}">${c.name}${c.retired ? '（使用終了）' : ''} ・ ${c.where}</option>`).join('');
   const dirName = settings.dir === 'up' ? '上野方面（上り）' : '宇都宮方面（下り）';
   document.querySelector('#melAssign h2').textContent = `発車メロディの割り当て ・ ${dirName}`;
-  document.querySelector('#melAssign .note').textContent = `録音には駅名が入っていないため、初期値は収録順からの推定です。▶で試聴して、各駅で${dirName}へ発車するときに鳴らす曲を選んでください（方向ごとにこのブラウザに保存されます）。`;
+  document.querySelector('#melAssign .note').textContent = `初期値は、動画に表示される曲名・使用駅と各駅ののりば（方向）から割り当てています。▶で試聴して、${dirName}へ発車するときの曲を変えることもできます（方向ごとにこのブラウザに保存されます）。`;
   list.innerHTML = menuView().stations.slice(0, -1).map((st) => `
     <div class="ma-row"><span class="ma-st">${st.name}</span>
       <select data-st="${st.name}">${opts}</select>

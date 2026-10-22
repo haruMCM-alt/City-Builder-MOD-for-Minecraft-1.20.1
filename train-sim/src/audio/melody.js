@@ -3,7 +3,8 @@
 import { ClipPlayer, LOCAL_MELODY_URL } from './announce.js';
 import { MELODY_CLIPS, DEFAULT_ASSIGN, DEFAULT_ASSIGN_UP, MELODY_EXPECTED_DURATION } from './melody-cues.js';
 
-const STORE_KEYS = { down: 'tsim.melodyAssign', up: 'tsim.melodyAssignUp' };
+// (v2: the defaults are now researched, so old guessed assignments are not carried over)
+const STORE_KEYS = { down: 'tsim.melodyAssign2', up: 'tsim.melodyAssignUp2' };
 const DEFAULTS = { down: DEFAULT_ASSIGN, up: DEFAULT_ASSIGN_UP };
 
 export class MelodyPlayer extends ClipPlayer {
