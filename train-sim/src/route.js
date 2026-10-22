@@ -3,6 +3,7 @@
 // The alignment (curves, station positions, bridges) follows the real line: see route-data.js
 // (© OpenStreetMap contributors, ODbL 1.0; elevation 出典: 国土地理院 標高タイル).
 import { ALIGN, OSM_STATIONS, OSM_CURVES } from './route-data.js';
+import { SHINKANSEN } from './shinkansen-data.js';
 
 const STATION_INFO = [
   { name: '上野', kana: 'うえの', en: 'Ueno', area: 'city' },
@@ -290,6 +291,34 @@ export class Route {
       if (v !== prev) { out.push({ s: x, v }); prev = v; }
     }
     return out;
+  }
+
+  /**
+   * the 東北新幹線 viaduct where it runs within sight beside us:
+   * { lat (+ = left of the down track), h (deck height above ground), ss (its own chainage) } or null
+   */
+  shinkansen(s) {
+    const S = SHINKANSEN;
+    const f = (s - S.s0) / S.ds;
+    const i = Math.floor(f);
+    if (i < 0 || i >= S.off.length - 1) return null;
+    const u = f - i;
+    // stay clear of tunnels (上野–日暮里, 赤羽台) and their portals
+    for (let j = Math.max(0, i - 2); j <= Math.min(S.off.length - 1, i + 3); j++) if (S.tunnel[j]) return null;
+    const raw = -(S.off[i] + (S.off[i + 1] - S.off[i]) * u);   // + = left
+    if (Math.abs(raw) > 190) return null;
+    // keep a real-looking gap to our outermost track (OSM may give the nearer Shinkansen track)
+    const clear = (j) => {
+      const o = -(S.off[j]), x = S.s0 + j * S.ds;
+      if (Math.abs(o) < 7) return o;                            // crossing over the line
+      if (o > 0) return Math.max(o, 13);
+      const ex = this.extraTracks(x), outer = ex.length ? ex[1] : this.upOffset(x);
+      return Math.min(o, outer - 13);
+    };
+    const lat = clear(i) + (clear(i + 1) - clear(i)) * u;
+    // higher where it crosses over the line
+    const h = 9 + 4 * Math.max(0, Math.min(1, 1 - (Math.abs(raw) - 4) / 6));
+    return { lat, h, ss: S.ss[i] + (S.ss[i + 1] - S.ss[i]) * u };
   }
 
   /** area density 0..1 for scenery */

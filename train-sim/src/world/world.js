@@ -530,6 +530,39 @@ export class World {
       }
     }
 
+    // the 東北新幹線 viaduct beside us: deck, sound walls, slab track, piers and catenary masts
+    {
+      let a0 = null;
+      const flush = (a, b) => {
+        if (b - a < 5) return;
+        const lat = (ss) => (r.shinkansen(ss) || { lat: 0 }).lat;
+        const H = (ss) => (r.shinkansen(ss) || { h: 9 }).h - r.elev(ss) + GROUND_Y + 0.62;
+        sw.sweep(a, b, 5, lat, [
+          { pts: (ss) => { const h = H(ss); return [[5.9, h + 1.9], [5.9, h - 1.4]]; }, mat: this.M.concrete, uScale: 6, vScale: 6 },
+          { pts: (ss) => { const h = H(ss); return [[5.9, h - 1.4], [-5.9, h - 1.4]]; }, mat: this.M.concrete, uScale: 6, vScale: 6 },
+          { pts: (ss) => { const h = H(ss); return [[-5.9, h - 1.4], [-5.9, h + 1.9]]; }, mat: this.M.concrete, uScale: 6, vScale: 6 },
+          { pts: (ss) => { const h = H(ss); return [[5.9, h + 1.9], [5.6, h + 1.9], [5.6, h], [-5.6, h], [-5.6, h + 1.9], [-5.9, h + 1.9]]; }, mat: this.M.concrete, uScale: 6, vScale: 6 },
+        ]);
+        for (const g of [-2.15, 2.15]) {
+          sw.sweep(a, b, 5, lat, [
+            { pts: (ss) => { const h = H(ss); return [[g - 1.25, h + 0.01], [g - 1.15, h + 0.2], [g + 1.15, h + 0.2], [g + 1.25, h + 0.01]]; }, mat: this.M.concrete, uScale: 4, vScale: 4 },
+            { pts: (ss) => { const h = H(ss); return [[g - 0.75, h + 0.2], [g - 0.75, h + 0.36], [g - 0.69, h + 0.36], [g - 0.69, h + 0.2]]; }, mat: this.M.rail },
+            { pts: (ss) => { const h = H(ss); return [[g + 0.69, h + 0.2], [g + 0.69, h + 0.36], [g + 0.75, h + 0.36], [g + 0.75, h + 0.2]]; }, mat: this.M.rail },
+          ]);
+        }
+        for (let ps = Math.ceil(a / 25) * 25; ps < b; ps += 25) {
+          const sh = r.shinkansen(ps); if (!sh) continue;
+          place('pier', ps, sh.lat, 0, 0, new THREE.Vector3(2.4, sh.h - 1.4 - GROUND_Y, 5.2), null, GROUND_Y);
+          if (ps % 50 === 0) place('pier', ps, sh.lat + 5.75, 0, 0, new THREE.Vector3(0.35, 8.2, 0.35), null, GROUND_Y + sh.h + 0.62);
+        }
+      };
+      for (let s = s0; s <= s1; s += 5) {
+        const on = s < s1 && !!r.shinkansen(s);
+        if (on && a0 === null) a0 = s;
+        if ((!on || s === s1) && a0 !== null) { flush(a0, Math.min(s, s1)); a0 = null; }
+      }
+    }
+
     // land use beside the line
     const B = {};
     for (const key of ['house', 'apt', 'mansion', 'office', 'shop', 'factory', 'roofTile', 'roofMetal', 'concrete', 'plain', 'glass', 'sign', 'paddy', 'field', 'road', 'asphalt', 'levee', 'far', 'dirt']) B[key] = new GeoBuffer();

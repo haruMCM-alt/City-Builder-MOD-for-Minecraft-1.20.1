@@ -86,6 +86,9 @@ export class LandBuilder {
           if (roads.some((rd) => Math.abs(rd.s - sc) < rd.w / 2 + CELL / 2)) continue;
           const key = `${Math.floor(s / CELL)},${Math.floor(l / CELL)},${side}`;
           if (occupied.has(key)) continue;
+          // nothing under / against the Shinkansen viaduct
+          const sh = r.shinkansen(sc);
+          if (sh && Math.abs(side * lc - sh.lat) < 10 + CELL / 2) continue;
           this.cell(B, inst, R, sc, side * lc, side, k, occupied, s, l);
         }
       }

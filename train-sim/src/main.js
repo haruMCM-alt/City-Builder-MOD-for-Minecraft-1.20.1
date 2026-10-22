@@ -57,6 +57,8 @@ import { SERVICES, DEFAULT_SERVICE } from './services.js';
 import { TrackView } from './trackview.js';
 import { atmosphere, TIME_SHIFT } from './world/atmosphere.js';
 import { Rain, Windscreen } from './world/rain.js';
+import { ShinkansenTraffic } from './shinkansen.js';
+let shinkansen = null;
 // time of day / weather: the preset in use, rain streaks, windscreen drops, our headlight, platform lamps
 let atmo = null, rain = null, screen = null, headLight = null, cabFill = null, pfLamps = null, slipShown = 0;
 import { SignalSystem, LeadTrain, ASPECT_SPEED } from './signals.js';
@@ -435,6 +437,8 @@ async function startGame() {
   hud.setup(veh, tt);
   game = new Game({ route: view, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from, service, up: view.up });
   traffic = new Traffic();
+  if (shinkansen) shinkansen.clear();
+  shinkansen = new ShinkansenTraffic(scene, route, sound);
   // the train ahead: same service a few minutes earlier, simulated up to now
   signals = new SignalSystem(view, scene);
   lead = new LeadTrain(view, tt, physics.len, 210 + Math.random() * 150);
@@ -503,11 +507,38 @@ function setupWeatherObjects() {
   }
   if (atmo.rain) {
     rain = new Rain(scene, { count: settings.quality === 'low' ? 5000 : 9000, night: atmo.night });
-    screen = new Windscreen(inner);
+    screen = new Windscreen(inner, windscreenRect(inner));
     screen.onWipe = () => sound.wiper();
   }
   sound.setRain(atmo.rain ? 0.8 : 0);
   trainNight(player);
+}
+
+/**
+ * where the front windows are in this cab (car-local): the forward-facing glass ahead of the driver.
+ * Raindrops and wipers are drawn on a plane just inside it.
+ */
+function windscreenRect(inner) {
+  inner.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(inner.matrixWorld).invert();
+  const M = new THREE.Matrix4(), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+  const box = new THREE.Box3();
+  inner.traverse((o) => {
+    if (!o.isMesh || !o.material || !/glass/i.test(o.material.name || '')) return;
+    const pos = o.geometry.attributes.position, idx = o.geometry.index;
+    M.multiplyMatrices(inv, o.matrixWorld);
+    const nt = idx ? idx.count / 3 : pos.count / 3;
+    for (let i = 0; i < nt; i++) {
+      const i0 = idx ? idx.getX(i * 3) : i * 3, i1 = idx ? idx.getX(i * 3 + 1) : i * 3 + 1, i2 = idx ? idx.getX(i * 3 + 2) : i * 3 + 2;
+      a.fromBufferAttribute(pos, i0).applyMatrix4(M); b.fromBufferAttribute(pos, i1).applyMatrix4(M); c.fromBufferAttribute(pos, i2).applyMatrix4(M);
+      n.subVectors(b, a).cross(c.clone().sub(a)).normalize();
+      // forward-facing panes ahead of the driver, at eye height
+      if (Math.abs(n.x) < 0.55 || Math.min(a.x, b.x, c.x) < EYE.x + 0.3 || Math.max(a.y, b.y, c.y) < EYE.y - 0.7) continue;
+      box.expandByPoint(a); box.expandByPoint(b); box.expandByPoint(c);
+    }
+  });
+  if (box.isEmpty() || box.max.z - box.min.z < 0.8) return {};
+  return { x: box.min.x - 0.03, y0: Math.max(box.min.y, EYE.y - 0.75), y1: box.max.y, z0: box.min.z, z1: box.max.z };
 }
 
 function disposeWeatherObjects() {
@@ -558,6 +589,7 @@ function modelKey(veh) { return { e231: 'e231', e233: 'e233', s211: '211', s115:
 function teardown() {
   if (player) player.dispose();
   if (traffic) traffic.clear();
+  if (shinkansen) { shinkansen.clear(); shinkansen = null; }
   if (signals) { signals.dispose(); signals = null; }
   if (leadSet) { leadSet.dispose(); leadSet = null; }
   if (leadVoice) { leadVoice.dispose(); leadVoice = null; }
@@ -1112,6 +1144,7 @@ function updateView(dt) {
   camera.getWorldPosition(cp);
   world.updateFixed(cp, view.toRoute(physics.s));
   updateWeather(dt, cp);
+  if (shinkansen) shinkansen.update(dt, view.toRoute(listenerS()), atmo ? atmo.night : 0);
   const trains = [{ front: view.toRoute(physics.s), len: physics.len, dir: view.sign }];
   if (lead && !lead.done && leadSet) {
     leadSet.place(route, view.toRoute(lead.x), (x) => view.trackOffset(x), 0.002);
@@ -1192,7 +1225,7 @@ boot();
 
 // debugging handle (used by automated tests)
 window.__sim = {
-  get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; }, get traffic() { return traffic; }, get signals() { return signals; }, get lead() { return lead; },
+  get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; }, get traffic() { return traffic; }, get signals() { return signals; }, get shinkansen() { return shinkansen; }, get lead() { return lead; },
   setCamMode, route, sound, announcer, melody, simStep, updateView, THREE,
   get renderer() { return renderer; }, get scene() { return scene; }, get camera() { return camera; }, draw,
   /** fast-forward the logic by `sec` seconds in fixed steps (no rendering) */

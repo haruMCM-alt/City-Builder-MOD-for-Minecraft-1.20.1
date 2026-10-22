@@ -490,6 +490,48 @@ export class SoundEngine {
     };
   }
 
+  /**
+   * a Shinkansen running past on its viaduct: rolling noise, the aerodynamic roar that grows with
+   * v^3 (strongest at the nose) and the pantograph hiss, from the front, middle and rear
+   */
+  addShinkansen(nCars) {
+    if (!this.ready) return null;
+    const ctx = this.ctx;
+    const t = { voices: [], gen: this.makeRollGen() };
+    const aero = this.loopSource(this.pinkBuf);
+    const af = ctx.createBiquadFilter(); af.type = 'bandpass'; af.frequency.value = 650; af.Q.value = 0.35;
+    const ag = ctx.createGain(); ag.gain.value = 0;
+    aero.connect(af).connect(ag);
+    const hiss = this.loopSource(this.noiseBuf);
+    const hf = ctx.createBiquadFilter(); hf.type = 'highpass'; hf.frequency.value = 3200;
+    const hg = ctx.createGain(); hg.gain.value = 0;
+    hiss.connect(hf).connect(hg);
+    for (let k = 0; k < 3; k++) {
+      const v = new SpatialVoice(ctx, this.worldBus, { ref: 9, gain: 1.0, maxDist: 2600 });
+      const rg = ctx.createGain(); rg.gain.value = nCars / 6;
+      t.gen.out.connect(rg).connect(v.input);
+      const a2 = ctx.createGain(); a2.gain.value = k === 0 ? 1.4 : 0.7;
+      ag.connect(a2).connect(v.input);
+      if (k === 1) hg.connect(v.input);
+      t.voices.push(v);
+    }
+    return {
+      update: (positions, kmh) => {
+        if (!this.ready) return;
+        const now = ctx.currentTime;
+        this.setRollGen(t.gen, Math.min(kmh, 160), { curvature: 0, brake: 0 }, now);
+        ag.gain.setTargetAtTime(0.55 * Math.min(1.3, (kmh / 260) ** 3), now, 0.2);
+        af.frequency.setTargetAtTime(380 + kmh * 2.2, now, 0.3);
+        hg.gain.setTargetAtTime(0.05 * Math.min(1, kmh / 250), now, 0.3);
+        positions.forEach((p, k) => { if (t.voices[k]) { t.voices[k].set(p.x, p.y, p.z); t.voices[k].update(this.L, now, this.jump); } });
+      },
+      dispose: () => {
+        for (const n of [aero, hiss, ...t.gen.nodes]) { try { n.stop(); } catch { /* */ } }
+        for (const v of t.voices) v.dispose();
+      },
+    };
+  }
+
   // ---------------------------------------------------------------------------------
   // listener
   // ---------------------------------------------------------------------------------
