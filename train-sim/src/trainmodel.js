@@ -5,7 +5,7 @@ import { passengerMesh } from './world/people.js';
 
 const WHEEL_R = 0.43;            // tread radius of the modelled wheels (860 mm wheel)
 const DOOR_OPEN_T = 1.9;         // s, pneumatic / linear-motor door stroke
-const DOOR_CLOSE_T = 1.15;
+const DOOR_CLOSE_T = 2.7;         // closing runs through the chime and ends with the bang
 
 const KIND = { C: 'cab', R: 'cab', M: 'mid', P: 'mid_panto', G: 'green' };
 
@@ -417,8 +417,8 @@ export class TrainSet {
       const rate = 1 / (tgt > cur ? DOOR_OPEN_T : DOOR_CLOSE_T);
       this.doorState[side] = tgt > cur ? Math.min(tgt, cur + rate * dt) : Math.max(tgt, cur - rate * dt);
       const u = this.doorState[side];
-      // opening: quick start, cushioned end; closing: accelerates then a soft cushion just before the bang
-      const k = tgt > cur ? 1 - (1 - u) ** 2.2 : u * u * (3 - 2 * u);
+      // opening: quick start, cushioned end; closing: steady travel, eased only at both ends
+      const k = tgt > cur ? 1 - (1 - u) ** 2.2 : Math.min(1, Math.max(0, (u - 0.04) / 0.92));
       for (const l of this.leaves) if (l.side === side) l.obj.position.x = l.x0 + l.dir * l.travel * k;
     }
     if (this.info && info) this.info.update(dt, info);

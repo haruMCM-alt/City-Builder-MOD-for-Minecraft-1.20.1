@@ -101,12 +101,14 @@ export class Game {
         this.startClosing();
       }
     } else if (this.state === 'closing') {
-      const closeStart = this.doorSample ? this.closeAt - 1.2 : 2.2;
+      // the doors start moving with the first chime and take ~2.7 s; in the recording the
+      // chime starts at 0.1 s and the leaves meet at ~2.95 s
+      const closeStart = this.doorSample ? 0.25 : 0.3;
       if (this.stateT > closeStart && ph.doorsOpen === true) {
         if (!this.doorSample) this.sound.doorMove(false);   // the recording already contains the doors
         ph.doorsOpen = 'closing';
       }
-      if (this.stateT > (this.doorSample ? this.closeAt + 0.8 : 4.5)) {
+      if (this.stateT > (this.doorSample ? this.closeAt + 0.5 : 3.6)) {
         ph.doorsOpen = false;
         this.state = 'ready';
         this.stateT = 0;

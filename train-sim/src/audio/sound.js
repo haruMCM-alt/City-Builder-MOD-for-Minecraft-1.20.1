@@ -617,7 +617,7 @@ export class SoundEngine {
     if (!this.ready) return;
     const lvl = this.mode === 'car' ? 1.6 : this.mode === 'cab' ? 0.7 : 0.9;
     this.air((open ? 0.10 : 0.07) * lvl, open ? 0.6 : 0.5, open ? 1800 : 1400);
-    setTimeout(() => this.ready && this.playBuf(this.jointBuf, 0.22 * lvl, 1.7, 0, this.master), open ? 1800 : 1150);
+    setTimeout(() => this.ready && this.playBuf(this.jointBuf, 0.22 * lvl, 1.7, 0, this.master), open ? 1800 : 2650);   // leaves stop / meet (matches the door animation)
   }
 
   horn(on) {

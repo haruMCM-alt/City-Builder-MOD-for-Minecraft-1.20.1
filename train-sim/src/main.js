@@ -522,18 +522,57 @@ class Traffic {
   }
 }
 
+// 京浜東北線 E233系1000番台: sky-blue (スカイブルー) instead of the 湘南色 bands, on the sides
+// and on the painted cab front (the orange / green pixels of its texture are re-coloured)
+let keihinMats = null;
+function keihinFront(mat) {
+  const img = mat.map && mat.map.image;
+  if (!img || !img.width) return mat;
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height), px = d.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const r = px[i], gg = px[i + 1], b = px[i + 2];
+    const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+    if (mx - mn < 60) continue;                                   // greys, black, white, glass
+    const orange = r > gg && gg > b && r > 150;
+    const green = gg > r + 25 && gg > b + 10;
+    if (!orange && !green) continue;
+    const l = (mx + mn) / 510;                                    // keep the shading
+    px[i] = 24 * (0.6 + l); px[i + 1] = 167 * (0.6 + l); px[i + 2] = 224 * (0.6 + l);
+  }
+  g.putImageData(d, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.flipY = mat.map.flipY;
+  t.anisotropy = 8;
+  const m2 = mat.clone();
+  m2.map = t;
+  return m2;
+}
 function recolorKeihin(set) {
-  const blue = new THREE.MeshStandardMaterial({ color: 0x18a7e0, roughness: 0.45 });
+  if (!keihinMats) keihinMats = { blue: new THREE.MeshStandardMaterial({ color: 0x18a7e0, roughness: 0.45, name: 'keihin_blue' }), front: new Map() };
   set.group.traverse((o) => {
-    if (o.isMesh && (o.material.name === 'shonan_orange' || o.material.name === 'shonan_green')) o.material = blue;
+    if (!o.isMesh) return;
+    const n = o.material.name || '';
+    if (n === 'shonan_orange' || n === 'shonan_green') o.material = keihinMats.blue;
+    else if (n.startsWith('FRONT_')) {
+      if (!keihinMats.front.has(o.material)) keihinMats.front.set(o.material, keihinFront(o.material));
+      o.material = keihinMats.front.get(o.material);
+    }
   });
 }
 
 // ---------------------------------------------------------------------------
 // cameras
 // ---------------------------------------------------------------------------
-const CAMS = ['cab', 'car', 'front', 'side', 'chase', 'trackside'];
-const CAM_LABEL = { cab: '運転台', car: '車内', front: '正面', side: '側面', chase: '後方上空', trackside: '沿線' };
+const CAMS = ['cab', 'car', 'front', 'side', 'chase', 'trackside', 'free'];
+const CAM_LABEL = { cab: '運転台', car: '車内', front: '正面', side: '側面', chase: '後方上空', trackside: '沿線', free: 'フリー' };
+// free camera: position + look angles in the world; optionally carried along with the train
+const free = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, follow: true, last: null };
+const keysDown = new Set();
 function setCamMode(m) {
   camMode = m;
   $('camLabel').textContent = CAM_LABEL[m];
@@ -555,8 +594,17 @@ function setCamMode(m) {
     camera.fov = 68;
     look.yaw = 0; look.pitch = CAR_EYE.pitch;
   } else {
+    // start the free camera where the previous view was looking from
+    if (m === 'free') {
+      hud.message('フリーカメラ<br><small>ドラッグで向き・I/J/K/L で移動・U/O で上下・Shift で速く・G で列車に追従／固定</small>', 'info', 5);
+      camera.updateMatrixWorld();
+      camera.getWorldPosition(free.pos);
+      const d = new THREE.Vector3(); camera.getWorldDirection(d);
+      free.yaw = Math.atan2(-d.x, -d.z); free.pitch = Math.asin(Math.max(-1, Math.min(1, d.y)));
+      free.last = null;
+    }
     scene.add(camera);
-    camera.fov = 50;
+    camera.fov = m === 'free' ? 60 : 50;
     tracksideCam = null;
   }
   camera.updateProjectionMatrix();
@@ -564,6 +612,25 @@ function setCamMode(m) {
 
 function updateCamera(dt) {
   if (!player) return;
+  if (camMode === 'free') {
+    // carried along with the train (G toggles) so it does not get left behind at speed
+    const fp = view.pose(physics.s, 0, {});
+    if (free.follow && free.last) free.pos.add(new THREE.Vector3(fp.x - free.last.x, fp.y - free.last.y, fp.z - free.last.z));
+    free.last = { x: fp.x, y: fp.y, z: fp.z };
+    const sp = (keysDown.has('shift') ? 45 : 12) * dt;
+    const fwd = new THREE.Vector3(-Math.sin(free.yaw) * Math.cos(free.pitch), Math.sin(free.pitch), -Math.cos(free.yaw) * Math.cos(free.pitch));
+    const right = new THREE.Vector3(Math.cos(free.yaw), 0, -Math.sin(free.yaw));
+    if (keysDown.has('i')) free.pos.addScaledVector(fwd, sp);
+    if (keysDown.has('k')) free.pos.addScaledVector(fwd, -sp);
+    if (keysDown.has('l')) free.pos.addScaledVector(right, sp);
+    if (keysDown.has('j')) free.pos.addScaledVector(right, -sp);
+    if (keysDown.has('o')) free.pos.y += sp;
+    if (keysDown.has('u')) free.pos.y -= sp;
+    free.pos.y = Math.max(-0.3, free.pos.y);
+    camera.position.copy(free.pos);
+    camera.rotation.set(free.pitch, free.yaw, 0);
+    return;
+  }
   const p = {}, q = {};
   if (camMode === 'cab' || camMode === 'car') {
     // head bob + joint jolts
@@ -641,12 +708,23 @@ function setupInput() {
       default: break;
     }
   });
-  window.addEventListener('keyup', (e) => { if (e.key === 'h' || e.key === 'H') sound.horn(false); });
+  window.addEventListener('keyup', (e) => { keysDown.delete(e.key.toLowerCase()); if (e.key === 'h' || e.key === 'H') sound.horn(false); });
+  window.addEventListener('keydown', (e) => {
+    keysDown.add(e.key.toLowerCase());
+    if (camMode === 'free' && (e.key === 'g' || e.key === 'G') && !e.repeat) { free.follow = !free.follow; free.last = null; hud.message(free.follow ? 'フリーカメラ：列車に追従' : 'フリーカメラ：その場に固定', 'info', 1.5); }
+  });
+  window.addEventListener('blur', () => keysDown.clear());
   $('view').addEventListener('wheel', (e) => { if (running) { e.preventDefault(); handleDelta(e.deltaY < 0 ? 1 : -1); } }, { passive: false });
   const v = $('view');
   v.addEventListener('pointerdown', (e) => { look.drag = true; look.lx = e.clientX; look.ly = e.clientY; });
   window.addEventListener('pointerup', () => { look.drag = false; });
   window.addEventListener('pointermove', (e) => {
+    if (look.drag && camMode === 'free') {
+      free.yaw -= (e.clientX - look.lx) * 0.004;
+      free.pitch = Math.max(-1.45, Math.min(1.45, free.pitch - (e.clientY - look.ly) * 0.004));
+      look.lx = e.clientX; look.ly = e.clientY;
+      return;
+    }
     if (!look.drag || (camMode !== 'cab' && camMode !== 'car')) return;
     const lim = camMode === 'car' ? Math.PI : 1.4;
     look.yaw = Math.max(-lim, Math.min(lim, look.yaw - (e.clientX - look.lx) * 0.004));
@@ -910,7 +988,7 @@ boot();
 
 // debugging handle (used by automated tests)
 window.__sim = {
-  get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; },
+  get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; }, get traffic() { return traffic; },
   setCamMode, route, sound, announcer, melody, simStep, updateView,
   get renderer() { return renderer; }, get scene() { return scene; }, get camera() { return camera; }, draw,
   /** fast-forward the logic by `sec` seconds in fixed steps (no rendering) */
