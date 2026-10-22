@@ -55,6 +55,9 @@ import { MELODY_CLIPS } from './audio/melody-cues.js';
 import { buildTimetable, fmtTime } from './timetable.js';
 import { SERVICES, DEFAULT_SERVICE } from './services.js';
 import { TrackView } from './trackview.js';
+import { SignalSystem, LeadTrain, ASPECT_SPEED } from './signals.js';
+// block signals and the train running a few minutes ahead of us
+let signals = null, lead = null, leadSet = null, leadVoice = null, nextSig = null;
 import { HUD } from './hud.js';
 import { CabDisplays } from './cabdisplays.js';
 import { loadFonts } from './displays.js';
@@ -406,6 +409,13 @@ async function startGame() {
   hud.setup(veh, tt);
   game = new Game({ route: view, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from, service, up: view.up });
   traffic = new Traffic();
+  // the train ahead: same service a few minutes earlier, simulated up to now
+  signals = new SignalSystem(view, scene);
+  lead = new LeadTrain(view, tt, physics.len, 210 + Math.random() * 150);
+  for (let t = tt[0].dep - lead.headwayStart; t < game.clock; t += 0.5) lead.update(0.5, t);
+  leadSet = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', forward: !view.up });
+  scene.add(leadSet.group);
+  leadVoice = sound.addTrain(veh, formation.length);
   world.preload(view.toRoute(physics.s));
   setCamMode('cab');
   $('loading').classList.add('hidden');
@@ -422,6 +432,10 @@ function modelKey(veh) { return { e231: 'e231', e233: 'e233', s211: '211', s115:
 function teardown() {
   if (player) player.dispose();
   if (traffic) traffic.clear();
+  if (signals) { signals.dispose(); signals = null; }
+  if (leadSet) { leadSet.dispose(); leadSet = null; }
+  if (leadVoice) { leadVoice.dispose(); leadVoice = null; }
+  lead = null;
   if (world) world.dispose();
   announcer.stop(true);
   melody.stopClip(true);
@@ -820,7 +834,19 @@ function simStep(dt) {
   const n = Math.ceil(dt / (1 / 120));
   const target = game.target;
   const stopLimit = game.terminal && target ? target.station.s + 60 : null;
-  if (physics.updateATS(view, stopLimit)) {
+  // signals: the train ahead occupies its blocks; ATS-P stops us short of a red signal
+  if (lead) {
+    lead.update(dt, game.clock);
+    const ev = signals.update(physics.s, lead.done ? [] : [{ front: lead.x, rear: lead.rear }]);
+    if (ev) {
+      const lim = ASPECT_SPEED[ev.aspect];
+      if (ev.aspect === 'R') { hud.message('赤信号を冒進 <small>-50</small>', 'bad', 3); game.addScore(-50); }
+      else if (lim < 999 && physics.kmh > lim + 5) { hud.message(`信号の速度を超過（${ev.aspect} ${lim} km/h） <small>-5</small>`, 'bad', 2.5); game.addScore(-5); }
+    }
+  }
+  nextSig = signals ? signals.next(physics.s) : null;
+  const sigStop = nextSig && nextSig.aspect === 'R' ? nextSig.x - 12 : null;
+  if (physics.updateATS(view, sigStop != null && (stopLimit == null || sigStop < stopLimit) ? sigStop : stopLimit)) {
     hud.message('ATS-P ブレーキ動作 <small>-10</small>', 'bad', 3);
     game.addScore(-10);
   }
@@ -919,6 +945,14 @@ function updateView(dt) {
   camera.getWorldPosition(cp);
   world.updateFixed(cp, view.toRoute(physics.s));
   const trains = [{ front: view.toRoute(physics.s), len: physics.len, dir: view.sign }];
+  if (lead && !lead.done && leadSet) {
+    leadSet.place(route, view.toRoute(lead.x), (x) => view.trackOffset(x), 0.002);
+    trains.push({ front: view.toRoute(lead.x), len: physics.len, dir: view.sign });
+    if (leadVoice) {
+      const pos = [0.12, 0.5, 0.88].map((f) => { const p = view.pose(lead.x - physics.len * f, 0, {}); return { x: p.x, y: p.y + 0.8, z: p.z }; });
+      leadVoice.update(pos, lead.v * 3.6, lead.v > 0.5 && !lead.dwell ? 0.3 : 0, { curvature: view.curvature(lead.x), brake: 0 });
+    }
+  } else if (leadSet && lead && lead.done) { leadSet.dispose(); leadSet = null; if (leadVoice) { leadVoice.dispose(); leadVoice = null; } }
   for (const t of traffic.list) trains.push({ front: t.s, len: t.set.length, dir: t.dirReal });
   world.animate(dt, trains, cp);
   const fp = view.pose(physics.s - 20, 0, {});
@@ -932,6 +966,8 @@ function updateView(dt) {
     atsNear: physics.ats.near, atsBrake: physics.ats.braking, handle: physics.handle, notchLabel: physics.notchLabel(),
     clock: game.clock, score: game.score, doorsOpen: !!physics.doorsOpen,
     nextLimit: ups ? { v: ups.v, d: ups.s - physics.s } : null,
+    signal: nextSig ? { aspect: nextSig.aspect, d: nextSig.d } : null,
+    signalLimit: signals ? signals.currentLimit() : 999,
     ...game.hudData(),
   });
 }
@@ -988,7 +1024,7 @@ boot();
 
 // debugging handle (used by automated tests)
 window.__sim = {
-  get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; }, get traffic() { return traffic; },
+  get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; }, get traffic() { return traffic; }, get signals() { return signals; }, get lead() { return lead; },
   setCamMode, route, sound, announcer, melody, simStep, updateView,
   get renderer() { return renderer; }, get scene() { return scene; }, get camera() { return camera; }, draw,
   /** fast-forward the logic by `sec` seconds in fixed steps (no rendering) */

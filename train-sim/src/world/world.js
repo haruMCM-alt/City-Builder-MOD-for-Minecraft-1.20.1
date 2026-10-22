@@ -480,10 +480,7 @@ export class World {
     group.add(new THREE.LineSegments(wg, this.M.wire), new THREE.LineSegments(fg, this.M.wireFeeder));
     disposables.push(wg, fg);
 
-    // trackside: signals, speed signs, fences / sound walls
-    for (let s = Math.ceil(s0 / 1400) * 1400; s < s1; s += 1400) {
-      if (!r.stations.some((st) => Math.abs(st.s - s) < 500)) place('signal', s, 2.9);
-    }
+    // trackside: speed signs, fences / sound walls (block signals with live aspects: src/signals.js)
     for (const L of r.limits) {
       if (L.s0 >= s0 && L.s0 < s1 && L.v < 120) this.speedSign(group, disposables, L.s0 - 30, L.v);
     }
@@ -1107,7 +1104,7 @@ export class World {
     post.position.set(p.x, p.y + H - 0.75, p.z);
     post.rotation.y = p.yaw;
     group.add(post);
-    place('signal', st.s + 90, ourSide * 2.6, 0);
+    // (starting signals: src/signals.js)
     // up (上り) trains stop with their front 300 m further back, on the up track, facing the other way;
     // the platform is on the same hand of the train (island between the tracks / side platforms outside)
     const sUp = st.s - 300;
@@ -1117,7 +1114,7 @@ export class World {
     postUp.position.set(p.x, p.y + H - 0.75, p.z);
     postUp.rotation.y = p.yaw + Math.PI;
     group.add(postUp);
-    place('signal', sUp - 90, r.upOffset(sUp - 90) + upSide * 2.6, 0, Math.PI);
+
     sw.build(group, disposables, true);
     const instanced = batch.build(group, this.P);
     this.root.add(group);

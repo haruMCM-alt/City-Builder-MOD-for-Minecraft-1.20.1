@@ -69,6 +69,14 @@ export class HUD {
     $('delay').className = d.delay > 0 ? 'late' : '';
     $('score').textContent = d.score;
     $('limitNow').textContent = d.limit;
+    // next signal: lamps top → bottom Y, G, R, Y
+    if (d.signal) {
+      const lit = { R: [2], Y: [3], YG: [0, 1], YY: [0, 3], G: [1] }[d.signal.aspect] || [];
+      const cols = ['Y', 'G', 'R', 'Y'];
+      $('sigHead').querySelectorAll('i').forEach((el, k) => { el.className = lit.includes(k) ? `on-${cols[k]}` : ''; });
+      const name = { R: '停止', Y: '注意 45', YG: '減速 75', YY: '警戒 25', G: '進行' }[d.signal.aspect];
+      $('sigText').textContent = `${name}  ${d.signal.d > 1000 ? (d.signal.d / 1000).toFixed(1) + 'km' : Math.round(d.signal.d) + 'm'}`;
+    }
     const nl = d.nextLimit;
     $('limitNext').textContent = nl ? `${nl.v} (${Math.round(nl.d)}m先)` : '';
     $('atsLamp').className = d.atsBrake ? 'lamp red' : d.atsNear ? 'lamp yellow' : 'lamp';
