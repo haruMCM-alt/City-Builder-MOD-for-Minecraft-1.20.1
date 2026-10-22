@@ -2,62 +2,72 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { fbm, rng } from './noise.js';
+import { atmosphere, sunDirection, gradientSky, nightSky } from './atmosphere.js';
 
 export const GROUND_Y = -0.62;
 
 export class Environment {
-  constructor(renderer, scene, T, quality) {
+  constructor(renderer, scene, T, quality, atmo = atmosphere()) {
     this.scene = scene;
     this.renderer = renderer;
-    // sun: late morning, south-east (the timetable runs 8:51–10:34)
-    const elev = THREE.MathUtils.degToRad(42), azim = THREE.MathUtils.degToRad(140);
-    this.sunDir = new THREE.Vector3().setFromSphericalCoords(1, Math.PI / 2 - elev, azim);
+    this.atmo = atmo;
+    // sun (or moon at night): by day late morning, south-east (the timetable runs 8:51–10:34)
+    this.sunDir = sunDirection(atmo);
 
-    this.sky = new Sky();
-    this.sky.scale.setScalar(20000);
-    dimSky(this.sky, 0.5);
-    const u = this.sky.material.uniforms;
-    u.turbidity.value = 3.2;
-    u.rayleigh.value = 1.9;
-    u.mieCoefficient.value = 0.004;
-    u.mieDirectionalG.value = 0.8;
-    u.sunPosition.value.copy(this.sunDir);
+    const makeSky = (scale, dim) => {
+      if (atmo.sky.kind === 'grad') { const m = gradientSky(atmo); m.scale.setScalar(scale * 0.5); return m; }
+      const sky = new Sky();
+      sky.scale.setScalar(scale);
+      dimSky(sky, dim);
+      const u = sky.material.uniforms;
+      u.turbidity.value = atmo.sky.turbidity;
+      u.rayleigh.value = atmo.sky.rayleigh;
+      u.mieCoefficient.value = atmo.sky.mie;
+      u.mieDirectionalG.value = atmo.sky.mieG;
+      u.sunPosition.value.copy(this.sunDir);
+      return sky;
+    };
+    this.sky = makeSky(20000, atmo.sky.dim);
     scene.add(this.sky);
 
     // image based lighting from the very same sky
     const pmrem = new THREE.PMREMGenerator(renderer);
     const envScene = new THREE.Scene();
-    const sky2 = new Sky();
-    sky2.scale.setScalar(1000);
-    dimSky(sky2, 0.55);
-    Object.assign(sky2.material.uniforms.turbidity, { value: 3.2 });
-    sky2.material.uniforms.rayleigh.value = 1.9;
-    sky2.material.uniforms.mieCoefficient.value = 0.004;
-    sky2.material.uniforms.mieDirectionalG.value = 0.8;
-    sky2.material.uniforms.sunPosition.value.copy(this.sunDir);
-    envScene.add(sky2);
+    envScene.add(makeSky(1000, atmo.sky.envDim));
     // a dim ground hemisphere so reflections below the horizon are not sky-blue
     const gnd = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x4a4f3e, side: THREE.BackSide }));
+      new THREE.MeshBasicMaterial({ color: atmo.groundEnv, side: THREE.BackSide }));
     envScene.add(gnd);
     this.envMap = pmrem.fromScene(envScene, 0, 0.1, 1000).texture;
     scene.environment = this.envMap;
-    scene.environmentIntensity = 0.72;
+    scene.environmentIntensity = atmo.env;
 
-    this.fogColor = new THREE.Color(0xa9bccc);
-    scene.fog = new THREE.FogExp2(this.fogColor, quality !== 'low' ? 0.00026 : 0.00036);
+    this.fogColor = new THREE.Color(atmo.fog.color);
+    scene.fog = new THREE.FogExp2(this.fogColor, atmo.fog.density * (quality !== 'low' ? 1 : 1.38));
     this.urban = { value: 0.8 };
 
     this.initClouds();
     this.initMountains();
     this.initGround(T);
     this.initHorizon();
+    this.night = nightSky(atmo, this.sunDir);
+    scene.add(this.night);
+    // far scenery is unlit (MeshBasic): tint it for dusk / night
+    const far = new THREE.Color(atmo.far.tint);
+    this.mountains.visible = atmo.far.mountains;
+    this.mountains.children.forEach((m) => m.material.color.copy(far));
+    this.horizon.children.forEach((m) => { if (!atmo.far.nightTowns) m.material.color.multiply(far); });
+    this.clouds.visible = atmo.clouds.show;
+    this.clouds.children.forEach((s) => { s.material.color.set(atmo.clouds.tint); s.material.opacity = atmo.clouds.opacity; });
+    if (atmo.rain) this.clouds.children.forEach((s) => { s.position.y *= 0.55; s.scale.multiplyScalar(1.6); });
   }
 
   /** two rings of distant tree lines, towns and pylons (the flat Kanto plain horizon) */
   initHorizon() {
     const R = rng(5150);
+    const nightTowns = this.atmo && this.atmo.far.nightTowns;
     const mkTex = (w, h, town) => {
+      if (nightTowns) return mkNight(w, h, town);
       const c = document.createElement('canvas');
       c.width = w; c.height = h;
       const g = c.getContext('2d');
@@ -91,13 +101,37 @@ export class Environment {
       t.anisotropy = 4;
       return t;
     };
+    // night: dark silhouettes with lit windows, street lights and red aviation lamps on the pylons
+    function mkNight(w, h, town) {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      for (let x = 0; x < w; x += 3) {
+        const th = h * (0.18 + 0.22 * fbm(x / 40, 1.3, 3, 4));
+        g.fillStyle = 'rgb(6,8,10)'; g.beginPath(); g.arc(x, h - th, 4 + R() * 6, 0, 7); g.fill(); g.fillRect(x - 2, h - th, 5, th);
+      }
+      for (let i = 0; i < (town ? 260 : 110); i++) {
+        const x = R() * w, bw = 6 + R() * (town ? 40 : 22), bh = h * (0.12 + R() * (town ? 0.55 : 0.25)) * (R() < 0.08 ? 1.6 : 1);
+        g.fillStyle = 'rgb(9,11,15)'; g.fillRect(x, h - bh, bw, bh);
+        for (let k = 0; k < bw * bh / 30; k++) {
+          if (R() < 0.45) continue;
+          g.fillStyle = R() < 0.7 ? 'rgba(255,205,140,0.9)' : 'rgba(210,230,255,0.85)';
+          g.fillRect(x + 1 + R() * (bw - 2), h - bh + 2 + R() * (bh - 4), 1.2, 1);
+        }
+      }
+      for (let i = 0; i < (town ? 160 : 60); i++) { g.fillStyle = 'rgba(255,190,110,0.8)'; g.fillRect(R() * w, h - 2 - R() * 4, 1.4, 1.4); }
+      for (let i = 0; i < 14; i++) { const x = R() * w, ph = h * (0.55 + R() * 0.2); g.fillStyle = 'rgba(255,40,30,0.95)'; g.fillRect(x - 1, h - ph - 1, 2, 2); }
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.anisotropy = 4;
+      return t;
+    }
     this.horizon = new THREE.Group();
     for (const [radius, height, town, rep] of [[3200, 40, true, 6], [6500, 70, false, 9]]) {
       const tx = mkTex(2048, 128, town);
       tx.repeat.set(rep, 1);
       const g = new THREE.CylinderGeometry(radius, radius, height, 160, 1, true);
       g.translate(0, height / 2 + GROUND_Y - 0.5, 0);
-      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: tx, transparent: true, alphaTest: 0.4, side: THREE.BackSide, depthWrite: true, color: 0xcfd6d8 }));
+      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: tx, transparent: true, alphaTest: 0.4, side: THREE.BackSide, depthWrite: true, color: nightTowns ? 0xffffff : 0xcfd6d8, fog: !nightTowns }));
       this.horizon.add(m);
     }
     this.scene.add(this.horizon);
@@ -323,10 +357,11 @@ export class Environment {
     this.mountains.position.set(cam.x, 0, cam.z);
     this.clouds.position.set(cam.x * 0.92, 0, cam.z * 0.92);
     this.sky.position.copy(cam);
+    this.night.position.copy(cam);
   }
 
   dispose() {
-    for (const o of [this.sky, this.clouds, this.mountains, this.ground, this.horizon]) o.removeFromParent();
+    for (const o of [this.sky, this.clouds, this.mountains, this.ground, this.horizon, this.night]) o.removeFromParent();
   }
 }
 

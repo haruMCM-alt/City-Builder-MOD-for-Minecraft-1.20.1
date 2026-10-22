@@ -20,6 +20,16 @@ export class TrainPhysics {
     this.ats = { braking: false, near: false, pattern: 999, events: 0 };
     this.jerk = 0;
     this.grade = 0; // rise per metre (+ = uphill)
+    // wheel / rail adhesion: 1 = dry rail, ~0.5 = wet. slip / slide 0..1 for the HUD and sound
+    this.adhesion = 1;
+    this.slip = 0;
+    this.slide = 0;
+  }
+
+  /** adhesion coefficient available at speed vk (km/h) here; wet rail is patchy (leaves, dirt, puddles) */
+  mu(vk) {
+    const patch = this.adhesion < 1 ? 0.82 + 0.3 * (0.5 + 0.5 * Math.sin(this.s / 37) * Math.sin(this.s / 113 + 1.3)) : 1;
+    return (0.3 / (1 + 0.004 * vk)) * this.adhesion * patch;
   }
 
   get EB() { return -(this.veh.brakeNotches + 1); }
@@ -81,8 +91,17 @@ export class TrainPhysics {
     const decel = eb ? (veh.ebDecel / 3.6) * Math.min(1, this.brake) : (veh.brakeMax / 3.6) * this.brake;
     // brakes are slightly stronger at very low speed (friction coefficient)
     const lowBoost = vk < 10 ? 1 + (10 - vk) * 0.012 : 1;
-    const aTr = tractiveAccel(veh, vk, this.power);
-    let a = aTr - resistance(vk) - (this.v > 0 ? decel * lowBoost : 0) - 9.81 * this.grade;
+    let aTr = tractiveAccel(veh, vk, this.power);
+    let aBr = this.v > 0 ? decel * lowBoost : 0;
+    // adhesion limits: motor axles carry ~42 % of the weight; every axle brakes
+    const mu = this.mu(vk);
+    const tMax = mu * 9.81 * 0.42, bMax = mu * 9.81 * 0.95;
+    let slip = 0, slide = 0;
+    if (aTr > tMax) { slip = Math.min(1, (aTr - tMax) / tMax + 0.25); aTr = tMax * 0.9; }      // re-adhesion control cuts the torque
+    if (aBr > bMax && vk > 3) { slide = Math.min(1, (aBr - bMax) / bMax + 0.25); aBr = bMax * 0.92; } // wheel-slide protection vents the brake
+    this.slip += (slip - this.slip) * Math.min(1, dt * 6);
+    this.slide += (slide - this.slide) * Math.min(1, dt * 6);
+    let a = aTr - resistance(vk) - aBr - 9.81 * this.grade;
     const prevA = this.a;
     // held by the brakes when standing (no rolling back)
     if (this.v <= 0 && (a <= 0 || this.brake > 0.3)) { a = 0; this.v = 0; }
@@ -95,7 +114,7 @@ export class TrainPhysics {
   /** traction "torque" for the sound engine: + power, - regenerative braking */
   get torque() {
     const vk = this.kmh;
-    if (this.power > 0.01) return this.power * (0.55 + 0.45 * Math.min(1, vk / 20));
+    if (this.power > 0.01) return this.power * (0.55 + 0.45 * Math.min(1, vk / 20)) * (1 - 0.45 * this.slip);
     const sound = this.veh.sound;
     if (this.brake > 0.02 && vk > 3 && !(sound.type === 'dc' && sound.cam)) {
       // regen fades out below ~8 km/h (air brake takes over)

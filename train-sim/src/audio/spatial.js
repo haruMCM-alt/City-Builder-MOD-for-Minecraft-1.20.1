@@ -86,7 +86,7 @@ export class SpatialVoice {
 }
 
 /** a short sound (rail joint, cam click) emitted from a point: delayed, panned and attenuated once */
-export function oneShot(ctx, L, bus, buf, pos, { gain = 1, ref = 5, rate = 1, minGain = 0.008 } = {}) {
+export function oneShot(ctx, L, bus, buf, pos, { gain = 1, ref = 5, rate = 1, minGain = 0.008, when = 0 } = {}) {
   const p = spatialParams(L, pos, ref);
   const g = p.gain * gain;
   if (g < minGain) return;
@@ -99,7 +99,7 @@ export function oneShot(ctx, L, bus, buf, pos, { gain = 1, ref = 5, rate = 1, mi
     s.connect(f).connect(gn);
   } else s.connect(gn);
   gn.connect(pn).connect(bus);
-  s.start(ctx.currentTime + p.delay);
+  s.start(ctx.currentTime + p.delay + when);
 }
 
 /** synthetic stereo impulse response: ground reflection, scattered early reflections, diffuse tail */

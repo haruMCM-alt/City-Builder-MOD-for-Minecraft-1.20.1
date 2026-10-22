@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { stationProtos, PERSON_KEYS, SIT_KEYS, departureBoardTexture, clockTexture } from './people.js';
 import { PLATFORM_LEN, PF_EDGE, SIDE_PF_W, RIVERS } from '../route.js';
 import { makeTextures } from './textures.js';
+import { atmosphere, addWindowLights } from './atmosphere.js';
 import { Environment, GROUND_Y } from './sky.js';
 import { LandBuilder, MATERIAL_KEYS, carGeometry, carColor } from './land.js';
 import { GeoBuffer, Frame, TILE, boxWalls, flatTop, solid } from './buildings.js';
@@ -153,12 +154,15 @@ class InstanceBatch {
 
 // ---------------------------------------------------------------------------
 export class World {
-  constructor(renderer, scene, route, envGltf, quality = 'high') {
+  constructor(renderer, scene, route, envGltf, quality = 'high', atmo = atmosphere()) {
     this.scene = scene;
     this.route = route;
     this.quality = quality;
+    this.atmo = atmo;
+    // shared "lights on" uniforms (lit windows, platform lamps)
+    this.lightsU = { night: { value: atmo.night }, lit: { value: atmo.lit } };
     this.T = makeTextures();
-    this.env = new Environment(renderer, scene, this.T, quality);
+    this.env = new Environment(renderer, scene, this.T, quality, atmo);
     this.chunks = new Map();
     this.stations = new Map();
     this.rivers = new Map();
@@ -233,6 +237,7 @@ export class World {
       sign: std({ map: T.signs, roughness: 0.45, emissive: 0xffffff, emissiveMap: T.signs, emissiveIntensity: 0.12, side: THREE.DoubleSide }),
     };
     this.M.water.normalScale.set(0.35, 0.35);
+    this.applyAtmosphere();
     for (const k of MATERIAL_KEYS) if (!this.M[k]) console.warn('missing material', k);
     this.M.dirt.map = T.soil;
     // volumetric trees: leaf-cluster cards around a trunk (see trees.js)
@@ -241,6 +246,35 @@ export class World {
     this.sleeperGeo.translate(0, -0.25, 0);
     this.fastenerGeo = new THREE.BoxGeometry(0.16, 0.06, 0.12);
     this.carGeo = carGeometry();
+  }
+
+  /** lit windows after dark, wet surfaces in the rain, lamps on the platforms */
+  applyAtmosphere() {
+    const A = this.atmo, M = this.M, T = this.T;
+    const lum = (r, g, b) => (r + g + b) / 3;
+    if (A.night > 0) {
+      const shared = this.lightsU;
+      addWindowLights(M.house, T.facadeHouse, { bays: 4, shared, isWindow: (r, g, b) => b >= r + 6 && lum(r, g, b) < 135 });
+      addWindowLights(M.apt, T.facadeApt, { bays: 2, shared, isWindow: (r, g, b) => b >= r + 6 && lum(r, g, b) < 135 });
+      addWindowLights(M.mansion, T.facadeMansion, { bays: 2, shared, isWindow: (r, g, b) => b >= r + 6 && lum(r, g, b) < 150 });
+      addWindowLights(M.office, T.facadeOffice, { bays: 4, shared, isWindow: (r, g, b) => b >= r + 15 && lum(r, g, b) < 170 });
+      addWindowLights(M.shop, T.facadeShop, { bays: 4, shared, isWindow: (r, g, b) => Math.max(r, g, b) - Math.min(r, g, b) < 45 && lum(r, g, b) > 55 && lum(r, g, b) < 200 });
+      // lit platforms (fluorescent lamps under the canopies) and glowing sign boards
+      M.pfTop.emissive = new THREE.Color(0xfff4e0);
+      M.pfTop.emissiveMap = M.pfTop.map;
+      M.pfTop.emissiveIntensity = 0.16 * A.night;
+      M.sign.emissiveIntensity = 0.12 + 0.6 * A.night;
+    }
+    if (A.rain) {
+      // wet: darker and glossy (puddles on asphalt and platforms)
+      for (const k of ['road', 'asphalt', 'pfTop', 'pfSide', 'concrete', 'roofTile', 'roofMetal', 'plain', 'house', 'apt', 'mansion', 'shop', 'factory', 'carBody', 'sleeper', 'ballast', 'embank', 'levee', 'dirt']) {
+        const m = M[k]; if (!m) continue;
+        m.roughness = Math.max(0.12, m.roughness * (k === 'road' || k === 'asphalt' || k === 'pfTop' ? 0.35 : 0.6));
+        m.color.multiplyScalar(k === 'ballast' || k === 'sleeper' ? 0.72 : 0.85);
+      }
+      M.railTop.roughness = 0.1;
+      if (this.env.ground) { this.env.ground.material.roughness = 0.55; this.env.ground.material.color.multiplyScalar(0.85); }
+    }
   }
 
   initProtos(gltf) {

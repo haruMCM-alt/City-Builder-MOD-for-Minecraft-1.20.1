@@ -53,8 +53,12 @@ export class SoundEngine {
     this.noiseBuf = this.makeNoise(4);
     this.brownBuf = this.makeBrown(4);
     this.pinkBuf = this.makePink(4);
-    this.jointBufs = [this.makeJoint(1), this.makeJoint(2), this.makeJoint(3)];
+    // joint impacts: 4 variations x 3 impact strengths (slow / medium / fast)
+    this.jointSets = [0, 1, 2].map((br) => [1, 2, 3, 4].map((k) => this.makeJoint(k, br)));
+    this.jointBufs = this.jointSets[1];
     this.jointBuf = this.jointBufs[0];
+    // crossing alarm strikes, two pitches per alarm (the two-tone "カン・カン")
+    this.bellBufs = [0, 1, 2, 3].map((k) => { const f = 690 + k * 26; return [this.makeBell(f, k * 2), this.makeBell(f * 1.055, k * 2 + 1)]; });
     this.camBuf = this.makeClick();
 
     // --- buses -------------------------------------------------------------------
@@ -268,22 +272,100 @@ export class SoundEngine {
     return b;
   }
 
-  /** "タン": a wheel dropping over a rail joint – low thump of the unsprung mass, rail ring, click */
-  makeJoint(seed) {
+  /**
+   * "タタン": a wheel crossing a rail joint, built as a small modal model.
+   * The wheel drops into the gap and is kicked up again by the receiving rail end
+   * (two impacts a few ms apart); the impacts excite the rail (bending modes 0.4–3.4 kHz,
+   * pinned-pinned ring around 1 kHz), the wheel (long faint ring), the sleeper / ballast
+   * (dull thump) and the car body (low boom). `bright` 0..2 = slow .. fast impacts.
+   */
+  makeJoint(seed, bright = 1) {
     const ctx = this.ctx, sr = ctx.sampleRate;
-    const len = Math.floor(sr * 0.35);
+    const len = Math.floor(sr * 0.42);
     const b = ctx.createBuffer(1, len, sr);
     const d = b.getChannelData(0);
-    let lp = 0;
-    const f0 = 52 + seed * 6, ring1 = 560 + seed * 47, ring2 = 1290 + seed * 90;
+    const R = mulberry(seed * 977 + bright * 131 + 7);
+    const j = (x, k = 0.06) => x * (1 + (R() * 2 - 1) * k);
+    // excitation: drop impact + step-up impact (harder at speed: shorter, brighter bursts)
+    const ex = new Float32Array(len);
+    const burst = (t0, dur, amp) => {
+      const i0 = Math.floor(t0 * sr), n = Math.max(2, Math.floor(dur * sr));
+      for (let i = 0; i < n && i0 + i < len; i++) ex[i0 + i] += amp * Math.sin(Math.PI * i / n) * (1 + (R() * 2 - 1) * 0.35);
+    };
+    const durI = [0.003, 0.002, 0.0013][bright];
+    burst(0, durI, 1);
+    burst(j(0.0045 - bright * 0.0008, 0.25), durI * 0.8, j(0.55, 0.3));
+    const sc = [0.7, 1.5, 2.4][bright];
+    const modes = [
+      // [Hz, decay 1/s, amplitude]  sleeper / ballast thump, body boom
+      [j(105), 30, [1.0, 0.75, 0.5][bright]], [j(160), 38, 0.5], [j(46, 0.1), 11, [0.9, 0.55, 0.35][bright]],
+      // rail bending modes and the pinned-pinned ring
+      [j(430), 48, 0.45 * sc], [j(690), 40, 0.5 * sc], [j(1010, 0.03), 26, 0.55 * sc], [j(1340), 36, 0.38 * sc],
+      [j(1880), 44, 0.28 * sc], [j(2580), 52, 0.2 * sc], [j(3420), 64, 0.13 * sc],
+      // wheel ring (faint, long)
+      [j(2960, 0.03), 13, 0.05 * sc], [j(4380, 0.03), 17, 0.035 * sc],
+    ];
+    for (const [f, dec, amp] of modes) {
+      const r = Math.exp(-dec / sr), w = 2 * Math.PI * f / sr;
+      const c1 = 2 * r * Math.cos(w), c2 = -r * r;
+      const g = amp * (1 - r) * 2.2 * Math.pow(f / 200, 0.3);
+      let y1 = 0, y2 = 0;
+      for (let i = 0; i < len; i++) {
+        const y = c1 * y1 + c2 * y2 + ex[i] * g;
+        y2 = y1; y1 = y;
+        d[i] += y;
+      }
+    }
+    // a touch of the raw contact click on top (high-passed impact)
+    let hp = 0, prev = 0;
+    for (let i = 0; i < len; i++) { hp = 0.82 * (hp + ex[i] - prev); prev = ex[i]; d[i] += hp * 0.08 * sc; }
+    let peak = 1e-6;
+    for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(d[i]));
+    for (let i = 0; i < len; i++) d[i] *= 0.9 / peak * Math.min(1, (len - i) / (sr * 0.03));
+    return b;
+  }
+
+  /**
+   * one strike of an electronic level-crossing alarm (電子音式警報機): a bell-like tone with
+   * inharmonic partials and slow beating, played through a weatherproof horn speaker
+   * (band-limited, a horn resonance and a little cone break-up)
+   */
+  makeBell(f, seed) {
+    const ctx = this.ctx, sr = ctx.sampleRate;
+    const len = Math.floor(sr * 0.62);
+    const b = ctx.createBuffer(1, len, sr);
+    const d = b.getChannelData(0);
+    const R = mulberry(seed * 313 + 11);
+    const parts = [[1, 1.0, 6.0], [1.0042, 0.5, 7.2], [2.0, 0.45, 9.5], [2.71, 0.6, 11], [2.745, 0.3, 12.5],
+      [4.08, 0.3, 15], [5.42, 0.22, 19], [6.83, 0.12, 24]];
+    const ph = parts.map(() => R() * Math.PI * 2);
     for (let i = 0; i < len; i++) {
       const t = i / sr;
-      const thump = Math.sin(2 * Math.PI * (f0 + 34 * Math.exp(-t * 30)) * t) * Math.exp(-t * 15) * 0.9;
-      lp += ((Math.random() * 2 - 1) - lp) * 0.32;
-      const click = lp * Math.exp(-t * 95) * 0.75;
-      const ring = Math.sin(2 * Math.PI * ring1 * t) * Math.exp(-t * 42) * 0.13 + Math.sin(2 * Math.PI * ring2 * t) * Math.exp(-t * 58) * 0.06;
-      d[i] = thump + click + ring;
+      const att = Math.min(1, t / 0.0015);
+      let s = 0;
+      for (let k = 0; k < parts.length; k++) {
+        const [m, a, dec] = parts[k];
+        s += Math.sin(2 * Math.PI * f * m * t + ph[k]) * a * Math.exp(-t * dec);
+      }
+      d[i] = s * att;
     }
+    // hammer transient
+    let lp = 0;
+    for (let i = 0; i < Math.floor(sr * 0.004); i++) { lp += ((R() * 2 - 1) - lp) * 0.5; d[i] += lp * 0.35 * (1 - i / (sr * 0.004)); }
+    // horn speaker: soft clipping, 2-pole high-pass ~380 Hz, low-pass ~5 kHz, resonance ~1.15 kHz
+    const hpA = Math.exp(-2 * Math.PI * 380 / sr), lpA = Math.exp(-2 * Math.PI * 5000 / sr);
+    const rr = Math.exp(-260 / sr), rw = 2 * Math.PI * 1150 / sr, rc1 = 2 * rr * Math.cos(rw), rc2 = -rr * rr;
+    let h1 = 0, hx1 = 0, h2 = 0, hx2 = 0, l = 0, y1 = 0, y2 = 0, peak = 1e-6;
+    for (let i = 0; i < len; i++) {
+      let x = Math.tanh(d[i] * 0.9) / Math.tanh(0.9 * 2.6);
+      h1 = hpA * (h1 + x - hx1); hx1 = x;
+      h2 = hpA * (h2 + h1 - hx2); hx2 = h1;
+      l += (h2 - l) * (1 - lpA);
+      const y = rc1 * y1 + rc2 * y2 + l * 0.06; y2 = y1; y1 = y;
+      d[i] = l + y;
+      peak = Math.max(peak, Math.abs(d[i]));
+    }
+    for (let i = 0; i < len; i++) d[i] *= 0.9 / peak * Math.min(1, (len - i) / (sr * 0.05));
     return b;
   }
 
@@ -437,6 +519,83 @@ export class SoundEngine {
     this.fanG.gain.setTargetAtTime(mode === 'cab' ? 0.03 : mode === 'car' ? 0.045 : 0.0, t, 0.1);
     this.ambG.gain.setTargetAtTime(mode === 'outside' ? 0.035 : 0.0, t, 0.3);
     if (this.melFilter) this.melFilter.frequency.setTargetAtTime(mode === 'outside' ? 7000 : open ? 5000 : 2400, t, 0.1);
+    this.updateRain();
+  }
+
+  // ---------------------------------------------------------------------------------
+  // rain
+  // ---------------------------------------------------------------------------------
+  /** a loop of random droplet impacts (tiny decaying pings) */
+  makePatter(sec, rate, fLo, fHi, seed) {
+    const ctx = this.ctx, sr = ctx.sampleRate, len = Math.floor(sr * sec);
+    const b = ctx.createBuffer(1, len, sr), d = b.getChannelData(0);
+    const R = mulberry(seed);
+    const n = Math.floor(sec * rate);
+    for (let k = 0; k < n; k++) {
+      const i0 = Math.floor(R() * len), f = fLo * Math.pow(fHi / fLo, R()), dec = 250 + R() * 900, amp = R() ** 2.5;
+      const m = Math.floor(sr * 6 / dec);
+      for (let i = 0; i < m; i++) {
+        const tt = i / sr;
+        d[(i0 + i) % len] += Math.sin(2 * Math.PI * f * tt) * Math.exp(-tt * dec) * amp;
+      }
+    }
+    let peak = 1e-6; for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(d[i]));
+    for (let i = 0; i < len; i++) d[i] /= peak;
+    return b;
+  }
+
+  /** rain strength 0..1 (0 switches it off) */
+  setRain(level) {
+    if (!this.ready) return;
+    const ctx = this.ctx;
+    if (level > 0 && !this.rain) {
+      const mk = (src, filters, dest) => { let n = src; for (const f of filters) n = n.connect(f); const g = ctx.createGain(); g.gain.value = 0; n.connect(g).connect(dest); return g; };
+      const bq = (type, f, q = 0.7) => { const x = ctx.createBiquadFilter(); x.type = type; x.frequency.value = f; x.Q.value = q; return x; };
+      this.rain = {
+        // the wide hiss of rain on everything around
+        hiss: mk(this.loopSource(this.pinkBuf), [bq('highpass', 700), bq('lowpass', 7500)], this.master),
+        hissMuffled: mk(this.loopSource(this.pinkBuf), [bq('bandpass', 1400, 0.4), bq('lowpass', 2500)], this.master),
+        // drops close by: on the windscreen (bright pings) and drumming on the roof (dull)
+        glass: mk(this.loopSource(this.makePatter(3.3, 420, 1800, 6500, 5)), [bq('highpass', 900)], this.master),
+        roof: mk(this.loopSource(this.makePatter(2.9, 900, 250, 1400, 9)), [bq('lowpass', 1600)], this.master),
+        near: mk(this.loopSource(this.makePatter(3.7, 700, 900, 5200, 13)), [], this.master),
+      };
+    }
+    this.rainLevel = level;
+    this.updateRain();
+  }
+
+  updateRain() {
+    if (!this.rain) return;
+    const t = this.ctx.currentTime, l = this.rainLevel || 0, m = this.mode, r = this.rain;
+    const set = (g, v) => g.gain.setTargetAtTime(v * l, t, 0.3);
+    set(r.hiss, m === 'outside' ? 0.09 : 0);
+    set(r.near, m === 'outside' ? 0.05 : 0);
+    set(r.hissMuffled, m === 'cab' ? 0.035 : m === 'car' ? 0.025 : 0);
+    set(r.glass, m === 'cab' ? 0.07 : m === 'car' ? 0.025 : 0);
+    set(r.roof, m === 'cab' ? 0.05 : m === 'car' ? 0.035 : 0);
+  }
+
+  /** one wiper stroke heard in the cab: motor whirr and the rubber blade swishing over wet glass */
+  wiper() {
+    if (!this.ready || this.mode !== 'cab') return;
+    const ctx = this.ctx, t = ctx.currentTime, dur = 1.2;
+    const mot = ctx.createOscillator(); mot.type = 'sawtooth'; mot.frequency.setValueAtTime(85, t);
+    mot.frequency.linearRampToValueAtTime(110, t + 0.3); mot.frequency.linearRampToValueAtTime(90, t + dur);
+    const mf = ctx.createBiquadFilter(); mf.type = 'lowpass'; mf.frequency.value = 380;
+    const mg = ctx.createGain(); mg.gain.setValueAtTime(0, t); mg.gain.linearRampToValueAtTime(0.03, t + 0.08);
+    mg.gain.setValueAtTime(0.03, t + dur - 0.1); mg.gain.linearRampToValueAtTime(0, t + dur);
+    mot.connect(mf).connect(mg).connect(this.cabBus); mot.start(t); mot.stop(t + dur + 0.05);
+    const s = ctx.createBufferSource(); s.buffer = this.noiseBuf;
+    const sf = ctx.createBiquadFilter(); sf.type = 'bandpass'; sf.frequency.value = 2100; sf.Q.value = 0.8;
+    const sg = ctx.createGain(); sg.gain.setValueAtTime(0, t);
+    // two strokes (out and back), loudest mid-sweep where the blade is fastest
+    for (const [a, b] of [[0, dur / 2], [dur / 2, dur]]) {
+      sg.gain.linearRampToValueAtTime(0.0, t + a + 0.02);
+      sg.gain.linearRampToValueAtTime(0.05, t + (a + b) / 2);
+      sg.gain.linearRampToValueAtTime(0.004, t + b - 0.02);
+    }
+    s.connect(sf).connect(sg).connect(this.cabBus); s.start(t, Math.random()); s.stop(t + dur + 0.05);
   }
 
   /** kept for older callers */
@@ -531,11 +690,16 @@ export class SoundEngine {
   }
 
   /** a wheel crossing a rail joint at world position pos; own = our train (else a passing one) */
-  jointAt(pos, speed, own = true) {
+  jointAt(pos, speed, own = true, late = 0) {
     if (!this.ready || this.muted) return;
-    const g = 0.22 + Math.min(1.2, speed / 90) * 0.85;
-    const buf = this.jointBufs[Math.floor(Math.random() * 3)];
-    oneShot(this.ctx, this.L, own ? this.ownBus : this.worldBus, buf, pos, { gain: g * (own ? 0.8 : 1.0), ref: 3, rate: 0.92 + Math.random() * 0.12 });
+    const g = 0.2 + Math.min(1.2, speed / 90) * 0.8;
+    // impact strength: a slow wheel only "taps" the rail end, a fast one hits it hard and bright
+    const x = Math.min(1.999, speed / 45 + (Math.random() - 0.5) * 0.4);
+    const set = this.jointSets[Math.max(0, Math.floor(x))];
+    const buf = set[Math.floor(Math.random() * set.length)];
+    // a fixed 40 ms latency lets every axle sound at its exact crossing time instead of on frame ticks
+    const when = Math.max(0, 0.04 - late);
+    oneShot(this.ctx, this.L, own ? this.ownBus : this.worldBus, buf, pos, { gain: g * (own ? 0.8 : 1.0), ref: 3, rate: 0.95 + Math.random() * 0.08, when });
   }
 
   /** legacy non-spatial joint (kept for compatibility) */
@@ -713,35 +877,49 @@ export class SoundEngine {
       seen.add(c.id);
       let b = this.bells.get(c.id);
       if (!b) {
-        b = { voice: new SpatialVoice(ctx, this.worldBus, { ref: 8, gain: 0.5, maxDist: 1400 }), next: t + 0.05, n: 0, f: 700 + Math.random() * 60 };
+        // a crossing has an alarm on each side of the road; their strike rates differ a little,
+        // so the two drift in and out of step like the real thing
+        const k = Math.floor(Math.random() * this.bellBufs.length);
+        b = { units: [0, 1].map((u) => ({
+          voice: new SpatialVoice(ctx, this.worldBus, { ref: 8, gain: 0.42, maxDist: 1400 }),
+          bufs: this.bellBufs[(k + u) % this.bellBufs.length],
+          period: 0.352 + u * 0.009 + Math.random() * 0.004,
+          next: t + 0.05 + u * Math.random() * 0.15, n: 0,
+          off: (u ? 1 : -1) * 5,
+        })) };
         this.bells.set(c.id, b);
       }
-      b.voice.set(c.x, c.y, c.z);
-      b.voice.update(this.L, t, this.jump);
-      // strikes are scheduled into the voice input, so they inherit its delay (Doppler) and panning
-      while (b.next < t + 0.15) {
-        const when = b.next;
-        const f = b.n % 2 ? b.f : b.f * 1.06;
-        const out = ctx.createGain();
-        out.gain.setValueAtTime(0, when);
-        out.gain.linearRampToValueAtTime(0.32, when + 0.004);
-        out.gain.exponentialRampToValueAtTime(0.0005, when + 0.42);
-        for (const [mul, a] of [[1, 1], [2.76, 0.45], [5.4, 0.18], [8.9, 0.07]]) {
-          const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * mul;
-          const og = ctx.createGain(); og.gain.value = a;
-          o.connect(og).connect(out);
-          o.start(when); o.stop(when + 0.45);
+      for (const u of b.units) {
+        u.voice.set(c.x + u.off, c.y + 2.5, c.z + u.off * 0.6);
+        u.voice.update(this.L, t, this.jump);
+        // strikes are scheduled into the voice input, so they inherit its delay (Doppler) and panning
+        while (u.next < t + 0.15) {
+          const s = ctx.createBufferSource();
+          s.buffer = u.bufs[u.n % 2];
+          s.playbackRate.value = 1 + (Math.random() - 0.5) * 0.002;
+          const g = ctx.createGain(); g.gain.value = 0.32;
+          s.connect(g).connect(u.voice.input);
+          s.start(Math.max(t, u.next));
+          u.next += u.period;
+          u.n++;
         }
-        out.connect(b.voice.input);
-        b.next += 0.36;
-        b.n++;
       }
     }
     for (const [id, b] of this.bells) {
-      if (!seen.has(id)) { const v = b.voice; setTimeout(() => v.dispose(), 4000); this.bells.delete(id); }
+      if (!seen.has(id)) { for (const u of b.units) { const v = u.voice; setTimeout(() => v.dispose(), 4000); } this.bells.delete(id); }
     }
   }
 
   /** passing trains are now real spatial sources (addTrain); kept as a no-op for old callers */
   passBy() {}
+}
+
+/** small seeded PRNG for repeatable sound variations */
+function mulberry(a) {
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
