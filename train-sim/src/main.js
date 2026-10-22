@@ -42,8 +42,8 @@ const GradeShader = {
       gl_FragColor = vec4(c, 1.0);
     }`,
 };
-let gradePass = null;
-import { Route } from './route.js';
+let gradePass = null, bloomPass = null;
+import { Route, PLATFORM_LEN } from './route.js';
 import { VEHICLES, DEFAULT_VEHICLE, CAR_LEN, BOGIE_C } from './vehicles.js';
 import { World } from './world/world.js';
 import { TrainSet } from './trainmodel.js';
@@ -55,6 +55,10 @@ import { MELODY_CLIPS } from './audio/melody-cues.js';
 import { buildTimetable, fmtTime } from './timetable.js';
 import { SERVICES, DEFAULT_SERVICE } from './services.js';
 import { TrackView } from './trackview.js';
+import { atmosphere, TIME_SHIFT } from './world/atmosphere.js';
+import { Rain, Windscreen } from './world/rain.js';
+// time of day / weather: the preset in use, rain streaks, windscreen drops, our headlight, platform lamps
+let atmo = null, rain = null, screen = null, headLight = null, cabFill = null, pfLamps = null, slipShown = 0;
 import { SignalSystem, LeadTrain, ASPECT_SPEED } from './signals.js';
 // block signals and the train running a few minutes ahead of us
 let signals = null, lead = null, leadSet = null, leadVoice = null, nextSig = null;
@@ -84,7 +88,7 @@ let renderer, scene, camera, sun, hemi, composer = null, aoPass = null;
 let world = null, player = null, physics = null, game = null, traffic = null;
 // the line as seen in the running direction (下り or 上り); physics / game positions are in its coordinates
 let view = null;
-let cab = null, mascon = null, cabLcd = null;
+let cab = null, mascon = null, cabLcd = null, cabParts = null;
 let carIdx = 1, carLights = null;     // passenger view: which car, and its saloon lights
 // driver's eye (ref2/cab spec: high cab, eye 2.965 m above rail), car-local three.js coords
 const EYE = { x: 8.32, y: 2.965, z: -0.85, pitch: -0.07 };
@@ -108,7 +112,11 @@ const settings = {
   vvvf: store.get('vvvf', 'new'),
   service: store.get('service', DEFAULT_SERVICE),
   dir: store.get('dir', 'down'),
+  tod: store.get('tod', 'day'),
+  weather: store.get('weather', 'clear'),
 };
+if (!['day', 'evening', 'night'].includes(settings.tod)) settings.tod = 'day';
+if (!['clear', 'rain'].includes(settings.weather)) settings.weather = 'clear';
 if (settings.dir !== 'up') settings.dir = 'down';
 if (!SERVICES[settings.service]) settings.service = DEFAULT_SERVICE;
 if (!VEHICLES[settings.vehicle]) settings.vehicle = DEFAULT_VEHICLE;
@@ -162,7 +170,7 @@ function initRenderer() {
 
 /** post-processing chain for the chosen quality: HDR + MSAA, (GTAO), bloom, tone mapping */
 function setupComposer(q) {
-  if (composer) { composer.dispose(); composer = null; aoPass = null; gradePass = null; }
+  if (composer) { composer.dispose(); composer = null; aoPass = null; gradePass = null; bloomPass = null; }
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setPixelRatio(q === 'low' ? 1 : Math.min(window.devicePixelRatio, 1.5));
   sun.shadow.mapSize.set(q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024, q === 'ultra' ? 4096 : q === 'high' ? 2048 : 1024);
@@ -178,7 +186,8 @@ function setupComposer(q) {
     aoPass.blendIntensity = 0.85;
     composer.addPass(aoPass);
   }
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.22, 0.5, 0.92));
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), atmo ? atmo.bloom : 0.22, 0.5, 0.92);
+  composer.addPass(bloomPass);
   composer.addPass(new OutputPass());
   gradePass = new ShaderPass(GradeShader);
   composer.addPass(gradePass);
@@ -244,6 +253,10 @@ function buildMenu() {
   svcSel.innerHTML = Object.values(SERVICES).map((x) => `<option value="${x.id}">${x.name}${x.original ? '（ゲームオリジナル）' : ''}</option>`).join('');
   svcSel.value = settings.service;
   svcSel.addEventListener('change', () => { settings.service = svcSel.value; store.set('service', settings.service); updateFormationNote(); });
+  const todSel = $('todSel'), wxSel = $('wxSel');
+  todSel.value = settings.tod; wxSel.value = settings.weather;
+  todSel.addEventListener('change', () => { settings.tod = todSel.value; store.set('tod', settings.tod); });
+  wxSel.addEventListener('change', () => { settings.weather = wxSel.value; store.set('weather', settings.weather); });
   const vvvfSel = $('vvvfSel');
   vvvfSel.value = settings.vvvf;
   vvvfSel.addEventListener('change', () => { settings.vvvf = vvvfSel.value; store.set('vvvf', settings.vvvf); });
@@ -372,13 +385,19 @@ async function startGame() {
 
   if (world) { teardown(); }
   view = new TrackView(route, settings.dir);
-  world = new World(renderer, scene, route, gltfs.env, settings.quality);
+  atmo = atmosphere(settings.tod, settings.weather);
+  world = new World(renderer, scene, route, gltfs.env, settings.quality, atmo);
+  applyLights(atmo);
   world.dir = view.sign;
   const service = SERVICES[settings.service];
   const tt = buildTimetable(view, veh, formation.length, settings.from, settings.to, service);
+  // evening / night runs leave later in the day (same running times)
+  const shift = TIME_SHIFT[settings.tod] || 0;
+  for (const r of tt) { if (r.arr != null) r.arr += shift; if (r.dep != null) r.dep += shift; }
   announcer.destName = tt[tt.length - 1].station.name;
   announcer.serviceName = service.short === '快速' ? '快速ラビット' : service.name;
   physics = new TrainPhysics(veh, formation.length);
+  physics.adhesion = atmo.rain ? 0.58 : 1;
   player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', info: true, service, forward: !view.up });
   scene.add(player.group);
   // the passenger view rides in the first motor car
@@ -395,17 +414,24 @@ async function startGame() {
   sound.setTrain(formation, veh);
   AXLES = axleOffsets(formation.length);
   // cab interior on the leading car
-  cab = gltfs.cab.scene.clone(true);
+  // per-series cab: cab_<key> roots in cab_interior.glb (E231 / E233 one-handle LCD desks, 211 / 115 two-handle)
+  const cabKey = { e231: 'e231', e233: 'e233', s211: '211', s115: '115' }[veh.id] || 'e231';
+  cab = (gltfs.cab.scene.getObjectByName('cab_' + cabKey) || gltfs.cab.scene).clone(true);
+  cab.position.set(0, 0, 0);
   // the cab has its own roof: let it cast/receive sun shadows (sun patches through the windscreen)
   cab.traverse((o) => { if (o.isMesh) { o.castShadow = !(o.material && o.material.name && o.material.name.startsWith('LCD_')); o.receiveShadow = true; } });
   // soft fill under the ceiling (the cab otherwise only gets sky light through the glass)
-  const cabFill = new THREE.PointLight(0xf4f1ea, 0.9, 4.5, 1.5);
+  cabFill = new THREE.PointLight(0xf4f1ea, 0.9, 4.5, 1.5);
   cabFill.position.set(8.6, 3.25, 0);
   cab.add(cabFill);
-  mascon = cab.getObjectByName('mascon_handle');
+  cabParts = findCabParts(cab);
+  mascon = cabParts.mascon;
+  if (cabParts.eye) Object.assign(EYE, cabParts.eye);
   if (cabLcd) cabLcd.dispose();
   cabLcd = new CabDisplays(cab);
   player.cars[0].userData.inner.add(cab);
+  cabFill.intensity = 0.9 * atmo.cabFill;
+  setupWeatherObjects();
   hud.setup(veh, tt);
   game = new Game({ route: view, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from, service, up: view.up });
   traffic = new Traffic();
@@ -415,6 +441,7 @@ async function startGame() {
   for (let t = tt[0].dep - lead.headwayStart; t < game.clock; t += 0.5) lead.update(0.5, t);
   leadSet = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', forward: !view.up });
   scene.add(leadSet.group);
+  trainNight(leadSet);
   leadVoice = sound.addTrain(veh, formation.length);
   world.preload(view.toRoute(physics.s));
   setCamMode('cab');
@@ -427,6 +454,105 @@ async function startGame() {
   resultShown = false;
 }
 
+// ---------------------------------------------------------------------------
+// time of day / weather
+// ---------------------------------------------------------------------------
+function applyLights(A) {
+  sun.color.set(A.sun.color);
+  sun.intensity = A.sun.intensity;
+  sun.castShadow = settings.shadows && A.sun.shadows;
+  hemi.color.set(A.hemi.sky); hemi.groundColor.set(A.hemi.ground); hemi.intensity = A.hemi.intensity;
+  renderer.toneMappingExposure = A.exposure;
+  if (bloomPass) bloomPass.strength = A.bloom;
+}
+
+/** saloon lights after dark: the interior surfaces glow as if lit (cheap stand-in for dozens of lamps) */
+const INTERIOR_MAT = /^(int_wall|int_ceiling|int_floor|seat_|strap|headrest|seat_partition|roller_blind)/;
+function trainNight(set) {
+  const k = atmo ? atmo.night : 0;
+  set.group.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (!m || !m.name || !INTERIOR_MAT.test(m.name) || !m.emissive) continue;
+      // materials are shared between trains (and games): remember the daylight state once
+      if (!m.userData.dayEmissive) m.userData.dayEmissive = { c: m.emissive.clone(), map: m.emissiveMap, i: m.emissiveIntensity };
+      const d = m.userData.dayEmissive;
+      if (k > 0) {
+        if (m.emissiveMap !== (m.map || null)) { m.emissiveMap = m.map || null; m.needsUpdate = true; }
+        m.emissive.copy(m.color); m.emissiveIntensity = 0.8 * k;
+      } else {
+        if (m.emissiveMap !== d.map) { m.emissiveMap = d.map; m.needsUpdate = true; }
+        m.emissive.copy(d.c); m.emissiveIntensity = d.i;
+      }
+    }
+  });
+}
+
+function setupWeatherObjects() {
+  disposeWeatherObjects();
+  const inner = player.cars[0].userData.inner;
+  if (atmo.headlight > 0) {
+    // our own headlights: they light the track ahead after dark
+    headLight = new THREE.SpotLight(0xf2f5ff, 2600 * atmo.headlight, 450, 0.17, 0.6, 1.4);
+    headLight.position.set(9.95, 1.35, 0);
+    headLight.target.position.set(90, -0.6, 0);
+    inner.add(headLight, headLight.target);
+  }
+  if (atmo.night > 0.3) {
+    pfLamps = [0, 1, 2, 3].map(() => { const l = new THREE.PointLight(0xfff0d8, 0, 36, 1.3); scene.add(l); return l; });
+  }
+  if (atmo.rain) {
+    rain = new Rain(scene, { count: settings.quality === 'low' ? 5000 : 9000, night: atmo.night });
+    screen = new Windscreen(inner);
+    screen.onWipe = () => sound.wiper();
+  }
+  sound.setRain(atmo.rain ? 0.8 : 0);
+  trainNight(player);
+}
+
+function disposeWeatherObjects() {
+  if (headLight) { headLight.target.removeFromParent(); headLight.removeFromParent(); headLight.dispose(); headLight = null; }
+  if (pfLamps) { for (const l of pfLamps) { l.removeFromParent(); l.dispose(); } pfLamps = null; }
+  if (rain) { rain.dispose(); rain = null; }
+  if (screen) { screen.dispose(); screen = null; }
+  sound.setRain(0);
+}
+
+const _lastCam = new THREE.Vector3(), _camVel = new THREE.Vector3(), _axis = new THREE.Vector2();
+let _lastCamOk = false;
+function updateWeather(dt, cp) {
+  if (_lastCamOk && dt > 0) {
+    _camVel.subVectors(cp, _lastCam).divideScalar(dt);
+    if (_camVel.length() > 70) _camVel.set(0, 0, 0);     // a camera cut, not motion
+  }
+  _lastCam.copy(cp); _lastCamOk = true;
+  if (rain) {
+    let dry = null;
+    if (camMode === 'cab' || camMode === 'car') {
+      const p = view.pose(physics.s, 0, {});
+      _axis.set(p.dx, p.dz).normalize();
+      dry = camMode === 'cab' ? { axis: _axis, along: [-25, 1.15], lat: 1.55 } : { axis: _axis, along: [-14, 14], lat: 1.55 };
+    }
+    rain.update(dt, cp, _camVel, dry);
+  }
+  if (screen) {
+    screen.mesh.visible = camMode === 'cab';
+    screen.update(dt, 0.8, physics.kmh, atmo.night);
+  }
+  if (pfLamps) {
+    // fluorescent lamps along the platform the train is at
+    const fr = view.toRoute(physics.s);
+    const st = route.stations.find((x) => fr > x.s - PLATFORM_LEN - 150 && fr < x.s + 150);
+    pfLamps.forEach((l, i) => {
+      if (!st) { l.intensity = 0; return; }
+      const s = Math.min(st.s, Math.max(st.s - PLATFORM_LEN, fr + (i - 1.5) * 38 - view.sign * 60));
+      const p = route.pose(s, 0, {});
+      l.position.set(p.x, p.y + 5.6, p.z);
+      l.intensity = 90 * atmo.night;
+    });
+  }
+}
+
 function modelKey(veh) { return { e231: 'e231', e233: 'e233', s211: '211', s115: '115' }[veh.id]; }
 
 function teardown() {
@@ -436,6 +562,7 @@ function teardown() {
   if (leadSet) { leadSet.dispose(); leadSet = null; }
   if (leadVoice) { leadVoice.dispose(); leadVoice = null; }
   lead = null;
+  disposeWeatherObjects();
   if (world) world.dispose();
   announcer.stop(true);
   melody.stopClip(true);
@@ -483,6 +610,7 @@ class Traffic {
     const set = new TrainSet(gltfs[pick].scene, veh, formation, opts);
     if (opts.recolor) recolorKeihin(set);
     scene.add(set.group);
+    trainNight(set);
     // (the 京浜東北線 runs both ways on its own pair of tracks; main-line traffic uses the track we are not on)
     const track = kind === 'keihin' ? (x) => route.extraTracks(x)[1] ?? route.upOffset(x) - 8.8 : view.up ? () => 0 : (x) => route.upOffset(x);
     const voice = sound.addTrain(kind === 'keihin' ? VEHICLES.e233 : veh, formation.length);
@@ -512,9 +640,9 @@ class Traffic {
         for (const off of t.axles) {
           const a = prev - t.dirReal * off, b = t.s - t.dirReal * off;
           if (Math.floor(a / 25) !== Math.floor(b / 25)) {
-            const sj = Math.floor(a / 25) * 25;
+            const sj = Math.max(Math.floor(a / 25), Math.floor(b / 25)) * 25;
             const p = route.pose(sj, t.track(sj), this.pose);
-            sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, t.v * 3.6, false);
+            sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, t.v * 3.6, false, Math.abs(b - sj) / Math.max(t.v, 0.5));
           }
         }
       }
@@ -853,6 +981,10 @@ function simStep(dt) {
   if (physics.ats.braking !== atsWasBraking) { sound.atsBell(physics.ats.braking); atsWasBraking = physics.ats.braking; }
   physics.grade = view.grade(physics.s - physics.len / 2);
   for (let i = 0; i < n; i++) physics.step(dt / n);
+  if ((physics.slip > 0.35 || physics.slide > 0.35) && performance.now() - slipShown > 2500) {
+    slipShown = performance.now();
+    hud.message(physics.slip > physics.slide ? '空転 <small>雨でレールが滑りやすい</small>' : '滑走 <small>ブレーキを緩めて</small>', 'info', 1.4);
+  }
   game.update(dt);
 
   // rail joint sounds under every axle (every 25 m, plus turnouts at station throats),
@@ -868,7 +1000,7 @@ function simStep(dt) {
         if (Math.abs(b - ls) < 600) {
           const sj = joint ? Math.floor(b / 25) * 25 : b;
           const p = view.pose(sj, 0, _jp);
-          sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, physics.kmh, true);
+          sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, physics.kmh, true, (b - sj) / Math.max(physics.v, 0.5));
         }
         if ((camMode === 'cab' || camMode === 'car') && off > bobLo && off < bobHi) bob.v -= 0.012 * Math.min(1, physics.kmh / 80);
       }
@@ -918,15 +1050,50 @@ function updateSound() {
   sound.ambience({ station: near * busy * (physics.kmh < 30 ? 1 : 0.4), rural: area === 'rural' ? 1 : area === 'suburb' ? 0.4 : 0.12 });
 }
 
+/** handles, gauge needles and the eye point of a cab (names from blender/build_models.py make_cab) */
+function findCabParts(root) {
+  const parts = { mascon: null, brake: null, needles: [], eye: null };
+  root.traverse((o) => {
+    const n = o.name || '';
+    if (n.startsWith('mascon_handle')) parts.mascon = o;
+    else if (n.startsWith('brake_handle')) parts.brake = o;
+    else if (n.startsWith('needle_')) { o.userData.q0 = o.quaternion.clone(); o.userData.kind = n.split('_')[1]; parts.needles.push(o); }
+    else if (n.startsWith('eye_')) parts.eye = { x: o.position.x, y: o.position.y, z: o.position.z };
+  });
+  return parts;
+}
+
+const _needleQ = new THREE.Quaternion(), _needleZ = new THREE.Vector3(0, 0, 1);
+function animateCab(parts) {
+  const h = physics.handle, v = physics.veh;
+  if (parts.brake) {
+    // two-handle cab: master controller and brake valve turn about vertical axes (clockwise = power,
+    // counter-clockwise = brake, 運転 -> 非常 ≈ 100°)
+    if (parts.mascon) parts.mascon.rotation.y = -(Math.max(0, h) / v.powerNotches) * 1.40;
+    parts.brake.rotation.y = (Math.max(0, -h) / (v.brakeNotches + 1)) * 1.75;
+  } else if (parts.mascon) {
+    // one-handle T grip: pull toward the driver for power (up to +45°), push forward to brake / EB (−50°)
+    parts.mascon.rotation.z = h >= 0 ? (h / v.powerNotches) * 0.785 : (h / (v.brakeNotches + 1)) * 0.873;
+  }
+  if (!parts.needles.length || camMode !== 'cab') return;
+  // air pressures (kPa) as on the LCD meter; dials: 0-120 km/h, 0-1000 kPa, 270° sweep from 7:30
+  const bc = Math.min(800, physics.brake * 440 + (physics.ebActive ? 120 : 0));
+  const mr = 830 + 40 * Math.sin(performance.now() / 9000);
+  const bp = Math.max(0, 490 - bc * 0.39);
+  const val = { speed: physics.kmh / 120, bc: bc / 1000, mr: mr / 1000, er: bp / 1000, bp: bp / 1000, amp: 0.08 + physics.power * 0.6 };
+  for (const o of parts.needles) {
+    const f = Math.max(0, Math.min(1.02, val[o.userData.kind] ?? 0));
+    const k = o.userData.f === undefined ? f : o.userData.f + (f - o.userData.f) * 0.25;   // needle damping
+    o.userData.f = k;
+    o.quaternion.copy(o.userData.q0).multiply(_needleQ.setFromAxisAngle(_needleZ, -(-135 + 270 * k) * Math.PI / 180));
+  }
+}
+
 /** scene, camera and HUD for the current state */
 function updateView(dt) {
   player.place(route, view.toRoute(physics.s), (x) => view.trackOffset(x), 0.0025 * Math.min(1, physics.kmh / 80));
   world.update(view.toRoute(physics.s), 1);
-  if (mascon) {
-    // one-handle T grip: pull toward the driver for power (up to +45°), push forward to brake / EB (−50°)
-    const h = physics.handle, v = physics.veh;
-    mascon.rotation.z = h >= 0 ? (h / v.powerNotches) * 0.785 : (h / (v.brakeNotches + 1)) * 0.873;
-  }
+  if (cabParts) animateCab(cabParts);
   if (cabLcd && camMode === 'cab') cabLcd.update(dt, { physics, game, route: view });
   player.setSideLamps(!!physics.doorsOpen);
   player.setDoors(game.doorSide, physics.doorsOpen === true);
@@ -944,6 +1111,7 @@ function updateView(dt) {
   const cp = new THREE.Vector3();
   camera.getWorldPosition(cp);
   world.updateFixed(cp, view.toRoute(physics.s));
+  updateWeather(dt, cp);
   const trains = [{ front: view.toRoute(physics.s), len: physics.len, dir: view.sign }];
   if (lead && !lead.done && leadSet) {
     leadSet.place(route, view.toRoute(lead.x), (x) => view.trackOffset(x), 0.002);
@@ -1025,7 +1193,7 @@ boot();
 // debugging handle (used by automated tests)
 window.__sim = {
   get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; }, get traffic() { return traffic; }, get signals() { return signals; }, get lead() { return lead; },
-  setCamMode, route, sound, announcer, melody, simStep, updateView,
+  setCamMode, route, sound, announcer, melody, simStep, updateView, THREE,
   get renderer() { return renderer; }, get scene() { return scene; }, get camera() { return camera; }, draw,
   /** fast-forward the logic by `sec` seconds in fixed steps (no rendering) */
   advance(sec, dt = 0.05, each) { for (let t = 0; t < sec && !game.finished; t += dt) { if (each) each(); simStep(dt); } updateView(0.016); },
