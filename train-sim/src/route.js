@@ -1,31 +1,43 @@
 // 宇都宮線 (上野 → 宇都宮) route data and track alignment.
 // s = distance along the down (northbound) track in metres, 0 = 上野 stop position.
+// The alignment (curves, station positions, bridges) follows the real line: see route-data.js
+// (© OpenStreetMap contributors, ODbL 1.0; elevation 出典: 国土地理院 標高タイル).
+import { ALIGN, OSM_STATIONS, OSM_CURVES } from './route-data.js';
 
-export const STATIONS = [
-  { name: '上野', kana: 'うえの', en: 'Ueno', s: 0, area: 'city' },
-  { name: '尾久', kana: 'おく', en: 'Oku', s: 4800, area: 'city' },
-  { name: '赤羽', kana: 'あかばね', en: 'Akabane', s: 12400, area: 'city' },
-  { name: '浦和', kana: 'うらわ', en: 'Urawa', s: 23400, area: 'city' },
-  { name: 'さいたま新都心', kana: 'さいたましんとしん', en: 'Saitama-Shintoshin', s: 27900, area: 'city' },
-  { name: '大宮', kana: 'おおみや', en: 'Ōmiya', s: 29500, area: 'city', dwell: 50 },
-  { name: '土呂', kana: 'とろ', en: 'Toro', s: 32500, area: 'suburb' },
-  { name: '東大宮', kana: 'ひがしおおみや', en: 'Higashi-Ōmiya', s: 34600, area: 'suburb' },
-  { name: '蓮田', kana: 'はすだ', en: 'Hasuda', s: 38400, area: 'suburb' },
-  { name: '白岡', kana: 'しらおか', en: 'Shiraoka', s: 42700, area: 'suburb' },
-  { name: '新白岡', kana: 'しんしらおか', en: 'Shin-Shiraoka', s: 45200, area: 'suburb' },
-  { name: '久喜', kana: 'くき', en: 'Kuki', s: 48100, area: 'suburb' },
-  { name: '東鷲宮', kana: 'ひがしわしのみや', en: 'Higashi-Washinomiya', s: 51100, area: 'rural' },
-  { name: '栗橋', kana: 'くりはし', en: 'Kurihashi', s: 56400, area: 'rural' },
-  { name: '古河', kana: 'こが', en: 'Koga', s: 63900, area: 'suburb' },
-  { name: '野木', kana: 'のぎ', en: 'Nogi', s: 68200, area: 'rural' },
-  { name: '間々田', kana: 'ままだ', en: 'Mamada', s: 73800, area: 'rural' },
-  { name: '小山', kana: 'おやま', en: 'Oyama', s: 79800, area: 'city', dwell: 50 },
-  { name: '小金井', kana: 'こがねい', en: 'Koganei', s: 87300, area: 'rural' },
-  { name: '自治医大', kana: 'じちいだい', en: 'Jichi Medical Univ.', s: 89900, area: 'rural' },
-  { name: '石橋', kana: 'いしばし', en: 'Ishibashi', s: 94600, area: 'rural' },
-  { name: '雀宮', kana: 'すずめのみや', en: 'Suzumenomiya', s: 101000, area: 'suburb' },
-  { name: '宇都宮', kana: 'うつのみや', en: 'Utsunomiya', s: 108700, area: 'city' },
+const STATION_INFO = [
+  { name: '上野', kana: 'うえの', en: 'Ueno', area: 'city' },
+  { name: '尾久', kana: 'おく', en: 'Oku', area: 'city' },
+  { name: '赤羽', kana: 'あかばね', en: 'Akabane', area: 'city' },
+  { name: '浦和', kana: 'うらわ', en: 'Urawa', area: 'city' },
+  { name: 'さいたま新都心', kana: 'さいたましんとしん', en: 'Saitama-Shintoshin', area: 'city' },
+  { name: '大宮', kana: 'おおみや', en: 'Ōmiya', area: 'city', dwell: 50 },
+  { name: '土呂', kana: 'とろ', en: 'Toro', area: 'suburb' },
+  { name: '東大宮', kana: 'ひがしおおみや', en: 'Higashi-Ōmiya', area: 'suburb' },
+  { name: '蓮田', kana: 'はすだ', en: 'Hasuda', area: 'suburb' },
+  { name: '白岡', kana: 'しらおか', en: 'Shiraoka', area: 'suburb' },
+  { name: '新白岡', kana: 'しんしらおか', en: 'Shin-Shiraoka', area: 'suburb' },
+  { name: '久喜', kana: 'くき', en: 'Kuki', area: 'suburb' },
+  { name: '東鷲宮', kana: 'ひがしわしのみや', en: 'Higashi-Washinomiya', area: 'rural' },
+  { name: '栗橋', kana: 'くりはし', en: 'Kurihashi', area: 'rural' },
+  { name: '古河', kana: 'こが', en: 'Koga', area: 'suburb' },
+  { name: '野木', kana: 'のぎ', en: 'Nogi', area: 'rural' },
+  { name: '間々田', kana: 'ままだ', en: 'Mamada', area: 'rural' },
+  { name: '小山', kana: 'おやま', en: 'Oyama', area: 'city', dwell: 50 },
+  { name: '小金井', kana: 'こがねい', en: 'Koganei', area: 'rural' },
+  { name: '自治医大', kana: 'じちいだい', en: 'Jichi Medical Univ.', area: 'rural' },
+  { name: '石橋', kana: 'いしばし', en: 'Ishibashi', area: 'rural' },
+  { name: '雀宮', kana: 'すずめのみや', en: 'Suzumenomiya', area: 'suburb' },
+  { name: '宇都宮', kana: 'うつのみや', en: 'Utsunomiya', area: 'city' },
 ];
+
+// stop position of the train front = the north end of the platform (10 m short of it);
+// where OSM has no platform outline, the stop node (mid-platform) + 140 m
+export const STATIONS = STATION_INFO.map((st) => {
+  const o = OSM_STATIONS.find((x) => x.name === st.name);
+  const s = st.name === '上野' ? 0 : o.pf_s1 != null ? o.pf_s1 - 10 : o.s + 140;
+  return { ...st, s: Math.round(s) };
+});
+const ST = Object.fromEntries(STATIONS.map((x) => [x.name, x.s]));
 
 // Platform side for the doors (left/right as seen facing north).
 // Taken from the "お出口は○側です" parts of the in-car announcements.
@@ -36,18 +48,19 @@ export const DOOR_SIDE = {
   小金井: 'right', 自治医大: 'right', 石橋: 'left', 雀宮: 'left', 宇都宮: 'left',
 };
 
-// River crossings: [s0, s1] = levee to levee (floodplain), [w0, w1] = water channel.
+// River crossings: [s0, s1] = levee to levee (floodplain), [w0, w1] = water channel
+// (positions from the OSM bridges and the ground profile; the line runs beside the 思川, it does not cross it)
 export const RIVERS = [
-  { name: '荒川', s0: 13250, s1: 14150, w0: 13480, w1: 13880, h: 8.0, truss: true },
-  { name: '利根川', s0: 57150, s1: 58750, w0: 57600, w1: 58250, h: 8.0, truss: true },
-  { name: '渡良瀬川', s0: 59700, s1: 60400, w0: 59900, w1: 60180, h: 7.0, truss: true },
-  { name: '思川', s0: 76200, s1: 76850, w0: 76420, w1: 76590, h: 6.5, truss: false },
-  { name: '田川', s0: 106950, s1: 107180, w0: 107040, w1: 107090, h: 3.5, truss: false },
+  { name: '荒川', s0: 10850, s1: 11580, w0: 11000, w1: 11420, h: 8.0, truss: true },
+  { name: '利根川', s0: 55900, s1: 56500, w0: 56020, w1: 56400, h: 8.0, truss: true },
+  { name: '渡良瀬川', s0: 60140, s1: 60900, w0: 60280, w1: 60650, h: 7.0, truss: true },
+  { name: '田川', s0: 104620, s1: 104960, w0: 104740, w1: 104810, h: 3.5, truss: false },
 ];
-// Elevated sections (高架)
+// Elevated sections (高架): 赤羽 (with the 新河岸川 bridge), 浦和, 古河
 export const VIADUCTS = [
-  { name: '赤羽', s0: 10900, s1: 13300, h: 8.5 },
-  { name: '浦和', s0: 21900, s1: 24800, h: 7.5 },
+  { name: '赤羽', s0: 8550, s1: 10320, h: 8.5 },
+  { name: '浦和', s0: 20100, s1: 21500, h: 7.5 },
+  { name: '古河', s0: 60900, s1: 62950, h: 7.5 },
 ];
 
 export const PLATFORM_LEN = 320; // 15 cars + margin
@@ -57,7 +70,7 @@ export const SIDE_PF_W = 6.0;
 export const PF_EDGE = 1.55;
 
 const S_MIN = -1500;
-const S_MAX = 110500;
+const S_MAX = Math.floor(ALIGN.s0 + (ALIGN.n - 1) * ALIGN.ds) - 2;
 
 // --- deterministic RNG -------------------------------------------------------
 export function mulberry32(a) {
@@ -72,79 +85,37 @@ export function mulberry32(a) {
 const smooth = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 
 // --- alignment -----------------------------------------------------------------
-// Curves are generated once from a fixed seed so the route is always the same.
-function buildCurves() {
-  const rnd = mulberry32(1872);
-  const curves = [];
-  const radii = [600, 800, 1000, 1200, 1600, 2000, 3000];
-  let heading = 0; // radians, 0 = north. positive = turned left (west)
-  for (let i = 0; i < STATIONS.length - 1; i++) {
-    const a = STATIONS[i].s + 450;
-    const b = STATIONS[i + 1].s - PLATFORM_LEN - 350;
-    let s = a;
-    while (s < b - 400) {
-      const gap = 300 + rnd() * 1800;
-      s += gap;
-      let R = radii[Math.floor(rnd() * radii.length)];
-      if (i < 2 && R > 1000) R = 600 + rnd() * 400; // tight curves near Ueno
-      const ang = (6 + rnd() * 26) * (Math.PI / 180);
-      const trans = 50 + Math.min(130, R / 12);
-      const arc = R * ang;
-      const len = arc + trans;
-      if (s + len > b) break;
-      // keep bridges and elevated stations straight
-      if (RIVERS.some((r) => s < r.s1 + 300 && s + len > r.s0 - 300) || VIADUCTS.some((v) => s < v.s1 && s + len > v.s0)) { s += len; continue; }
-      // steer back toward north/north-north-east
-      const target = -0.25; // slightly east of north overall
-      let dir = heading > target ? -1 : 1;
-      if (rnd() < 0.3) dir = -dir;
-      curves.push({ s0: s, trans, arc, R, dir });
-      heading += dir * ang;
-      s += len;
-    }
-  }
-  return curves;
+/** OSM curve list in the shape the limits / scenery expect */
+function realCurves() {
+  return OSM_CURVES.map((c) => ({ s0: c.s0, sEnd: c.s1, R: c.R, dir: c.dir }));
 }
 
 export class Route {
   constructor() {
     this.stations = STATIONS.map((st, i) => ({ ...st, index: i, door: DOOR_SIDE[st.name] || 'left' }));
-    this.curves = buildCurves();
+    this.curves = realCurves();
     const n = S_MAX - S_MIN + 1;
     this.n = n;
     this.kappa = new Float32Array(n);
-    for (const c of this.curves) {
-      const k = c.dir / c.R;
-      const s0 = Math.round(c.s0 - S_MIN);
-      const t = Math.round(c.trans);
-      const body = Math.round(c.arc - c.trans);
-      // trans-in, body, trans-out (clothoid-ish via linear curvature ramps)
-      for (let j = 0; j < t; j++) this.kappa[s0 + j] = k * (j / t);
-      for (let j = 0; j < Math.max(0, body); j++) this.kappa[s0 + t + j] = k;
-      for (let j = 0; j < t; j++) this.kappa[s0 + t + Math.max(0, body) + j] = k * (1 - j / t);
-      c.sEnd = c.s0 + 2 * t + Math.max(0, body);
-    }
-    // integrate (heading 0 = -Z / north in three.js)
     this.x = new Float64Array(n);
     this.z = new Float64Array(n);
     this.th = new Float64Array(n);
-    let x = 0, z = 0, th = 0;
-    // integrate from s=0 outwards so that 上野 sits at the origin
-    const i0 = -S_MIN;
-    this.x[i0] = 0; this.z[i0] = 0; this.th[i0] = 0;
-    for (let i = i0 + 1; i < n; i++) {
-      th += this.kappa[i - 1];
-      x += -Math.sin(th);
-      z += -Math.cos(th);
-      this.x[i] = x; this.z[i] = z; this.th[i] = th;
+    // cubic Hermite between the 10 m samples: positions exact at the samples, tangents from the heading
+    const A = ALIGN, ds = A.ds;
+    for (let i = 0; i < n; i++) {
+      const s = S_MIN + i;
+      const f = (s - A.s0) / ds;
+      const j = Math.max(0, Math.min(A.n - 2, Math.floor(f)));
+      const u = Math.min(1, Math.max(0, f - j));
+      const h00 = 2 * u ** 3 - 3 * u ** 2 + 1, h10 = u ** 3 - 2 * u ** 2 + u, h01 = -2 * u ** 3 + 3 * u ** 2, h11 = u ** 3 - u ** 2;
+      const t0 = A.th[j], t1 = A.th[j + 1];
+      this.x[i] = h00 * A.x[j] + h10 * ds * -Math.sin(t0) + h01 * A.x[j + 1] + h11 * ds * -Math.sin(t1);
+      this.z[i] = h00 * A.z[j] + h10 * ds * -Math.cos(t0) + h01 * A.z[j + 1] + h11 * ds * -Math.cos(t1);
+      this.th[i] = t0 + (t1 - t0) * u;
+      this.kappa[i] = (A.k[j] + (A.k[j + 1] - A.k[j]) * u) * 1e-6;
     }
-    x = 0; z = 0; th = 0;
-    for (let i = i0 - 1; i >= 0; i--) {
-      th -= this.kappa[i];
-      x -= -Math.sin(th);
-      z -= -Math.cos(th);
-      this.x[i] = x; this.z[i] = z; this.th[i] = th;
-    }
+    // real height above sea level (for the gradient the train climbs), per 10 m
+    this.realElev = Float32Array.from(A.e);
     this.buildLimits();
     this.buildElevation();
   }
@@ -176,8 +147,16 @@ export class Route {
     return this.elevTable[i] + (this.elevTable[i + 1] - this.elevTable[i]) * t;
   }
 
-  /** gradient (rise per metre) */
-  grade(s) { return (this.elev(s + 5) - this.elev(s - 5)) / 10; }
+  /** real height above sea level at s (m), from the GSI elevation along the line */
+  heightAt(s) {
+    const f = (s - ALIGN.s0) / ALIGN.ds;
+    const i = Math.max(0, Math.min(ALIGN.n - 2, Math.floor(f)));
+    const t = Math.min(1, Math.max(0, f - i));
+    return this.realElev[i] + (this.realElev[i + 1] - this.realElev[i]) * t;
+  }
+
+  /** gradient the train climbs (rise per metre): the real profile, averaged over 100 m */
+  grade(s) { return (this.heightAt(s + 50) - this.heightAt(s - 50)) / 100; }
 
   /** what carries the track at s */
   structureAt(s) {
@@ -246,7 +225,7 @@ export class Route {
 
   /** extra parallel lines (京浜東北線 etc.) south of 大宮 */
   extraTracks(s) {
-    if (s > 30300 || s < -1400) return [];
+    if (s > ST['大宮'] + 800 || s < -1400) return [];
     let base = this.upOffset(s);
     // leave room for the up-side platform at stations with left doors
     for (const st of this.stations) {
@@ -262,13 +241,16 @@ export class Route {
     // piecewise speed limits {s0, s1, v}
     const L = [];
     L.push({ s0: -1500, s1: 650, v: 45, why: '構内' });
-    L.push({ s0: 650, s1: 12900, v: 95 });
-    L.push({ s0: 28700, s1: 30200, v: 85, why: '大宮構内' });
-    L.push({ s0: 79000, s1: 80300, v: 95, why: '小山構内' });
-    L.push({ s0: 107600, s1: 110500, v: 70, why: '宇都宮構内' });
+    L.push({ s0: 650, s1: ST['赤羽'] + 250, v: 95 });
+    L.push({ s0: ST['大宮'] - 1000, s1: ST['大宮'] + 500, v: 85, why: '大宮構内' });
+    L.push({ s0: ST['小山'] - 800, s1: ST['小山'] + 500, v: 95, why: '小山構内' });
+    L.push({ s0: ST['宇都宮'] - 1100, s1: S_MAX, v: 70, why: '宇都宮構内' });
+    // curves (real radii): the usual limits for cant-equipped curves
     for (const c of this.curves) {
       let v = 120;
-      if (c.R <= 600) v = 85;
+      if (c.R <= 350) v = 65;
+      else if (c.R <= 450) v = 75;
+      else if (c.R <= 600) v = 85;
       else if (c.R <= 800) v = 95;
       else if (c.R <= 1000) v = 105;
       else if (c.R <= 1200) v = 115;
@@ -313,9 +295,9 @@ export class Route {
   /** area density 0..1 for scenery */
   density(s) {
     let d = 0.15;
-    if (s < 30500) d = 0.85;
-    else if (s < 36000) d = 0.55;
-    else if (s > 106500) d = 0.7;
+    if (s < ST['大宮'] + 800) d = 0.85;
+    else if (s < ST['東大宮'] + 1400) d = 0.55;
+    else if (s > ST['宇都宮'] - 2200) d = 0.7;
     for (const st of this.stations) {
       const k = st.area === 'city' ? 0.75 : st.area === 'suburb' ? 0.55 : 0.35;
       const r = st.area === 'city' ? 1800 : 1100;
