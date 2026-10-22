@@ -70,6 +70,7 @@ import { loadFonts } from './displays.js';
 import { VehiclePreview } from './preview.js';
 let preview = null;
 import { Game } from './game.js';
+import { passengerMesh } from './world/people.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -413,6 +414,7 @@ async function startGame() {
   }
   carLights.visible = false;
   player.cars[carIdx].userData.inner.add(carLights);
+  rides = findRides(formation);
   sound.setTrain(formation, veh);
   AXLES = axleOffsets(formation.length);
   // cab interior on the leading car
@@ -559,7 +561,7 @@ function updateWeather(dt, cp) {
   _lastCam.copy(cp); _lastCamOk = true;
   if (rain) {
     let dry = null;
-    if (camMode === 'cab' || camMode === 'car') {
+    if (camMode === 'cab' || isRide(camMode)) {
       const p = view.pose(physics.s, 0, {});
       _axis.set(p.dx, p.dz).normalize();
       dry = camMode === 'cab' ? { axis: _axis, along: [-25, 1.15], lat: 1.55 } : { axis: _axis, along: [-14, 14], lat: 1.55 };
@@ -582,6 +584,115 @@ function updateWeather(dt, cp) {
       l.intensity = 90 * atmo.night;
     });
   }
+}
+
+/** seat cushions (horizontal faces, clustered) in a car's local frame, between heights yLo..yHi */
+function seatsIn(idx, re, yLo, yHi) {
+  const inner = player.cars[idx].userData.inner;
+  inner.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(inner.matrixWorld).invert();
+  const M = new THREE.Matrix4(), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+  const pts = [];
+  inner.traverse((o) => {
+    if (!o.isMesh || !re.test((o.material && o.material.name) || '')) return;
+    M.multiplyMatrices(inv, o.matrixWorld);
+    const pos = o.geometry.attributes.position, ix = o.geometry.index;
+    const nt = ix ? ix.count / 3 : pos.count / 3;
+    for (let i = 0; i < nt; i++) {
+      const g = (k) => (ix ? ix.getX(i * 3 + k) : i * 3 + k);
+      a.fromBufferAttribute(pos, g(0)).applyMatrix4(M); b.fromBufferAttribute(pos, g(1)).applyMatrix4(M); c.fromBufferAttribute(pos, g(2)).applyMatrix4(M);
+      n.subVectors(b, a).cross(c.clone().sub(a)).normalize();
+      const cy = (a.y + b.y + c.y) / 3;
+      if (Math.abs(n.y) > 0.95 && cy > yLo && cy < yHi) pts.push({ x: (a.x + b.x + c.x) / 3, y: cy, z: (a.z + b.z + c.z) / 3 });
+    }
+  });
+  const seats = [];
+  for (const p of pts) {
+    const s = seats.find((q) => Math.abs(q.x - p.x) < 0.25 && Math.abs(q.z - p.z) < 0.25);
+    if (s) { s.x = (s.x + p.x) / 2; s.z = (s.z + p.z) / 2; s.y = Math.max(s.y, p.y); } else seats.push({ ...p });
+  }
+  return seats;
+}
+
+/** points on the seat backs (upper part of the seat geometry) of a car, local frame */
+function seatBacks(idx, re = /^seat_(box|shell)/, yLo = 1.95, yHi = 2.5) {
+  const inner = player.cars[idx].userData.inner;
+  inner.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(inner.matrixWorld).invert();
+  const M = new THREE.Matrix4(), v = new THREE.Vector3(), out = [];
+  inner.traverse((o) => {
+    if (!o.isMesh || !re.test((o.material && o.material.name) || '')) return;
+    M.multiplyMatrices(inv, o.matrixWorld);
+    const p = o.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i).applyMatrix4(M); if (v.y > yLo && v.y < yHi) out.push({ x: v.x, z: v.z }); }
+  });
+  return out;
+}
+
+/**
+ * passenger views from the seats actually in the model:
+ *  seat:  a forward-facing window seat in a box (semi-cross) seat, or a long seat looking across
+ *  green: a window seat on the upper deck of the Green car
+ */
+function findRides(formation) {
+  const out = { car: { idx: carIdx, eye: CAR_EYE, yaw0: 0, fov: 68, lim: Math.PI } };
+  for (const idx of [1, 0, 2, formation.length - 2].filter((i) => i >= 0 && i < formation.length && formation[i] !== 'G')) {
+    const seats = seatsIn(idx, /^seat_box/, 1.5, 1.7);
+    // which way each seat faces: its backrest (upper seat geometry) is behind the sitter
+    const backs = seatBacks(idx);
+    const facesFwd = (s) => {
+      const near = backs.filter((b) => Math.abs(b.z - s.z) < 0.3 && Math.abs(b.x - s.x) < 0.5);
+      if (!near.length) return false;
+      return near.reduce((a, b) => a + b.x, 0) / near.length < s.x;
+    };
+    // left window seats facing forward
+    const cand = seats.filter((s) => s.z < -0.55 && facesFwd(s));
+    if (!cand.length) continue;
+    const zMin = Math.min(...cand.map((s) => s.z));
+    const win = cand.filter((s) => s.z < zMin + 0.25).sort((p, q) => Math.abs(p.x) - Math.abs(q.x));
+    const s = win[0];
+    out.seat = { idx, eye: { x: s.x - 0.08, y: s.y + 0.72, z: s.z + 0.1, pitch: -0.06 }, yaw0: 0.75, fov: 64, lim: 2.4, seat: s };
+    break;
+  }
+  if (!out.seat) {
+    // long seats only: sit on the left bench and look across at the windows opposite
+    const seats = seatsIn(carIdx, /^seat_/, 1.5, 1.7).filter((s) => s.z < -0.6).sort((p, q) => Math.abs(p.x - 0.8) - Math.abs(q.x - 0.8));
+    const s = seats[0] || { x: 0.8, y: 1.6, z: -1.2 };
+    out.seat = { idx: carIdx, eye: { x: s.x, y: s.y + 0.72, z: s.z + 0.12, pitch: -0.08 }, yaw0: -Math.PI / 2, fov: 62, lim: 2.2, seat: s };
+  }
+  const g = formation.indexOf('G');
+  if (g >= 0) {
+    const backs = seatBacks(g, /^seat_green/, 3.25, 3.8);
+    // seats face one way in the model: sit as the seat faces and look out of the window beside it
+    const fwd = (s) => { const nb = backs.filter((b) => Math.abs(b.z - s.z) < 0.3 && Math.abs(b.x - s.x) < 0.9); return !nb.length || nb.reduce((a, b) => a + b.x, 0) / nb.length < s.x; };
+    const seats = seatsIn(g, /^seat_green/, 2.55, 3.1).filter((s) => s.z < -0.5);
+    if (seats.length) {
+      const zMin = Math.min(...seats.map((s) => s.z));
+      const s = seats.filter((q) => q.z < zMin + 0.3).sort((p, q) => Math.abs(p.x + 0.5) - Math.abs(q.x + 0.5))[0];
+      const f = fwd(s);
+      // facing backward: the window is then on the sitter's right (still -z in the car frame)
+      out.green = { idx: g, eye: { x: s.x, y: s.y + 0.6, z: s.z + 0.05, pitch: -0.1 }, yaw0: f ? 0.7 : Math.PI - 0.7, fov: 66, lim: 2.4 };
+    }
+  }
+  return out;
+}
+
+/** keep the seat you sit in, and the one facing it, free of passengers (rebuilds that car's passengers) */
+function clearSeatFor(R) {
+  if (!R || !R.seat || R.cleared) return;
+  R.cleared = true;
+  const inner = player.cars[R.idx].userData.inner;
+  const old = inner.getObjectByName('passengers');
+  if (!old) return;
+  old.visible = false;
+  const seats = seatsIn(R.idx, /^seat_/, 1.5, 1.7).filter((s) => Math.hypot(s.x - R.seat.x, s.z - R.seat.z) > 1.7);
+  for (const s of seats) {
+    const p = seats.find((q) => q !== s && Math.abs(q.z - s.z) < 0.25 && Math.abs(q.x - s.x) > 0.6 && Math.abs(q.x - s.x) < 1.3);
+    s.face = p && Math.abs(s.z) > 0.55 && R.yaw0 !== -Math.PI / 2 ? Math.sign(p.x - s.x) : 0;
+  }
+  const rnd = (() => { let a = 99 + R.idx; return () => { a = (a * 16807) % 2147483647; return a / 2147483647; }; })();
+  const pm = passengerMesh(seats.filter((s) => Math.abs(s.z) > 0.55), [], 1.17, rnd, 0.45);
+  if (pm) inner.add(pm);
 }
 
 function modelKey(veh) { return { e231: 'e231', e233: 'e233', s211: '211', s115: '115' }[veh.id]; }
@@ -742,8 +853,21 @@ function recolorKeihin(set) {
 // ---------------------------------------------------------------------------
 // cameras
 // ---------------------------------------------------------------------------
-const CAMS = ['cab', 'car', 'front', 'side', 'chase', 'trackside', 'free'];
-const CAM_LABEL = { cab: '運転台', car: '車内', front: '正面', side: '側面', chase: '後方上空', trackside: '沿線', free: 'フリー' };
+const CAMS = ['cab', 'car', 'seat', 'green', 'front', 'side', 'chase', 'trackside', 'free'];
+/** passenger views ride in a car: { idx (car), eye, yaw0 (facing, rad from forward), fov, lim } */
+let rides = {};
+const isRide = (m) => (m === 'car' || m === 'seat' || m === 'green') && !!rides[m];
+function nextCam() {
+  let i = CAMS.indexOf(camMode);
+  for (let k = 0; k < CAMS.length; k++) {
+    i = (i + 1) % CAMS.length;
+    const m = CAMS[i];
+    if ((m === 'seat' || m === 'green') && !rides[m]) continue;   // no box seats / no Green car
+    return m;
+  }
+  return 'cab';
+}
+const CAM_LABEL = { cab: '運転台', car: '車内', seat: '座席', green: 'グリーン車2階', front: '正面', side: '側面', chase: '後方上空', trackside: '沿線', free: 'フリー' };
 // free camera: position + look angles in the world; optionally carried along with the train
 const free = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, follow: true, last: null };
 const keysDown = new Set();
@@ -752,21 +876,26 @@ function setCamMode(m) {
   $('camLabel').textContent = CAM_LABEL[m];
   const inCab = m === 'cab';
   sound.cut();
-  sound.setListenerMode(m === 'cab' ? 'cab' : m === 'car' ? 'car' : 'outside');
+  sound.setListenerMode(m === 'cab' ? 'cab' : isRide(m) ? 'car' : 'outside');
   if (player) player.setVisible(0, !inCab);
   if (cab) cab.visible = inCab;
-  if (carLights) carLights.visible = m === 'car';
+  if (carLights) {
+    carLights.visible = isRide(m);
+    if (isRide(m)) player.cars[rides[m].idx].userData.inner.add(carLights);
+  }
   if (camera.parent) camera.parent.remove(camera);
   if (inCab) {
     player.cars[0].userData.inner.add(camera);
     camera.position.set(EYE.x, EYE.y, EYE.z);
     camera.fov = 60;
     look.yaw = 0; look.pitch = EYE.pitch;
-  } else if (m === 'car') {
-    player.cars[carIdx].userData.inner.add(camera);
-    camera.position.set(CAR_EYE.x, CAR_EYE.y, CAR_EYE.z);
-    camera.fov = 68;
-    look.yaw = 0; look.pitch = CAR_EYE.pitch;
+  } else if (isRide(m)) {
+    const R = rides[m];
+    player.cars[R.idx].userData.inner.add(camera);
+    camera.position.set(R.eye.x, R.eye.y, R.eye.z);
+    camera.fov = R.fov;
+    look.yaw = 0; look.pitch = R.eye.pitch;
+    if (m === 'seat') { clearSeatFor(R); hud.message('座席の視点<br><small>ドラッグで見回し・ダブルクリックで正面</small>', 'info', 3); }
   } else {
     // start the free camera where the previous view was looking from
     if (m === 'free') {
@@ -806,16 +935,17 @@ function updateCamera(dt) {
     return;
   }
   const p = {}, q = {};
-  if (camMode === 'cab' || camMode === 'car') {
+  if (camMode === 'cab' || isRide(camMode)) {
     // head bob + joint jolts
-    const E = camMode === 'cab' ? EYE : CAR_EYE;
+    const E = camMode === 'cab' ? EYE : rides[camMode].eye;
+    const yaw0 = camMode === 'cab' ? 0 : rides[camMode].yaw0;
     bob.v += (-bob.y * 120 - bob.v * 9) * dt;
     bob.y += bob.v * dt;
     const t = performance.now() / 1000;
-    const vib = Math.min(1, physics.kmh / 100) * (camMode === 'car' ? 0.009 : 0.006);
+    const vib = Math.min(1, physics.kmh / 100) * (isRide(camMode) ? 0.009 : 0.006);
     camera.position.y = E.y + bob.y + Math.sin(t * 13.1) * vib * 0.4;
     camera.position.z = E.z + Math.sin(t * 2.3) * vib;
-    camera.rotation.set(look.pitch, -Math.PI / 2 + look.yaw, 0);
+    camera.rotation.set(look.pitch, -Math.PI / 2 + yaw0 + look.yaw, 0);
   } else if (camMode === 'side') {
     view.pose(physics.s - 12, 16, p);
     camera.position.set(p.x, p.y + 3.2, p.z);
@@ -874,7 +1004,7 @@ function setupInput() {
       case 'e': case 'E': case 'Backspace': if (physics) physics.setHandle(physics.EB); break;
       case 'q': case 'Q': if (physics) physics.setHandle(-physics.veh.brakeNotches); break;
       case 'h': case 'H': sound.horn(true); break;
-      case 'c': case 'C': case 'v': case 'V': setCamMode(CAMS[(CAMS.indexOf(camMode) + 1) % CAMS.length]); break;
+      case 'c': case 'C': case 'v': case 'V': setCamMode(nextCam()); break;
       case 'Enter': case 'f': case 'F': if (game) game.skipWait(); break;
       case 'm': case 'M': sound.setMuted(!sound.muted); break;
       case 't': case 'T': $('ttBox').classList.toggle('hidden'); break;
@@ -899,13 +1029,13 @@ function setupInput() {
       look.lx = e.clientX; look.ly = e.clientY;
       return;
     }
-    if (!look.drag || (camMode !== 'cab' && camMode !== 'car')) return;
-    const lim = camMode === 'car' ? Math.PI : 1.4;
+    if (!look.drag || (camMode !== 'cab' && !isRide(camMode))) return;
+    const lim = isRide(camMode) ? rides[camMode].lim : 1.4;
     look.yaw = Math.max(-lim, Math.min(lim, look.yaw - (e.clientX - look.lx) * 0.004));
     look.pitch = Math.max(-0.6, Math.min(0.5, look.pitch - (e.clientY - look.ly) * 0.004));
     look.lx = e.clientX; look.ly = e.clientY;
   });
-  v.addEventListener('dblclick', () => { look.yaw = 0; look.pitch = camMode === 'car' ? CAR_EYE.pitch : EYE.pitch; });
+  v.addEventListener('dblclick', () => { look.yaw = 0; look.pitch = isRide(camMode) ? rides[camMode].eye.pitch : EYE.pitch; });
   // on-screen buttons
   const hold = (id, fn) => {
     const el = $(id);
@@ -915,7 +1045,7 @@ function setupInput() {
   hold('btnBrk', () => handleDelta(-1));
   hold('btnN', () => physics && physics.setHandle(0));
   hold('btnEB', () => physics && physics.setHandle(physics.EB));
-  hold('btnCam', () => setCamMode(CAMS[(CAMS.indexOf(camMode) + 1) % CAMS.length]));
+  hold('btnCam', () => setCamMode(nextCam()));
   hold('btnSkip', () => game && game.skipWait());
   const horn = $('btnHorn');
   horn.addEventListener('pointerdown', (e) => { e.stopPropagation(); sound.horn(true); });
@@ -949,7 +1079,7 @@ function pollGamepad() {
   if (edge(13)) handleDelta(-1);
   if (edge(0)) physics && physics.setHandle(0);
   if (edge(1)) physics && physics.setHandle(physics.EB);
-  if (edge(3)) setCamMode(CAMS[(CAMS.indexOf(camMode) + 1) % CAMS.length]);
+  if (edge(3)) setCamMode(nextCam());
   if (edge(9)) togglePause();
   if (edge(2)) game && game.skipWait();
 }
@@ -968,7 +1098,7 @@ const _jp = {};
 /** where along the line the listener is (for culling far-away joint clicks) */
 function listenerS() {
   if (camMode === 'trackside' && tracksideCam) return tracksideCam.s;
-  return physics ? physics.s - (camMode === 'car' ? (carIdx + 0.5) * CAR_LEN : 0) : 0;
+  return physics ? physics.s - (isRide(camMode) ? (rides[camMode].idx + 0.5) * CAR_LEN : 0) : 0;
 }
 let atsWasBraking = false;
 let lastT = performance.now();
@@ -1023,7 +1153,7 @@ function simStep(dt) {
   // emitted where the joint is so they are delayed / panned / attenuated for the listener
   if (physics.s - prevS > 0) {
     const ls = listenerS();
-    const bobLo = camMode === 'car' ? carIdx * CAR_LEN : 0, bobHi = bobLo + CAR_LEN;
+    const bobLo = isRide(camMode) ? rides[camMode].idx * CAR_LEN : 0, bobHi = bobLo + CAR_LEN;
     for (let i = 0; i < AXLES.length; i++) {
       const off = AXLES[i];
       const a = prevS - off, b = physics.s - off;
@@ -1034,7 +1164,7 @@ function simStep(dt) {
           const p = view.pose(sj, 0, _jp);
           sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, physics.kmh, true, (b - sj) / Math.max(physics.v, 0.5));
         }
-        if ((camMode === 'cab' || camMode === 'car') && off > bobLo && off < bobHi) bob.v -= 0.012 * Math.min(1, physics.kmh / 80);
+        if ((camMode === 'cab' || isRide(camMode)) && off > bobLo && off < bobHi) bob.v -= 0.012 * Math.min(1, physics.kmh / 80);
       }
     }
   }
