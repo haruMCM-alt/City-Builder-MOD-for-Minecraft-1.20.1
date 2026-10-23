@@ -6,7 +6,7 @@ import { CUES } from './audio/announce-cues.js';
  * triggering the in-car announcements.
  */
 export class Game {
-  constructor({ route, physics, timetable, sound, announcer, melody, hud, fromIdx, service, up }) {
+  constructor({ route, physics, timetable, sound, announcer, melody, hud, fromIdx, service, up, platform = null, platformRange = null }) {
     // up (上り) trains: the recording is from a down train, so only its direction-neutral
     // 「まもなく〜」 clips are used (the speech synthesizer covers everything)
     this.up = !!up;
@@ -34,6 +34,22 @@ export class Game {
     this.ph.doorsOpen = true;
     this.doorSide = timetable[0].station.door;     // platform side of the doors now in use
     this.introPlayed = false;
+    // platform announcements (station speakers)
+    this.platform = platform;
+    this.platformRange = platformRange;
+    this.pctx = { dir: this.up ? 'up' : 'down', service: service ? service.id : 'local', dest: timetable[timetable.length - 1].station.name };
+  }
+
+  /** a platform announcement at a station: approach / name / door */
+  platformSay(kind, station) {
+    if (!this.platform || !this.platformRange) return 0;
+    return this.platform.play(kind, { ...this.pctx, station: station.name }, this.platformRange(station));
+  }
+
+  /** after the melody: 「○番線ドアが閉まります」 from the platform, then the door chime */
+  beginClose() {
+    const d = this.platformSay('door', this.current.station);
+    if (d) { this.state = 'doorcall'; this.stateT = 0; this.callDur = d; } else this.startClosing();
   }
 
   get target() { return this.tt[this.ti]; }
@@ -94,13 +110,15 @@ export class Game {
           this.melDur = Math.min(this.melody.playFor(row.station.name) || ml, ml);
           this.state = 'melody';
           this.stateT = 0;
-        } else this.startClosing();
+        } else this.beginClose();
       }
     } else if (this.state === 'melody') {
       if (this.stateT >= this.melDur) {
         if (this.melody.playing) this.melody.stopClip(false); // the conductor releases the button
-        this.startClosing();
+        this.beginClose();
       }
+    } else if (this.state === 'doorcall') {
+      if (this.stateT >= this.callDur - 0.4) this.startClosing();
     } else if (this.state === 'closing') {
       // the doors start moving with the first chime and take ~2.7 s; in the recording the
       // chime starts at 0.1 s and the leaves meet at ~2.95 s
@@ -137,6 +155,7 @@ export class Game {
         ph.doorsOpen = true;
         this.doorSide = this.target.station.door;
         this.sound.doorMove(true);
+        this.platformSay('name', this.target.station);
       }
       if (this.stateT > 3) {
         if (this.ti >= this.tt.length - 1) {
@@ -173,6 +192,14 @@ export class Game {
         this.announced.arr = true;
         if (this.ann.has(arrId)) this.ann.play(arrId, ctx);
       }
+    }
+    // the station announces us: 「まもなく○番線に…が参ります」 timed to end as we run in
+    if (!this.announced.plat && this.platform) {
+      const pd = this.platform.duration('approach', { ...this.pctx, station: tgt.station.name });
+      if (pd && dist < Math.min(1500, Math.max(320, ph.v * (pd + 4)))) {
+        this.announced.plat = true;
+        this.platformSay('approach', tgt.station);
+      } else if (!pd) this.announced.plat = true;
     }
     // conductor's last words before the terminal (file mode only)
     const finId = `fin:${sIdx}`;
@@ -244,11 +271,11 @@ export class Game {
       if (left >= 0) delay = Math.min(0, delay);
     } else if (this.current && this.current.dep != null) {
       delay = this.clock - this.current.dep;
-      if (this.state === 'dwell' || this.state === 'closing' || this.state === 'melody') delayText = '';
+      if (this.state === 'dwell' || this.state === 'closing' || this.state === 'melody' || this.state === 'doorcall') delayText = '';
       else delayText = delay > 3 ? `発車 ${Math.round(delay)}秒遅れ` : '';
     }
     let depText = '';
-    if (this.state === 'dwell' || this.state === 'closing' || this.state === 'melody') depText = `発車 ${fmtTime(this.current.dep)}`;
+    if (this.state === 'dwell' || this.state === 'closing' || this.state === 'melody' || this.state === 'doorcall') depText = `発車 ${fmtTime(this.current.dep)}`;
     return { dist, delay, delayText, depText, next: tgt, terminal: this.terminal, targetIdx: this.ti, running: this.state === 'running' };
   }
 }

@@ -71,6 +71,7 @@ import { VehiclePreview } from './preview.js';
 let preview = null;
 import { Game } from './game.js';
 import { passengerMesh } from './world/people.js';
+import { PlatformAnnouncer } from './audio/platform.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -86,6 +87,7 @@ let route = new Route(['utsunomiya', 'ueno-tokyo', 'shonan-shinjuku'].includes(s
 const sound = new SoundEngine();
 const announcer = new Announcer(sound);
 const melody = new MelodyPlayer(sound);
+const platform = new PlatformAnnouncer(sound);
 const hud = new HUD();
 const gltfs = {};
 let renderer, scene, camera, sun, hemi, composer = null, aoPass = null;
@@ -400,6 +402,7 @@ async function startGame() {
   melody.enabled = settings.melMode !== 'off';
   melody.attach();
   melody.reshuffle();
+  platform.load();
 
   const veh = VEHICLES[settings.vehicle];
   const formation = formationFor(veh);
@@ -460,7 +463,10 @@ async function startGame() {
   cabFill.intensity = 0.9 * atmo.cabFill;
   setupWeatherObjects();
   hud.setup(veh, tt);
-  game = new Game({ route: view, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from, service, up: view.up });
+  game = new Game({
+    route: view, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from, service, up: view.up,
+    platform, platformRange: (st) => { const a = view.toRoute(st.s - PLATFORM_LEN), b = view.toRoute(st.s); return { s0: Math.min(a, b), s1: Math.max(a, b) }; },
+  });
   traffic = new Traffic();
   if (shinkansen) shinkansen.clear();
   shinkansen = new ShinkansenTraffic(scene, route, sound);
@@ -747,6 +753,7 @@ function teardown() {
   if (world) world.dispose();
   announcer.stop(true);
   melody.stopClip(true);
+  platform.stop();
   sound.horn(false); sound.atsBell(false);
 }
 
@@ -1226,6 +1233,7 @@ function updateSound() {
     const st = view.structureAt(physics.s - (i + 0.5) * CAR_LEN);
     bridge.push(st.type === 'bridge' ? (st.river.truss ? 1 : 0.55) : st.type === 'viaduct' ? 0.12 : 0);
   }
+  platform.update(view.toRoute(listenerS()), (s) => route.pose(s, view.trackOffset(s), {}));
   const fp = view.pose(physics.s - 0.5, 0, {});
   sound.update({
     v: physics.kmh, torque: physics.torque, brake: physics.brake, curvature: view.curvature(physics.s),
