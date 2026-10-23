@@ -330,6 +330,12 @@ CAB_CFG = {
     "e233": dict(dz=0.0, desk="lcd", zp=1.650, zc=3.40, xr=-2.30,
                  side_win=(-0.49, -1.20, 2.425, 2.97), door=(-1.35, -1.99), door_win=(-1.48, -1.85, 2.07, 2.82),
                  eye=(8.32, 0.85, 2.93), ao=2048),
+    # E131-600: E129-style gangway front (windscreens y 0.50-1.28, door window), one-handle desk left
+    # of the door with two LCDs, the third on the assistant's side (research/vehicles.md §2)
+    "e131": dict(dz=0.0, desk="lcd", zp=1.650, zc=3.40, xr=-2.30,
+                 side_win=(-0.49, -1.20, 2.425, 2.97), door=(-1.35, -1.99), door_win=(-1.48, -1.85, 2.07, 2.82),
+                 front=[(0.50, 1.28, 1.98, 3.30), (-1.28, -0.50, 1.98, 3.30), (-0.25, 0.25, 2.20, 3.05)],
+                 gdoor=0.47, eye=(8.32, 0.85, 2.93), ao=1024),
     # 211-3000: gangway door between the windscreens (black-painted below z 2,468), crew door
     # right behind the desk, two-handle desk with analogue meters
     "211": dict(dz=0.0, desk="jnr", zp=1.650, zc=3.36, xr=-1.95,
@@ -347,6 +353,7 @@ CAB_CFG = {
 CAB_COLORS = {
     "e231": dict(),
     "e233": dict(desk="#c9cbc7", panel="#1c1d1f", hood="#141516", knee="#a6a9aa"),
+    "e131": dict(desk="#cfd0cc", panel="#1c1d1f", hood="#141516", knee="#a9abab", moq="#3c3f48"),
     "211": dict(wall="#c8c5ba", desk="#9fa29a", panel="#5a5c5a", hood="#45484a", knee="#878b86", moq="#454c63",
                 ceil="#dcdbd2"),
     "115": dict(wall="#a9c6a6", desk="#93ae96", panel="#5c7a62", hood="#4d6853", knee="#7f9e84", moq="#3f5246",
@@ -533,7 +540,7 @@ def make_cab(M, coll, key):
         if sw:
             xm = (sw[0] + sw[1]) / 2
             mb.beam(P(xm, s * (W - 0.03), sw[2]), P(xm, s * (W - 0.03), sw[3]), 0.03, 0.03, frame)  # pane divider
-        if lcd:
+        if lcd and not C.get("front"):
             # A-pillar trim: triangular in plan, glass edge (+-1.30, x -0.02) -> side window front
             xs = sw[0]
             a0, a1 = P(-0.02, s * 1.30, 2.00), P(xs, s * 1.40, 2.00)
@@ -545,7 +552,7 @@ def make_cab(M, coll, key):
         mb.beam(P(d1 + 0.06, s * (W - 0.06), 2.92), P(d1 + 0.06, s * (W - 0.005), 2.92), 0.03, 0.03, stain)
         box(mb, d0 + 0.05, d0 + 0.13, s * (W - 0.03), s * (W - 0.06), 2.20, 2.24, stain)
 
-    if lcd:
+    if lcd and not C.get("front"):
         # big windscreen: front wall below the glass, header and blinds
         mb.poly([P(0.0, -W, zp), P(0.0, W, zp), P(0.0, W, 2.0), P(0.0, -W, 2.0)], panel, (-1, 0, 0))
         box(mb, -0.18, -0.45, -1.33, 1.33, 3.25, zc, wall)                              # header
@@ -761,34 +768,40 @@ def make_cab(M, coll, key):
 def lcd_desk(mb, P, box, key, m, M, zp):
     """E231-1000 / E233-3000 one-handle desk with three LCDs (ref2/cab c01-c08)"""
     W = 1.40
-    e233 = key == "e233"
+    e131 = key == "e131"                       # E131: desk only left of the gangway door
+    e233 = key in ("e233", "e131")             # E233-style colours / black full-width panel
+    yd = 0.50 if e131 else -0.44               # inner edge of the desk
     desk_top, panel, hood, rim, stain, knee, frame = m["desk_top"], m["panel"], m["hood"], m["rim"], m["stain"], m["knee"], m["frame"]
     red, green, paper = m["red"], m["green"], m["paper"]
     # hood top (black shelf) and tilted panel face
-    box(mb, -0.30, -0.60, 0.06 if not e233 else -0.44, W, 2.715, 2.745, hood)
-    y_lo = 0.06 if not e233 else -0.44         # E233: one black panel across the whole desk
+    y_lo = 0.06 if not e233 else yd            # E233: one black panel across the whole desk
+    box(mb, -0.30, -0.60, y_lo, W, 2.715, 2.745, hood)
     mb.poly([P(-0.56, y_lo, 2.70), P(-0.56, W, 2.70), P(-0.62, W, 2.45), P(-0.62, y_lo, 2.45)], panel, (-1, 0, 0.23))
     mb.poly([P(-0.30, y_lo, 2.73), P(-0.30, W, 2.73), P(-0.30, W, 2.45), P(-0.30, y_lo, 2.45)], panel, (-1, 0, 0))
     # desk top sloping 7 deg down to the driver, black padded rim, knee panel
-    mb.poly([P(-0.62, -0.44, 2.45), P(-0.62, W, 2.45), P(-0.93, W, 2.41), P(-0.93, -0.44, 2.41)], desk_top, (0, 0, 1))
-    box(mb, -0.93, -0.965, 0.20, 1.30, 2.33, 2.41, rim)
-    mb.cyl(P(-0.965, 0.75, 2.37), (0, 1, 0), 0.042, 1.10, rim, seg=14)
-    mb.poly([P(-0.88, -0.44, zp), P(-0.88, W, zp), P(-0.88, W, zp + 0.10), P(-0.88, -0.44, zp + 0.10)], stain, (-1, 0, 0))
+    mb.poly([P(-0.62, yd, 2.45), P(-0.62, W, 2.45), P(-0.93, W, 2.41), P(-0.93, yd, 2.41)], desk_top, (0, 0, 1))
+    r0, r1 = (0.54, 1.34) if e131 else (0.20, 1.30)
+    box(mb, -0.93, -0.965, r0, r1, 2.33, 2.41, rim)
+    mb.cyl(P(-0.965, (r0 + r1) / 2 + 0.0, 2.37), (0, 1, 0), 0.042, r1 - r0 + 0.0, rim, seg=14)
+    mb.poly([P(-0.88, yd, zp), P(-0.88, W, zp), P(-0.88, W, zp + 0.10), P(-0.88, yd, zp + 0.10)], stain, (-1, 0, 0))
     if e233:
         # stainless leg-room plate in front of the driver, grey cabinet doors elsewhere
-        mb.poly([P(-0.88, 0.45, zp + 0.10), P(-0.88, W, zp + 0.10), P(-0.88, W, 2.32), P(-0.88, 0.45, 2.32)], stain, (-1, 0, 0))
-        mb.poly([P(-0.881, -0.44, zp + 0.10), P(-0.881, 0.45, zp + 0.10), P(-0.881, 0.45, 2.32), P(-0.881, -0.44, 2.32)], knee, (-1, 0, 0))
-        for (ya, yb) in ((-0.40, 0.0), (0.04, 0.42)):
+        mb.poly([P(-0.88, max(0.45, yd), zp + 0.10), P(-0.88, W, zp + 0.10), P(-0.88, W, 2.32), P(-0.88, max(0.45, yd), 2.32)], stain, (-1, 0, 0))
+        if not e131:
+            mb.poly([P(-0.881, -0.44, zp + 0.10), P(-0.881, 0.45, zp + 0.10), P(-0.881, 0.45, 2.32), P(-0.881, -0.44, 2.32)], knee, (-1, 0, 0))
+        for (ya, yb) in (() if e131 else ((-0.40, 0.0), (0.04, 0.42))):
             for z0, z1 in ((zp + 0.14, 1.98), (2.02, 2.28)):
                 for (a, b) in (((ya, z0), (yb, z0)), ((ya, z1), (yb, z1)), ((ya, z0), (ya, z1)), ((yb, z0), (yb, z1))):
                     mb.beam(P(-0.886, a[0], a[1]), P(-0.886, b[0], b[1]), 0.006, 0.006, frame)
     else:
         mb.poly([P(-0.88, -0.44, zp + 0.10), P(-0.88, W, zp + 0.10), P(-0.88, W, 2.32), P(-0.88, -0.44, 2.32)], knee, (-1, 0, 0))
-    mb.poly([P(-0.93, -0.44, 2.41), P(-0.93, 0.20, 2.41), P(-0.93, 0.20, 2.32), P(-0.93, -0.44, 2.32)], desk_top, (-1, 0, 0))
+    if not e131:
+        mb.poly([P(-0.93, -0.44, 2.41), P(-0.93, 0.20, 2.41), P(-0.93, 0.20, 2.32), P(-0.93, -0.44, 2.32)], desk_top, (-1, 0, 0))
     # right shelf with handrail
-    box(mb, 0.0, -0.80, -W, -0.44, 2.40, 2.45, desk_top)
-    mb.poly([P(-0.80, -W, zp), P(-0.80, -0.44, zp), P(-0.80, -0.44, 2.40), P(-0.80, -W, 2.40)], m["wall"] if not e233 else knee, (-1, 0, 0))
-    mb.beam(P(-0.78, -1.30, 2.50), P(-0.78, -0.50, 2.50), 0.025, 0.025, stain)
+    yr = -0.50 if e131 else -0.44
+    box(mb, 0.0, -0.80, -W, yr, 2.40, 2.45, desk_top)
+    mb.poly([P(-0.80, -W, zp), P(-0.80, yr, zp), P(-0.80, yr, 2.40), P(-0.80, -W, 2.40)], m["wall"] if not e233 else knee, (-1, 0, 0))
+    mb.beam(P(-0.78, -1.30, 2.50), P(-0.78, -0.55, 2.50), 0.025, 0.025, stain)
     # LCDs (4:3, tilted 13 deg back, centres z 2.59): No.1 meter, TIMS, right hooded monitor
     tilt = math.radians(13)
     n = Vector((-math.cos(tilt), 0, math.sin(tilt)))
@@ -803,7 +816,14 @@ def lcd_desk(mb, P, box, key, m, M, zp):
             return c + r * du + uu * dv + nn * e
         mb.poly([q(-bw / 2, -bh / 2, 0.004), q(bw / 2, -bh / 2, 0.004), q(bw / 2, bh / 2, 0.004), q(-bw / 2, bh / 2, 0.004)], rim, tuple(nn))
         mb.poly([q(-w / 2, -h / 2, 0.008), q(w / 2, -h / 2, 0.008), q(w / 2, h / 2, 0.008), q(-w / 2, h / 2, 0.008)], mm, tuple(nn))
-    if e233:
+    if e131:
+        screen(-0.60, 1.12, 0.235, 0.176, m["lcd_meter"], 0.29, 0.22)
+        screen(-0.59, 0.74, 0.235, 0.176, m["lcd_tims"], 0.30, 0.23)
+        # third screen on the assistant's side shelf, turned toward the driver
+        box(mb, -0.30, -0.62, -1.05, -0.60, 2.45, 2.50, hood)
+        screen(-0.46, -0.83, 0.235, 0.176, m["lcd_mon"], 0.28, 0.22, yaw=math.radians(-28), cz=2.60)
+        box(mb, -0.36, -0.42, -1.00, -0.66, 2.45, 2.70, hood)
+    elif e233:
         screen(-0.60, 0.97, 0.235, 0.176, m["lcd_meter"], 0.29, 0.22)
         screen(-0.59, 0.50, 0.235, 0.176, m["lcd_tims"], 0.30, 0.23)
         # large right monitor in its own hood box (c07/c08), yawed toward the driver
@@ -821,19 +841,22 @@ def lcd_desk(mb, P, box, key, m, M, zp):
         box(mb, -0.40, -0.53, -0.44, 0.06, 2.79, 2.81, hood)          # short sun visor
         screen(-0.66, -0.18, 0.246, 0.185, m["lcd_mon"], 0.29, 0.22, yaw=math.radians(-15))
     # 緊急 button column, grab handle, radio, switch plinth
-    mb.cyl(P(-0.585, 0.74, 2.66), (-1, 0, 0.23), 0.025, 0.03, red, seg=12)
-    mb.cyl(P(-0.60, 0.74, 2.55), (-1, 0, 0.23), 0.012, 0.05, frame, seg=8)
-    mb.cyl(P(-0.61, 0.74, 2.49), (-1, 0, 0.23), 0.02, 0.01, M["white"], seg=12)
-    box(mb, -0.70, -0.76, 0.42, 0.62, 2.45, 2.51, rim)
-    mb.cyl(P(-0.73, 0.52, 2.53), (0, 1, 0), 0.0175, 0.20, rim, seg=10)
-    mb.cyl(P(-0.73, 0.415, 2.53), (0, 1, 0), 0.018, 0.012, green, seg=10)
+    yb_ = 0.935 if e131 else 0.74
+    mb.cyl(P(-0.585, yb_, 2.66), (-1, 0, 0.23), 0.025, 0.03, red, seg=12)
+    mb.cyl(P(-0.60, yb_, 2.55), (-1, 0, 0.23), 0.012, 0.05, frame, seg=8)
+    mb.cyl(P(-0.61, yb_, 2.49), (-1, 0, 0.23), 0.02, 0.01, M["white"], seg=12)
+    if not e131:
+        box(mb, -0.70, -0.76, 0.42, 0.62, 2.45, 2.51, rim)
+        mb.cyl(P(-0.73, 0.52, 2.53), (0, 1, 0), 0.0175, 0.20, rim, seg=10)
+        mb.cyl(P(-0.73, 0.415, 2.53), (0, 1, 0), 0.018, 0.012, green, seg=10)
     if not e233:
         box(mb, -0.56, -0.60, 0.08, 0.36, 2.48, 2.66, panel)
         mb.cyl(P(-0.585, 0.25, 2.60), (-1, 0, 0.23), 0.03, 0.02, red, seg=14)
         mb.cyl(P(-0.60, 0.15, 2.52), (-1, 0, 0.23), 0.018, 0.02, green, seg=10)
-    box(mb, -0.70, -0.80, -0.05 if not e233 else -0.62, 0.30 if not e233 else -0.66, 2.45, 2.49, panel)
-    for k in range(6):
-        mb.cyl(P(-0.75, (-0.02 if not e233 else -0.62) + k * 0.05, 2.505), (0, 0, 1), 0.008, 0.03, M["chrome"], seg=6)
+    if not e131:
+        box(mb, -0.70, -0.80, -0.05 if not e233 else -0.62, 0.30 if not e233 else -0.66, 2.45, 2.49, panel)
+        for k in range(6):
+            mb.cyl(P(-0.75, (-0.02 if not e233 else -0.62) + k * 0.05, 2.505), (0, 0, 1), 0.008, 0.03, M["chrome"], seg=6)
     box(mb, -0.28, -0.32, 1.33, 1.39, 3.00, 3.10, panel)                            # 直通予備 switch box
     # master controller: inclined black plate, slot, notch strip (handle is a separate object)
     plate = Matrix.Rotation(math.radians(-8), 3, "Y")
@@ -844,24 +867,26 @@ def lcd_desk(mb, P, box, key, m, M, zp):
     box(mb, -0.78, -0.82, 1.27, 1.29, 2.45, 2.50, frame)                            # reverser
     mb.beam(P(-0.80, 1.28, 2.50), P(-0.80, 1.28, 2.58), 0.015, 0.015, frame)
     Rt = Matrix.Rotation(math.radians(25), 3, "Y")                                  # timetable holder
-    box(mb, -0.80, -0.95, 0.30, 0.80, 2.46, 2.47, rim, Rt)
-    box(mb, -0.81, -0.94, 0.32, 0.78, 2.472, 2.474, paper, Rt)
+    t0 = 0.52 if e131 else 0.30
+    box(mb, -0.80, -0.95, t0, t0 + 0.50, 2.46, 2.47, rim, Rt)
+    box(mb, -0.81, -0.94, t0 + 0.02, t0 + 0.48, 2.472, 2.474, paper, Rt)
     # push-button / indicator block left of the No.1 meter (2 x 3)
     tilt_n = Vector((-math.cos(math.radians(13)), 0, math.sin(math.radians(13))))
     lamps = (m["lamp_w"], m["lamp_g"], m["lamp_o"], m["lamp_w"], frame, m["lamp_g"])
-    for i, yy in enumerate((1.13, 1.18, 1.23) if not e233 else (1.16, 1.21, 1.26)):
+    for i, yy in enumerate(() if e131 else (1.13, 1.18, 1.23) if not e233 else (1.16, 1.21, 1.26)):
         for j, zz in enumerate((2.63, 2.585)):
             xf = -0.56 - (2.70 - zz) * (0.06 / 0.25)
             c = Vector(P(xf, yy, zz)) + tilt_n * 0.005
             mb.box(tuple(c), (0.01, 0.03, 0.026), lamps[i * 2 + j])
     for k in range(7):                                                              # indicator lamp row (c03)
-        box(mb, -0.565, -0.58, 0.40 + k * 0.045, 0.43 + k * 0.045, 2.685, 2.705, m["lamp_w"] if k % 3 else m["lamp_o"])
+        yk = 0.40 + k * 0.045 + (0.16 if e131 else 0.0)
+        box(mb, -0.565, -0.58, yk, yk + 0.03, 2.685, 2.705, m["lamp_w"] if k % 3 else m["lamp_o"])
     # right shelf: toggle switch rows with guards
     for r in range(2):
         for k in range(7):
             yy = -0.52 - k * 0.09
             xx = -0.18 - r * 0.22
-            if e233 and yy > -0.66 and xx < -0.30:
+            if (e233 and not e131) and yy > -0.66 and xx < -0.30:
                 continue
             mb.cyl(P(xx, yy, 2.455), (0, 0, 1), 0.012, 0.012, stain, seg=8)
             mb.beam(P(xx, yy, 2.46), P(xx - 0.02, yy, 2.50), 0.008, 0.008, stain)
@@ -985,12 +1010,13 @@ def main():
             continue
         coll = bpy.data.collections.new(f"series_{key}")
         scene.collection.children.link(coll)
-        kinds = ["cab", "mid", "mid_panto"] + (["green"] if S.green else [])
+        kinds = getattr(S, "kinds", None) or ["cab", "mid", "mid_panto"] + (["green"] if S.green else [])
         objs = []
         for i, k in enumerate(kinds):
             o = cars.make_car(S, M, k, coll)
             print("built", o.name, len(o.data.polygons), "faces", flush=True)
             objs.append(o)
+        objs += cars.take_extras()          # semi-cross saloon variants (swapped in by trainmodel.js)
         export(objs, os.path.join(OUT_DIR, f"{key}.glb"))
         # lay out in the .blend for viewing
         for i, o in enumerate(objs):

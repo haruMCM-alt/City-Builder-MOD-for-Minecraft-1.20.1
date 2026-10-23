@@ -294,9 +294,65 @@ def features_115(det, S, M, fp, fr, extra, add_logo):
     # wipers: pivot (±0.925, 2.40), ≈0.55 long, parked up-inward ~60°
     return [(0.925, 2.40, 0.65, 2.876), (-0.925, 2.40, -0.65, 2.876)]
 
+# ---------------------------------------------------------------------------
+# E131-600 (宇都宮線 小山-黒磯 / 日光線; research/vehicles.md §2, measured from Commons
+# Series-E131-600_TN10.jpg, rough +-80 mm): flat upright E129-style gangway front
+# ---------------------------------------------------------------------------
+E131_YELLOW = "#ffec00"
+E131_BROWN = "#a54f09"
+E131_FACE = dict(
+    profile=[(0.98, 0.000), (3.45, 0.000), (3.60, 0.050)],
+    plan_d=0.03, plan_e=2.0, plan_w=1.45,
+    corner_r=0.12,
+    levels=[1.24, 1.40, 1.54, 1.68, 1.88, 1.98, 2.20, 2.60, 3.05, 3.20, 3.23, 3.42, 3.45],
+    cols=30,
+    cab_side=dict(crew=(7.71, 8.347, 1.13, 2.945), door_windows=[(8.035, 2.443, 0.37, 0.75, 0.05)],
+                  windows=[(8.857, 2.698, 0.715, 0.545, 0.08)]),
+)
+
+
+def paint_e131(P: Painter, S):
+    P.col[:] = 0
+    P.fill(P.sd_band(-9, 9), "#ece7e1", 0.40, 0.0)                              # white FRP frame + apron
+    P.fill(P.sd_rrect(-1.30, 1.30, 1.24, 3.45, 0.05), "#141618", 0.30, 0.0)     # black panel
+    for s in (-1, 1):
+        y0, y1 = sorted((s * 0.50, s * 1.28))
+        P.fill(P.sd_rrect(y0, y1, 1.98, 3.42, 0.04), BLACK_GLASS, 0.03, 0.0)    # windscreen
+        # dot pattern under the windscreen: 3 staggered rows, a triangle growing outward,
+        # yellow toward the outer / upper edge, brown inside
+        for c in range(8):
+            for k in range(3):
+                if k > c * 3 / 8 + 0.2:
+                    continue
+                yy = s * (0.56 + c * 0.10 + (0.05 if k % 2 else 0.0))
+                zz = 1.40 + k * 0.15
+                P.fill(P.sd_circle(yy, zz, 0.04), E131_YELLOW if c + 2 * k >= 5 else E131_BROWN, 0.35, 0.0)
+    # gangway door: stainless frame, dark leaf with a window
+    P.fill(P.sd_rrect(-0.47, 0.47, 1.24, 3.22, 0.03), "#a8aaac", 0.30, 0.85)
+    P.fill(P.sd_rrect(-0.40, 0.40, 1.28, 3.18, 0.02), "#1a1c1e", 0.35, 0.1)
+    P.fill(P.sd_rrect(-0.25, 0.25, 2.20, 3.05, 0.04), BLACK_GLASS, 0.03, 0.0)
+    P.fill(P.sd_rrect(-0.36, 0.36, 3.22, 3.46, 0.02), "#0d0e10", 0.3, 0.0)      # destination housing
+    P.outline(P.sd_band(0.99, 9), 0.005, "#6a6d70", 0.5, 0.2)
+    P.grime(1.20, 0.18)
+
+
+def features_e131(det, S, M, fp, fr, extra, add_logo):
+    for s in (-1, 1):
+        # LED head (white cluster) + tail (red) inside the glass at the top outer corners
+        det.cyl(fp(s * 1.075, 3.20, 0.004), (1, 0, 0), 0.075, 0.012, M["head"], seg=20)
+        det.cyl(fp(s * 1.20, 3.20, 0.004), (1, 0, 0), 0.040, 0.012, M["tail"], seg=14)
+        a, b = sorted((s * 0.55, s * 1.25))
+        det.beam(fp(a, 1.92, 0.03), fp(b, 1.92, 0.03), 0.02, 0.02, M["chrome"])              # grab bar
+    fr(det, M["dest"], -0.33, 0.33, 3.25, 3.43, eps=0.004)
+    det.box(fp(0.30, 2.05, 0.02), (0.03, 0.06, 0.10), M["chrome"])                       # door lever
+    det.box((fp(0, 0.96)[0] - 0.05, 0, 0.96), (0.10, 2.80, 0.06), M["white"])
+    return [(-0.85, 2.05, -0.62, 2.80), (0.85, 2.05, 0.62, 2.80)]
+
+
 FACES = {
     "e231": (E231_FACE, paint_e231, features_e231),
     "e233": (E233_FACE, paint_e233, features_e233),
     "211": (S211_FACE, paint_211, features_211),
     "115": (S115_FACE, paint_115, features_115),
+    "e131": (E131_FACE, paint_e131, features_e131),
 }

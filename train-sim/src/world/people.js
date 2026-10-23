@@ -178,8 +178,10 @@ export function passengerMesh(seats, doors, floorY, rnd, load = 0.45) {
   for (const s of seats) {
     if (rnd() > load) continue;
     const side = Math.sign(s.z) || 1;
-    // sit with the back against the backrest, facing the aisle (-side in z)
-    add(P.sit[Math.floor(rnd() * P.sit.length)], s.x, floorY, s.z + side * 0.12, side > 0 ? Math.PI / 2 : -Math.PI / 2, 0.94 + rnd() * 0.1);
+    const sit = P.sit[Math.floor(rnd() * P.sit.length)], sc = 0.94 + rnd() * 0.1;
+    // box seats: face along the car toward the facing seat; long seats: back to the wall, facing the aisle
+    if (s.face) add(sit, s.x - s.face * 0.12, floorY, s.z, s.face > 0 ? 0 : Math.PI, sc);
+    else add(sit, s.x, floorY, s.z + side * 0.12, side > 0 ? Math.PI / 2 : -Math.PI / 2, sc);
   }
   for (const d of doors) {
     const n = rnd() < load ? 1 + Math.floor(rnd() * 2) : 0;

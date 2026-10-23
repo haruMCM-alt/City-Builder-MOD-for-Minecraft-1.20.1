@@ -7,7 +7,8 @@ const WHEEL_R = 0.43;            // tread radius of the modelled wheels (860 mm 
 const DOOR_OPEN_T = 1.9;         // s, pneumatic / linear-motor door stroke
 const DOOR_CLOSE_T = 2.7;         // closing runs through the chime and ends with the bang
 
-const KIND = { C: 'cab', R: 'cab', M: 'mid', P: 'mid_panto', G: 'green' };
+// K = leading cab car with pantographs (E131 クモハ)
+const KIND = { C: 'cab', K: 'cab_panto', R: 'cab', M: 'mid', P: 'mid_panto', G: 'green' };
 
 export { makeDestTexture };
 
@@ -189,14 +190,16 @@ function adMaterials() {
 
 /** cushion centres of the long seats, found from the seat material's up-facing top faces (cached per car type) */
 const SEAT_CACHE = new Map();
-function seatCushions(tmpl, obj) {
-  if (SEAT_CACHE.has(tmpl.name)) return SEAT_CACHE.get(tmpl.name);
+function seatCushions(cacheKey, obj) {
+  if (SEAT_CACHE.has(cacheKey)) return SEAT_CACHE.get(cacheKey);
   const pts = [];
   const v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
   const e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
   obj.traverse((o) => {
     const n = o.isMesh && o.material && o.material.name;
-    if (!n || !/^seat_(e231|e233|211|115|priority)$/.test(n)) return;
+    const mm = n && /^seat_(box_)?(e231|e233|e131|211|115|priority)$/.exec(n);
+    if (!mm) return;
+    const box = !!mm[1];                          // セミクロス box-seat cushion
     const pos = o.geometry.attributes.position, idx = o.geometry.index;
     const tri = idx ? idx.count / 3 : pos.count / 3;
     for (let t = 0; t < tri; t++) {
@@ -205,7 +208,7 @@ function seatCushions(tmpl, obj) {
       const nn = e1.cross(e2).normalize();
       const cy = (v[0].y + v[1].y + v[2].y) / 3;
       // cushion tops: horizontal faces 0.40-0.47 m above the 1.17 m floor
-      if (Math.abs(nn.y) > 0.95 && cy > 1.57 && cy < 1.64) pts.push({ x: (v[0].x + v[1].x + v[2].x) / 3, z: (v[0].z + v[1].z + v[2].z) / 3 });
+      if (Math.abs(nn.y) > 0.95 && cy > 1.57 && cy < 1.64) pts.push({ x: (v[0].x + v[1].x + v[2].x) / 3, z: (v[0].z + v[1].z + v[2].z) / 3, box });
     }
   });
   // two triangles per cushion: merge centroids closer than 0.2 m
@@ -216,11 +219,20 @@ function seatCushions(tmpl, obj) {
     if (s) { s.x = (s.x + p.x) / 2; s.z = (s.z + p.z) / 2; } else seats.push({ ...p });
   }
   const out = seats.filter((s) => Math.abs(s.z) > 0.6);
-  SEAT_CACHE.set(tmpl.name, out);
+  // box seats face the facing seat of their pair (passengers sit looking along the car)
+  for (const s of out) {
+    if (!s.box) continue;
+    const p = out.find((q) => q !== s && q.box && Math.abs(q.z - s.z) < 0.2 && Math.abs(q.x - s.x) > 0.6 && Math.abs(q.x - s.x) < 1.2);
+    s.face = p ? Math.sign(p.x - s.x) : 0;
+  }
+  SEAT_CACHE.set(cacheKey, out);
   return out;
 }
 
-const SERIES_NO = { e231: ['E231', 'E230', 1000], e233: ['E233', 'E232', 3000], s211: ['211', '210', 3000], s115: ['115', '114', 1000] };
+// cars with セミクロスシート (research: E231 小山 sets 1, 2, 14, 15; E233-3000 1, 2, 9, 10, 14, 15)
+const SEMICROSS = { e231: [1, 2, 14, 15], e233: [1, 2, 9, 10, 14, 15] };
+
+const SERIES_NO = { e231: ['E231', 'E230', 1000], e233: ['E233', 'E232', 3000], s211: ['211', '210', 3000], s115: ['115', '114', 1000], e131: ['E131', 'E130', 600] };
 /** car type + number painted on the body side ("モハE231-1012") */
 function carNumbers(veh, formation) {
   const [a, b, base] = SERIES_NO[veh.id] || SERIES_NO.e231;
@@ -231,6 +243,7 @@ function carNumbers(veh, formation) {
     const c = formation[i], prev = formation[i - 1];
     let t;
     if (c === 'C') t = 'クハ' + a;
+    else if (c === 'K') t = 'クモハ' + a;
     else if (c === 'R') t = 'クハ' + b;
     else if (c === 'P') t = 'モハ' + a;
     else if (c === 'G') t = 'サロ' + (g++ % 2 ? b : a);
@@ -296,7 +309,8 @@ export class TrainSet {
     this.doorState = { left: 0, right: 0 };     // 0 closed .. 1 open
     this.doorTarget = { left: 0, right: 0 };
     // in-car passenger information display (one canvas shared by every door of this train)
-    this.info = opts.info ? new InfoDisplay(veh.id === 'e233' ? 'lcd' : 'led') : null;
+    // E231: 1-/2-line LED; E233-3000: 2-line LED above the doors too (the LCD pair is E233-1000)
+    this.info = opts.info ? new InfoDisplay('led') : null;
     const infoOff = new THREE.MeshStandardMaterial({ color: 0x0b0b0d, roughness: 0.25 });
     this.disposables.push(infoOff);
     const ads = adMaterials();
@@ -306,6 +320,19 @@ export class TrainSet {
       const obj = tmpl.clone(true);
       obj.position.set(0, 0, 0);
       obj.rotation.set(0, 0, 0);
+      // セミクロスシート cars (号車 = n - i, 1号車 at the Ueno end): swap in the semi-cross seat bays
+      let seatKey = tmpl.name;
+      if ((SEMICROSS[veh.id] || []).includes(n - i)) {
+        const kind = tmpl.name.slice(key.length + 1);
+        const sc = gltfScene.getObjectByName(`${key}_${kind === 'mid_panto' ? 'mid' : kind}_seats_sc`);
+        const cur = obj.getObjectByName(`${tmpl.name}_seats`);
+        if (sc && cur) {
+          const c = sc.clone(true);
+          c.position.copy(cur.position); c.quaternion.copy(cur.quaternion);
+          cur.parent.add(c); cur.removeFromParent();
+          seatKey += '_sc';
+        }
+      }
       const isFront = i === 0, isRear = i === n - 1;
       obj.traverse((o) => {
         if (!o.isMesh) return;
@@ -322,7 +349,7 @@ export class TrainSet {
         else if (mname === 'LCD_ADTV') { screenFrontOnly(o.geometry); o.material = this.info ? ads.tv : infoOff; }
         else if (mname && /^AD_\d$/.test(mname)) o.material = ads[Number(mname[3])];
         else if (mname === 'DEST') o.material = destMat;
-        else if (mname === 'headlight') o.material = (code === 'C' && isFront) ? lights.headOn : lights.headOff;
+        else if (mname === 'headlight') o.material = ((code === 'C' || code === 'K') && isFront) ? lights.headOn : lights.headOff;
         else if (mname === 'taillight') o.material = (code === 'R' && isRear) ? lights.tailOn : lights.tailOff;
       });
       // moving parts exported as separate nodes from Blender
@@ -341,7 +368,7 @@ export class TrainSet {
       });
       // passengers (not in the double-deck green cars; fewer on passing trains)
       if (code !== 'G' && opts.passengers !== false) {
-        const seats = seatCushions(tmpl, obj);
+        const seats = seatCushions(seatKey, obj);
         const doorX = [];
         for (const l of this.leaves) if (l.car === i && l.dir < 0 && l.side === 'left') doorX.push(l.cx);
         const rnd = mulberry(i * 7919 + (opts.forward === false ? 101 : 1));

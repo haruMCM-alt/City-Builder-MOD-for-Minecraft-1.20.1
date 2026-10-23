@@ -41,6 +41,13 @@ def mat(name, color, metallic=0.0, rough=0.5, emit=None, emit_strength=0.0, alph
     return m
 
 
+def srgb(h):
+    """'#rrggbb' (sRGB, as sampled from photos) -> linear RGB for Base Color"""
+    h = h.lstrip("#")
+    c = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    return tuple(x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4 for x in c)
+
+
 def materials():
     return dict(
         stainless=mat("stainless", (0.78, 0.79, 0.80), 0.85, 0.32),
@@ -115,12 +122,44 @@ def materials():
         int_ceiling=mat("int_ceiling", (0.88, 0.88, 0.86), 0.0, 0.55),
         int_light=mat("int_light", (1.0, 1.0, 1.0), 0, 0.3, (1.0, 0.99, 0.95), 4.0),
         lcd=mat("int_lcd", (0.02, 0.03, 0.05), 0, 0.2, (0.35, 0.55, 0.9), 1.2),
-        seat_e231=mat("seat_e231", (0.04, 0.16, 0.30), 0.0, 0.9),
-        seat_e233=mat("seat_e233", (0.03, 0.10, 0.32), 0.0, 0.9),
+        # saloon colours: scratchpad research/interior.md (photo-sampled, sRGB)
+        seat_e231=mat("seat_e231", srgb("#2c3768"), 0.0, 0.9),               # cushion
+        seat_e233=mat("seat_e233", srgb("#323a68"), 0.0, 0.9),
+        seatback_e231=mat("seatback_e231", srgb("#34489a"), 0.0, 0.9),
+        seatback_e233=mat("seatback_e233", srgb("#3c48a0"), 0.0, 0.9),
+        seat_box_e231=mat("seat_box_e231", srgb("#24408a"), 0.0, 0.9),        # box (cross) seat cushions
+        seat_box_e233=mat("seat_box_e233", srgb("#2f4a88"), 0.0, 0.9),
+        seatbox_e231=mat("seatbox_e231", srgb("#24408a"), 0.0, 0.9),          # box (cross) seat backs
+        seatbox_e233=mat("seatbox_e233", srgb("#2f4a88"), 0.0, 0.9),
+        headpanel_e231=mat("seatbox_head_e231", srgb("#4f6070"), 0.0, 0.85),
+        headpanel_e233=mat("seatbox_head_e233", srgb("#4a5654"), 0.0, 0.85),
+        seatshell=mat("seat_shell", srgb("#b4b9c2"), 0.0, 0.5),
+        seatback_prio=mat("seatback_priority", srgb("#a02e3c"), 0.0, 0.9),    # red-stripe moquette
+        strap_e233=mat("strap_e233", srgb("#1e1e1e"), 0.0, 0.5),
+        int_floor_e231=mat("int_floor_e231", srgb("#8c8d88"), 0.0, 0.8),
+        int_floor_e233=mat("int_floor_e233", srgb("#a08f72"), 0.0, 0.8),
+        floor_strip_e233=mat("floor_strip_e233", srgb("#77705f"), 0.0, 0.8),
+        floor_prio_e233=mat("floor_priority_e233", srgb("#a04a44"), 0.0, 0.8),
+        floor_anti_e231=mat("floor_antislip_e231", srgb("#8e8f8b"), 0.0, 0.85),
+        wall_prio_e233=mat("int_wall_priority_e233", srgb("#efe6c4"), 0.0, 0.6),
+        door_yellow=mat("door_yellow", srgb("#e0c830"), 0.0, 0.5),
+        door_in_e233=mat("door_inner_e233", srgb("#ecebe6"), 0.0, 0.45),
+        partition_e231=mat("seat_partition_e231", srgb("#dcdde3"), 0.1, 0.4),
+        partition_e233=mat("seat_partition_e233", srgb("#e8e8e6"), 0.1, 0.4),
+        rack_e233=mat("rack_e233", srgb("#b8bcc0"), 0.7, 0.4),
+        routemap=mat("route_map", srgb("#f2f2ee"), 0.0, 0.5),
+        # E131-600 (research/vehicles.md §2)
+        e131_yellow=mat("e131_yellow", srgb("#ffec00"), 0.0, 0.40),
+        e131_brown=mat("e131_brown", srgb("#a54f09"), 0.0, 0.40),
+        plough=mat("snow_plough", srgb("#5a5552"), 0.3, 0.5),
+        seat_e131=mat("seat_e131", srgb("#7f5c60"), 0.0, 0.9),               # dusty-rose cushion
+        seatback_e131=mat("seatback_e131", srgb("#aa5c35"), 0.0, 0.9),       # orange-brown back
+        int_floor_e131=mat("int_floor_e131", srgb("#82868f"), 0.0, 0.8),
+        partition_e131=mat("seat_partition_e131", srgb("#ecebe8"), 0.1, 0.4),
         seat_211=mat("seat_211", (0.25, 0.04, 0.06), 0.0, 0.9),
         seat_115=mat("seat_115", (0.06, 0.09, 0.22), 0.0, 0.9),
         seat_green=mat("seat_green", (0.05, 0.06, 0.12), 0.0, 0.85),
-        seat_prio=mat("seat_priority", (0.45, 0.08, 0.10), 0.0, 0.9),
+        seat_prio=mat("seat_priority", srgb("#424240"), 0.0, 0.9),             # grey cushion, red backrest
         headrest=mat("headrest_cover", (0.92, 0.92, 0.90), 0.0, 0.8),
         partition=mat("seat_partition", (0.84, 0.85, 0.85), 0.2, 0.35),
         pole=mat("pole", (0.75, 0.76, 0.77), 1.0, 0.22),
