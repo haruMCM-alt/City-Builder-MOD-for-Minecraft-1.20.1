@@ -383,7 +383,7 @@ export class Route {
   density(s) {
     let d = 0.15;
     const ST = this.ST;
-    if (this.prefix && s < this.prefix.area.city) d = 0.45;          // 東海道線 south of 大船: towns and hills
+    if (this.line === 'ueno-tokyo' && s < this.prefix.area.city) d = 0.45;   // 東海道線 south of 大船: towns and hills
     else if (s < ST['大宮'] + 800) d = 0.85;
     else if (s < ST['東大宮'] + 1400) d = 0.55;
     else if (s > ST['宇都宮'] - 2200) d = 0.7;

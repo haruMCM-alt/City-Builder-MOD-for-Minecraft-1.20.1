@@ -104,9 +104,9 @@ export function departureBoardTexture(st, seed, dir = 'down') {
   const g = c.getContext('2d');
   g.fillStyle = '#060606'; g.fillRect(0, 0, W, H);
   const base = 9 * 60 + ((st.index * 7 + seed * 13) % 50);
-  const downRow = (k) => (k ? ['快速', '#ff4a3a', '宇都宮', base + 12, '15両'] : ['普通', '#ff9a1a', st.index >= 22 ? '回送' : '宇都宮', base, '15両']);
+  const downRow = (k) => (k ? ['快速', '#ff4a3a', '宇都宮', base + 12, '15両'] : ['普通', '#ff9a1a', st.name === '宇都宮' ? '回送' : '宇都宮', base, '15両']);
   // up trains run through 上野 onto the 上野東京ライン
-  const upRow = (k) => (k ? ['普通', '#ff9a1a', '熱海', base + 9, '15両'] : ['普通', '#ff9a1a', st.index === 0 ? '回送' : '上野', base + 3, '10両']);
+  const upRow = (k) => (k ? ['普通', '#ff9a1a', '熱海', base + 9, '15両'] : ['普通', '#ff9a1a', st.name === '上野' ? '東京' : st.prefix ? '熱海' : '上野', base + 3, '10両']);
   const rows = dir === 'up' ? [upRow(0), upRow(1)] : dir === 'both' ? [downRow(seed % 2), upRow(0)] : [downRow(0), downRow(seed % 2)];
   g.textBaseline = 'middle';
   rows.forEach(([kind, kc, dest, t, cars], i) => {

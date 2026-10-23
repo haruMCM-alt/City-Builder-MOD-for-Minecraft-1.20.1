@@ -30,5 +30,6 @@ export const DEFAULT_SERVICE = 'local';
 
 /** does this service stop at the station? (the chosen first / last station always counts as a stop) */
 export function stopsAt(service, station) {
-  return !service.stops || service.stops.includes(station.name);
+  // through-line stations (東海道線 / 湘南新宿ライン parts): every service calls there in this game
+  return !service.stops || !!station.prefix || service.stops.includes(station.name);
 }

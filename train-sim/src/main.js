@@ -43,7 +43,7 @@ const GradeShader = {
     }`,
 };
 let gradePass = null, bloomPass = null;
-import { Route, PLATFORM_LEN } from './route.js';
+import { Route, PLATFORM_LEN, LINE_LIST } from './route.js';
 import { VEHICLES, DEFAULT_VEHICLE, CAR_LEN, BOGIE_C } from './vehicles.js';
 import { World } from './world/world.js';
 import { TrainSet } from './trainmodel.js';
@@ -81,7 +81,8 @@ const store = {
 // ---------------------------------------------------------------------------
 // globals
 // ---------------------------------------------------------------------------
-const route = new Route();
+// the line being driven (宇都宮線, or a through line joining it); rebuilt when the menu changes it
+let route = new Route(['utsunomiya', 'ueno-tokyo', 'shonan-shinjuku'].includes(store.get('line', 'utsunomiya')) ? store.get('line', 'utsunomiya') : 'utsunomiya');
 const sound = new SoundEngine();
 const announcer = new Announcer(sound);
 const melody = new MelodyPlayer(sound);
@@ -115,6 +116,7 @@ const settings = {
   vvvf: store.get('vvvf', 'new'),
   service: store.get('service', DEFAULT_SERVICE),
   dir: store.get('dir', 'down'),
+  line: route.line,
   tod: store.get('tod', 'day'),
   weather: store.get('weather', 'clear'),
 };
@@ -239,6 +241,18 @@ function buildMenu() {
   };
   fillStations();
   melody.setDirection(settings.dir);
+  const lineSel = $('lineSel');
+  lineSel.innerHTML = LINE_LIST.map((l) => `<option value="${l.id}">${l.name}</option>`).join('');
+  lineSel.value = settings.line;
+  lineSel.addEventListener('change', () => {
+    settings.line = lineSel.value; store.set('line', settings.line);
+    route = new Route(settings.line);
+    _menuView = null;
+    settings.from = 0; settings.to = route.stations.length - 1;
+    store.set('from', settings.from); store.set('to', settings.to);
+    fillStations();
+    updateFormationNote();
+  });
   const dirSel = $('dirSel');
   dirSel.value = settings.dir;
   dirSel.addEventListener('change', () => {
@@ -305,7 +319,7 @@ function buildMenu() {
 /** a TrackView for the menu's direction (cached) */
 let _menuView = null;
 function menuView() {
-  if (!_menuView || _menuView.dir !== settings.dir) _menuView = new TrackView(route, settings.dir);
+  if (!_menuView || _menuView.dir !== settings.dir || _menuView.route !== route) _menuView = new TrackView(route, settings.dir);
   return _menuView;
 }
 
@@ -1379,7 +1393,7 @@ boot();
 // debugging handle (used by automated tests)
 window.__sim = {
   get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; }, get traffic() { return traffic; }, get signals() { return signals; }, get shinkansen() { return shinkansen; }, get lead() { return lead; },
-  setCamMode, route, sound, announcer, melody, simStep, updateView, THREE,
+  get route() { return route; }, setCamMode, sound, announcer, melody, simStep, updateView, THREE,
   get renderer() { return renderer; }, get scene() { return scene; }, get camera() { return camera; }, draw,
   /** fast-forward the logic by `sec` seconds in fixed steps (no rendering) */
   advance(sec, dt = 0.05, each) { for (let t = 0; t < sec && !game.finished; t += dt) { if (each) each(); simStep(dt); } updateView(0.016); },

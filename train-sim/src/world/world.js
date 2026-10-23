@@ -1,7 +1,7 @@
 // Streams the scenery around the train in 200 m chunks.
 import * as THREE from 'three';
 import { stationProtos, PERSON_KEYS, SIT_KEYS, departureBoardTexture, clockTexture } from './people.js';
-import { PLATFORM_LEN, PF_EDGE, SIDE_PF_W, RIVERS } from '../route.js';
+import { PLATFORM_LEN, PF_EDGE, SIDE_PF_W } from '../route.js';
 import { makeTextures } from './textures.js';
 import { atmosphere, addWindowLights } from './atmosphere.js';
 import { Environment, GROUND_Y } from './sky.js';
@@ -329,7 +329,7 @@ export class World {
       if (near && !this.stations.has(st.name)) this.stations.set(st.name, this.buildStation(st));
       else if (!near && this.stations.has(st.name)) { this.disposeChunk(this.stations.get(st.name)); this.stations.delete(st.name); }
     }
-    for (const rv of RIVERS) {
+    for (const rv of this.route.rivers) {
       const near = rv.s1 > s - behind - 200 && rv.s0 < s + ahead + 800;
       if (near && !this.rivers.has(rv.name)) this.rivers.set(rv.name, this.buildRiver(rv));
       else if (!near && this.rivers.has(rv.name)) { this.disposeChunk(this.rivers.get(rv.name)); this.rivers.delete(rv.name); }

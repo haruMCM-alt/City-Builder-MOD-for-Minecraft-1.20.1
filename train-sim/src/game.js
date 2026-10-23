@@ -39,7 +39,8 @@ export class Game {
   get target() { return this.tt[this.ti]; }
   get current() { return this.tt[this.ti - 1]; }
   get terminal() { return this.ti === this.tt.length - 1; }
-  stationIndex(row) { return row.station.index; }
+  /** index of the station in the recorded announcement (the 宇都宮線 list); none for through-line stations */
+  stationIndex(row) { return row.station.cue ?? row.station.index + 1000; }
 
   addScore(n, label) {
     this.score += n;

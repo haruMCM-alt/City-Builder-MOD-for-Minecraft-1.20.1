@@ -85,7 +85,13 @@ function buildLocal(route, veh, nCars, from, to) {
   for (let i = 0; i < st.length - 1; i++) mins.push(minRunTime(route, veh, st[i].s, st[i + 1].s, trainLen));
   // walk anchor intervals over the whole line
   const anchorIdx = st.map((x, i) => (ANCHORS[x.name] !== undefined ? i : -1)).filter((i) => i >= 0);
-  rows[0].dep = ANCHORS[st[0].name];
+  // through lines (東海道線 / 湘南新宿ライン) start before the first recorded time: count back from it
+  const a0 = anchorIdx[0];
+  rows[a0].dep = ANCHORS[st[a0].name];
+  for (let i = a0 - 1; i >= 0; i--) {
+    rows[i + 1].arr = rows[i + 1].dep - rows[i + 1].dwell;
+    rows[i].dep = Math.round((rows[i + 1].arr - mins[i] * 1.1) / 5) * 5;
+  }
   for (let k = 0; k < anchorIdx.length - 1; k++) {
     const a = anchorIdx[k], b = anchorIdx[k + 1];
     const depA = rows[a].dep;
