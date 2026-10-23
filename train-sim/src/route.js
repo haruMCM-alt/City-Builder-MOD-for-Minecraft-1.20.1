@@ -4,6 +4,7 @@
 // (© OpenStreetMap contributors, ODbL 1.0; elevation 出典: 国土地理院 標高タイル).
 import { ALIGN, OSM_STATIONS, OSM_CURVES } from './route-data.js';
 import { SHINKANSEN } from './shinkansen-data.js';
+import { LINES } from './lines-data.js';
 
 const STATION_INFO = [
   { name: '上野', kana: 'うえの', en: 'Ueno', area: 'city' },
@@ -39,6 +40,8 @@ export const STATIONS = STATION_INFO.map((st) => {
   return { ...st, s: Math.round(s) };
 });
 const ST = Object.fromEntries(STATIONS.map((x) => [x.name, x.s]));
+const SUBURB = ['辻堂', '茅ヶ崎', '大磯', '二宮', '国府津', '鴨宮'];
+function lineArea(name) { return SUBURB.includes(name) ? 'suburb' : 'city'; }
 
 // Platform side for the doors (left/right as seen facing north).
 // Taken from the "お出口は○側です" parts of the in-car announcements.
@@ -70,8 +73,16 @@ export const ISLAND_W = 7.0;
 export const SIDE_PF_W = 6.0;
 export const PF_EDGE = 1.55;
 
-const S_MIN = -1500;
+const U_MIN = -1500;
 const S_MAX = Math.floor(ALIGN.s0 + (ALIGN.n - 1) * ALIGN.ds) - 2;
+const PREFIX_EXTRA = 700;   // straight track added beyond the far end of a through line
+
+/** lines the player can drive: the 宇都宮線 itself and the through services joining it */
+export const LINE_LIST = [
+  { id: 'utsunomiya', name: '宇都宮線（上野 ⇄ 宇都宮）' },
+  { id: 'ueno-tokyo', name: '上野東京ライン（小田原 ⇄ 東京 ⇄ 宇都宮）' },
+  { id: 'shonan-shinjuku', name: '湘南新宿ライン（新宿 ⇄ 大宮 ⇄ 宇都宮）' },
+];
 
 // --- deterministic RNG -------------------------------------------------------
 export function mulberry32(a) {
@@ -92,9 +103,24 @@ function realCurves() {
 }
 
 export class Route {
-  constructor() {
-    this.stations = STATIONS.map((st, i) => ({ ...st, index: i, door: DOOR_SIDE[st.name] || 'left' }));
-    this.curves = realCurves();
+  /** lineId: 'utsunomiya' | 'ueno-tokyo' | 'shonan-shinjuku' */
+  constructor(lineId = 'utsunomiya') {
+    const L = LINES[lineId] || null;
+    this.line = L ? lineId : 'utsunomiya';
+    this.lineName = (LINE_LIST.find((x) => x.id === this.line) || LINE_LIST[0]).name;
+    this.prefix = L;
+    // chainage range: the 宇都宮線 starts 1.5 km south of 上野; a through line starts at its far end
+    this.S_MIN = L ? Math.floor(L.s0) - PREFIX_EXTRA : U_MIN;
+    this.junction = L ? L.junction : -Infinity;
+    const S_MIN = this.S_MIN;
+    // stations: the prefix line's own (front stop = stop node + 140 m), then the 宇都宮線 from the junction on
+    const own = L ? [...L.stations].sort((a, b) => a.node - b.node).map((x) => ({ name: x.name, kana: '', en: '', s: Math.round(x.node + 140), area: lineArea(x.name), prefix: true })) : [];
+    const shared = STATIONS.map((st, i) => ({ ...st, cue: i })).filter((st) => !L || st.s > L.junction + 50 || (this.line === 'ueno-tokyo' && st.s >= 0));
+    this.stations = [...own, ...shared].map((st, i) => ({ ...st, index: i, door: DOOR_SIDE[st.name] || 'left' }));
+    this.ST = Object.fromEntries(this.stations.map((x) => [x.name, x.s]));
+    this.rivers = [...(L ? L.rivers : []), ...RIVERS.filter((r) => !L || r.s0 > L.junction)];
+    this.viaducts = [...(L ? L.viaducts : []), ...VIADUCTS.filter((v) => !L || v.s0 > L.junction)];
+    this.curves = realCurves().filter((c) => !L || c.s0 > L.junction);
     const n = S_MAX - S_MIN + 1;
     this.n = n;
     this.kappa = new Float32Array(n);
@@ -102,9 +128,20 @@ export class Route {
     this.z = new Float64Array(n);
     this.th = new Float64Array(n);
     // cubic Hermite between the 10 m samples: positions exact at the samples, tangents from the heading
-    const A = ALIGN, ds = A.ds;
     for (let i = 0; i < n; i++) {
       const s = S_MIN + i;
+      // the through line below its junction, beyond its far end a straight run-out
+      const A = L && s < L.s0 + (L.n - 1) * L.ds ? L : ALIGN, ds = A.ds;
+      if (A === L && s < L.s0) {
+        const t0 = L.th[0], d = s - L.s0;
+        this.x[i] = L.x[0] + d * -Math.sin(t0); this.z[i] = L.z[0] + d * -Math.cos(t0); this.th[i] = t0; this.kappa[i] = 0;
+        continue;
+      }
+      if (A === ALIGN && s < ALIGN.s0) {
+        const t0 = ALIGN.th[0], d = s - ALIGN.s0;
+        this.x[i] = ALIGN.x[0] + d * -Math.sin(t0); this.z[i] = ALIGN.z[0] + d * -Math.cos(t0); this.th[i] = t0; this.kappa[i] = 0;
+        continue;
+      }
       const f = (s - A.s0) / ds;
       const j = Math.max(0, Math.min(A.n - 2, Math.floor(f)));
       const u = Math.min(1, Math.max(0, f - j));
@@ -116,16 +153,17 @@ export class Route {
       this.kappa[i] = (A.k[j] + (A.k[j + 1] - A.k[j]) * u) * 1e-6;
     }
     // real height above sea level (for the gradient the train climbs), per 10 m
-    this.realElev = Float32Array.from(A.e);
+    this.realElev = Float32Array.from(ALIGN.e);
     this.buildLimits();
     this.buildElevation();
   }
 
   // --- vertical alignment: viaducts and bridges, joined by 12‰ ramps ------------
   buildElevation() {
+    const S_MIN = this.S_MIN;
     const n = Math.ceil((S_MAX - S_MIN) / 2) + 1;
     this.elevTable = new Float32Array(n);
-    const feats = [...VIADUCTS, ...RIVERS];
+    const feats = [...this.viaducts, ...this.rivers];
     for (let i = 0; i < n; i++) {
       const s = S_MIN + i * 2;
       let h = 0;
@@ -142,7 +180,7 @@ export class Route {
   }
 
   elev(s) {
-    const f = (s - S_MIN) / 2;
+    const f = (s - this.S_MIN) / 2;
     const i = Math.max(0, Math.min(this.elevTable.length - 2, Math.floor(f)));
     const t = Math.min(1, Math.max(0, f - i));
     return this.elevTable[i] + (this.elevTable[i + 1] - this.elevTable[i]) * t;
@@ -150,6 +188,7 @@ export class Route {
 
   /** real height above sea level at s (m), from the GSI elevation along the line */
   heightAt(s) {
+    if (s < this.junction) s = this.junction;          // through lines: no elevation data (level)
     const f = (s - ALIGN.s0) / ALIGN.ds;
     const i = Math.max(0, Math.min(ALIGN.n - 2, Math.floor(f)));
     const t = Math.min(1, Math.max(0, f - i));
@@ -161,23 +200,23 @@ export class Route {
 
   /** what carries the track at s */
   structureAt(s) {
-    for (const r of RIVERS) {
+    for (const r of this.rivers) {
       if (s >= r.s0 && s <= r.s1) return { type: s >= r.w0 && s <= r.w1 ? 'bridge' : 'viaduct', river: r };
     }
-    for (const v of VIADUCTS) if (s >= v.s0 && s <= v.s1) return { type: 'viaduct', viaduct: v };
+    for (const v of this.viaducts) if (s >= v.s0 && s <= v.s1) return { type: 'viaduct', viaduct: v };
     return { type: this.elev(s) > 0.25 ? 'embankment' : 'ground' };
   }
 
   riverAt(s, margin = 0) {
-    return RIVERS.find((r) => s > r.s0 - margin && s < r.s1 + margin) || null;
+    return this.rivers.find((r) => s > r.s0 - margin && s < r.s1 + margin) || null;
   }
 
-  get sMin() { return S_MIN + 10; }
+  get sMin() { return this.S_MIN + 10; }
   get sMax() { return S_MAX - 10; }
 
   /** centre-line point + heading at s (metres), with lateral offset (+ = left). */
   pose(s, offset = 0, out = {}) {
-    let f = s - S_MIN;
+    let f = s - this.S_MIN;
     if (f < 0) f = 0;
     if (f > this.n - 2) f = this.n - 2;
     const i = Math.floor(f);
@@ -200,7 +239,7 @@ export class Route {
   }
 
   curvature(s) {
-    const i = Math.round(s - S_MIN);
+    const i = Math.round(s - this.S_MIN);
     return i >= 0 && i < this.n ? this.kappa[i] : 0;
   }
 
@@ -226,7 +265,8 @@ export class Route {
 
   /** extra parallel lines (京浜東北線 etc.) south of 大宮 */
   extraTracks(s) {
-    if (s > ST['大宮'] + 800 || s < -1400) return [];
+    const from = this.prefix ? this.prefix.area.parallel === this.prefix.junction + 800 ? this.S_MIN + 300 : this.prefix.area.parallel : -1400;
+    if (s > this.ST['大宮'] + 800 || s < from) return [];
     let base = this.upOffset(s);
     // leave room for the up-side platform at stations with left doors
     for (const st of this.stations) {
@@ -241,8 +281,24 @@ export class Route {
   buildLimits() {
     // piecewise speed limits {s0, s1, v}
     const L = [];
-    L.push({ s0: -1500, s1: 650, v: 45, why: '構内' });
-    L.push({ s0: 650, s1: ST['赤羽'] + 250, v: 95 });
+    const ST = this.ST, S_MIN = this.S_MIN;
+    if (this.line === 'utsunomiya') L.push({ s0: -1500, s1: 650, v: 45, why: '構内' });
+    if (this.line !== 'shonan-shinjuku') L.push({ s0: 650, s1: ST['赤羽'] + 250, v: 95 });
+    if (this.prefix) {
+      const P = this.prefix;
+      // through lines: curve limits from the curvature (R over 30 m), 90 km/h in the inner-city stretch
+      for (let j = 3; j < P.n - 3; j++) {
+        const kk = Math.abs((P.k[j - 3] + P.k[j] + P.k[j + 3]) / 3) * 1e-6;
+        if (kk < 1 / 1250) continue;
+        const R = 1 / kk;
+        const v = R <= 350 ? 65 : R <= 450 ? 75 : R <= 600 ? 85 : R <= 800 ? 95 : R <= 1000 ? 105 : 115;
+        const s = P.s0 + j * P.ds;
+        L.push({ s0: s - 30, s1: s + 30, v, why: `R${Math.round(R)}` });
+      }
+      L.push({ s0: S_MIN, s1: P.stations[0].node + 400, v: 60, why: '構内' });
+      if (this.line === 'ueno-tokyo') L.push({ s0: -11000, s1: 650, v: 90, why: '都心' });
+      if (this.line === 'shonan-shinjuku') L.push({ s0: S_MIN, s1: P.junction - 18500, v: 90, why: '都心' });
+    }
     L.push({ s0: ST['大宮'] - 1000, s1: ST['大宮'] + 500, v: 85, why: '大宮構内' });
     L.push({ s0: ST['小山'] - 800, s1: ST['小山'] + 500, v: 95, why: '小山構内' });
     L.push({ s0: ST['宇都宮'] - 1100, s1: S_MAX, v: 70, why: '宇都宮構内' });
@@ -257,19 +313,20 @@ export class Route {
       else if (c.R <= 1200) v = 115;
       if (v < 120) L.push({ s0: c.s0 - 20, s1: c.sEnd + 20, v, why: `R${Math.round(c.R)}` });
     }
+    void S_MIN;
     this.limits = L;
     // per-10m table of the effective line limit
-    const n = Math.ceil((S_MAX - S_MIN) / 10) + 1;
+    const n = Math.ceil((S_MAX - this.S_MIN) / 10) + 1;
     this.limitTable = new Uint8Array(n).fill(120);
     for (const l of L) {
-      const a = Math.max(0, Math.floor((l.s0 - S_MIN) / 10));
-      const b = Math.min(n - 1, Math.ceil((l.s1 - S_MIN) / 10));
+      const a = Math.max(0, Math.floor((l.s0 - this.S_MIN) / 10));
+      const b = Math.min(n - 1, Math.ceil((l.s1 - this.S_MIN) / 10));
       for (let i = a; i <= b; i++) this.limitTable[i] = Math.min(this.limitTable[i], l.v);
     }
   }
 
   limitAt(s) {
-    const i = Math.round((s - S_MIN) / 10);
+    const i = Math.round((s - this.S_MIN) / 10);
     if (i < 0) return this.limitTable[0];
     if (i >= this.limitTable.length) return this.limitTable[this.limitTable.length - 1];
     return this.limitTable[i];
@@ -298,6 +355,7 @@ export class Route {
    * { lat (+ = left of the down track), h (deck height above ground), ss (its own chainage) } or null
    */
   shinkansen(s) {
+    if (this.prefix && s < this.prefix.shinkansenFrom) return null;
     const S = SHINKANSEN;
     const f = (s - S.s0) / S.ds;
     const i = Math.floor(f);
@@ -324,7 +382,9 @@ export class Route {
   /** area density 0..1 for scenery */
   density(s) {
     let d = 0.15;
-    if (s < ST['大宮'] + 800) d = 0.85;
+    const ST = this.ST;
+    if (this.prefix && s < this.prefix.area.city) d = 0.45;          // 東海道線 south of 大船: towns and hills
+    else if (s < ST['大宮'] + 800) d = 0.85;
     else if (s < ST['東大宮'] + 1400) d = 0.55;
     else if (s > ST['宇都宮'] - 2200) d = 0.7;
     for (const st of this.stations) {
