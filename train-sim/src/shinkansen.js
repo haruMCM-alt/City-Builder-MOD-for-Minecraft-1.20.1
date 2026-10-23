@@ -15,9 +15,11 @@ const LIVERY = {
   E8: { bands: [[1.75, 0xf4f4f2], [2.05, 0xf2b300], [9, 0x5b2c83]], nose: 9, w: 2.945, h: 3.65, len: 20.5, head: 23 },
   E2: { bands: [[1.5, 0x2a4990], [1.64, 0xd155ab], [9, 0xd6dad9]], nose: 9.1, w: 3.38, h: 3.7, len: 25, head: 25.7 },
   E7: { bands: [[1.62, 0xf9f8f3], [1.74, 0xc09584], [1.84, 0x0158e5], [2.9, 0xf9f8f3], [9, 0x0158e5]], nose: 9.1, w: 3.38, h: 3.65, len: 25, head: 26 },
+  // N700S (東海道新幹線): white with the blue window line
+  N700: { bands: [[1.98, 0xf7f7f5], [2.1, 0x1b4ea3], [2.22, 0xf7f7f5], [9, 0xf7f7f5]], nose: 10.7, w: 3.36, h: 3.6, len: 25, head: 27.35 },
 };
 // formations as they run on the 宇都宮 side (E6 / E8 are coupled to the north end of an E5)
-const SETS = [
+export const SETS = [
   { name: 'はやぶさ・こまち', parts: [['E6', 7], ['E5', 10]], w: 3, stopU: false },
   { name: 'やまびこ・つばさ', parts: [['E8', 7], ['E5', 10]], w: 3, stopU: true },
   { name: 'はやぶさ', parts: [['E5', 10]], w: 2, stopU: false },
@@ -26,6 +28,8 @@ const SETS = [
   { name: 'やまびこ', parts: [['E5', 10]], w: 1.5, stopU: true },
   { name: 'かがやき', parts: [['E7', 12]], w: 1.2, south: true },
 ];
+/** 東海道新幹線 */
+export const TOKAIDO_SETS = [{ name: 'のぞみ', parts: [['N700', 16]], w: 1 }];
 
 /** cross-section (half, from the bottom edge up to the roof centre), metres: [z, y] for a 3.35 m body */
 const PROFILE = [[1.52, 0.55], [1.63, 0.95], [1.675, 1.6], [1.675, 2.2], [1.6, 2.8], [1.4, 3.3], [1.05, 3.56], [0.5, 3.64], [0, 3.65]];
@@ -120,7 +124,7 @@ function carGeometry(type, L, nose) {
   return out;
 }
 
-class ShinkansenSet {
+export class ShinkansenSet {
   constructor(set) {
     this.set = set;
     this.group = new THREE.Group();

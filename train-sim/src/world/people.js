@@ -97,7 +97,7 @@ export const PERSON_KEYS = OUTFITS.map((_, i) => 'person_' + i);
 export const SIT_KEYS = [0, 1, 2, 3].map((i) => 'sit_' + i);
 
 /** LED departure board (発車標) texture: two trains, amber/green dot text on black */
-export function departureBoardTexture(st, seed, dir = 'down') {
+export function departureBoardTexture(st, seed, dir = 'down', custom = null) {
   const W = 512, H = 128;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -108,6 +108,8 @@ export function departureBoardTexture(st, seed, dir = 'down') {
   // up trains run through 上野 onto the 上野東京ライン
   const upRow = (k) => (k ? ['普通', '#ff9a1a', '熱海', base + 9, '15両'] : ['普通', '#ff9a1a', st.name === '上野' ? '東京' : st.prefix ? '熱海' : '上野', base + 3, '10両']);
   const rows = dir === 'up' ? [upRow(0), upRow(1)] : dir === 'both' ? [downRow(seed % 2), upRow(0)] : [downRow(0), downRow(seed % 2)];
+  // other lines' platforms: [kind, colour, destination, cars] for each of the two rows
+  if (custom) custom.forEach((row, i) => { if (i < 2) rows[i] = [row[0], row[1], row[2], row[4] != null ? row[4] % (24 * 60) : base + 3 + i * 4, row[3]]; });
   g.textBaseline = 'middle';
   rows.forEach(([kind, kc, dest, t, cars], i) => {
     const y = 34 + i * 58;

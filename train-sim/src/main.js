@@ -58,7 +58,8 @@ import { SERVICES, DEFAULT_SERVICE } from './services.js';
 import { TrackView } from './trackview.js';
 import { atmosphere, TIME_SHIFT } from './world/atmosphere.js';
 import { Rain, Windscreen } from './world/rain.js';
-import { ShinkansenTraffic } from './shinkansen.js';
+import { ShinkansenTraffic, ShinkansenSet, SETS as SHIN_SETS, TOKAIDO_SETS } from './shinkansen.js';
+import { Traffic } from './traffic.js';
 let shinkansen = null;
 // time of day / weather: the preset in use, rain streaks, windscreen drops, our headlight, platform lamps
 let atmo = null, rain = null, screen = null, headLight = null, cabFill = null, pfLamps = null, slipShown = 0;
@@ -484,7 +485,13 @@ async function startGame(resume = null) {
   });
   if (resume) resumeAt(resume, tt);
   lastSavedTi = game.ti;
-  traffic = new Traffic();
+  traffic = new Traffic({
+    scene, route, view, sound, clock: () => (game ? game.clock : 0), listenerS: () => view.toRoute(listenerS()),
+    make: makeTrain, axleOffsets,
+  });
+  // departure boards on the other lines' platforms show the next trains of the timetable
+  world.departures = (g, name) => traffic.departures(g, name, game ? game.clock : 0, 2);
+  world.ourDepartures = (st, which) => ourBoardRows(st, which, tt, service, formation.length);
   if (shinkansen) shinkansen.clear();
   shinkansen = new ShinkansenTraffic(scene, route, sound);
   // the train ahead: same service a few minutes earlier, simulated up to now
@@ -761,6 +768,7 @@ function stationRange(v, list) {
 function teardown() {
   if (player) player.dispose();
   if (traffic) traffic.clear();
+  clearTrainPool();
   if (shinkansen) { shinkansen.clear(); shinkansen = null; }
   if (signals) { signals.dispose(); signals = null; }
   if (leadSet) { leadSet.dispose(); leadSet = null; }
@@ -797,131 +805,106 @@ function backToMenu() {
 // ---------------------------------------------------------------------------
 // oncoming / parallel traffic
 // ---------------------------------------------------------------------------
-// trains on the parallel lines (route.parallels): model, livery, speed, how often (s), destinations [north, south]
-const PAR_TRAINS = {
-  keihin: { model: 'e233', livery: 'keihin', v: 75, every: [110, 210], dest: ['各駅停車 大宮', '各駅停車 大船'] },
-  yamanote: { model: 'e233', livery: 'yamanote', v: 65, every: [70, 140], dest: ['山手線 池袋・新宿方面', '山手線 東京・品川方面'] },
-  joban: { model: 'e231', livery: 'joban', v: 70, every: [150, 260], dest: ['普通 取手', '快速 品川'] },
-  yokosuka: { model: 'e231', livery: 'yokosuka', v: 90, every: [140, 250], dest: ['快速 千葉', '横須賀線 逗子'] },
-  local: { model: null, v: 90, every: [150, 260], dest: ['普通 籠原', '快速 新宿'] },
-  freight: { freight: true, v: 85, every: [200, 380] },
+// the other trains (src/traffic.js): what runs on each line — model, livery, formation, destinations [north, south]
+const COMMUTER10 = 'CPMMPMMPMR', COMMUTER11 = 'CPMMPMMPMMR';
+const LINE_TRAINS = {
+  keihin: { model: 'e233', livery: 'keihin', formation: COMMUTER10, dest: ['各駅停車 大宮', '各駅停車 大船'] },
+  yamanote: { model: 'e233', livery: 'yamanote', formation: COMMUTER11, dest: ['山手線 池袋・上野方面', '山手線 東京・品川方面'] },
+  joban: { model: 'e231', livery: 'joban', cars: 15, dest: ['快速 取手', '快速 品川'] },
+  chuo: { model: 'e233', livery: 'chuo', formation: COMMUTER10, dest: ['快速 高尾', '快速 東京'] },
+  sobu: { model: 'e231', livery: 'sobu', formation: COMMUTER10, dest: ['各駅停車 千葉', '各駅停車 三鷹'] },
+  yokosuka: { model: 'e231', livery: 'yokosuka', cars: 15, dest: ['快速 千葉', '横須賀線 逗子'] },
+  saikyo: { model: 'e233', livery: 'saikyo', formation: COMMUTER10, dest: ['各駅停車 川越', '快速 新木場'] },
+  local: { cars: 15, dest: ['普通 籠原', '快速 新宿'] },
+  'tohoku-cargo': { cars: 15, dest: ['特別快速 高崎', '特別快速 小田原'] },
+  main: { dest: ['普通 宇都宮', '普通 熱海'] },
+  parked: { dest: ['普通 宇都宮', '普通 熱海'] },
 };
-
-class Traffic {
-  constructor() {
-    this.list = [];
-    this.timer = { up: 20 };
-    this.groupTimer = new Map();
-    this.pose = {};
+/** where our line's trains go: [northbound, southbound] */
+function mainDests() {
+  return ['宇都宮', route.line === 'utsunomiya' ? '上野' : route.line === 'shonan-shinjuku' ? '小田原' : '熱海'];
+}
+/** departure board rows on our own platforms: our train, the next one, and the trains the other way */
+function ourBoardRows(st, which, tt, service, cars) {
+  const mine = view.up ? 'up' : 'down';
+  const clock = game ? game.clock : 0;
+  const rows = [];
+  const row = tt.find((r) => r.station.name === st.name);
+  const dest = tt[tt.length - 1].station.name;
+  const kc = service.short === '普通' ? '#ff9a1a' : '#ff4a3a';
+  if ((which === 'both' || which === mine) && row && row.dep != null) {
+    rows.push([service.short, kc, dest, `${cars}両`, Math.floor(row.dep / 60)]);
+    if (which !== 'both') rows.push(['普通', '#ff9a1a', dest, '15両', Math.floor(row.dep / 60) + 13]);
   }
-  clear() { for (const t of this.list) { t.set.dispose(); if (t.voice) t.voice.dispose(); } this.list = []; this.groupTimer.clear(); }
+  if (which === 'both' || which !== mine) {
+    const other = mainDests()[view.up ? 0 : 1];
+    for (const d of traffic.departures(null, st.name, clock, 2)) if (rows.length < 2) rows.push(['普通', '#ff9a1a', other, '15両', Math.floor(d.t / 60)]);
+  }
+  return rows.length ? rows : null;
+}
 
-  /** s = spawn position in view coordinates (ahead of us); main-line trains run toward us on the other track */
-  spawn(kind, sView) {
-    const s = view.toRoute(sView);
-    const dirReal = -view.sign;              // they run the opposite way to us
-    const pick = ['e231', 'e233', 'e231', 's211'][Math.floor(Math.random() * 4)];
-    const veh = VEHICLES[pick];
-    const formation = Math.random() < 0.6 ? veh.formations[15] : veh.formations[10];
-    const opts = view.up
-      ? { key: modelKey(veh), dest: Math.random() < 0.5 ? '普通 宇都宮' : '快速 小金井', forward: true }
-      : { key: modelKey(veh), dest: Math.random() < 0.5 ? '普通 上野' : '快速 小田原', forward: false };
-    const set = new TrainSet(gltfs[pick].scene, veh, formation, opts);
+/**
+ * a train for the timetable traffic: {group, length, nCars, shinkansen, place(sFront, off, dir), dispose(), makeVoice()}.
+ * Building a train takes a while, so trains that leave are kept (hidden) and used again.
+ */
+const trainPool = new Map();
+function makeTrain(kind, forward, k) {
+  const L0 = LINE_TRAINS[kind] || LINE_TRAINS.main;
+  const variant = kind === 'freight' ? Math.abs(k) % 3 : kind.startsWith('shin-') ? Math.abs(k) % (kind === 'shin-tokaido' ? TOKAIDO_SETS.length : SHIN_SETS.length) : L0.model ? 0 : Math.abs(k) % 4;
+  const key = `${kind}|${forward}|${variant}`;
+  const pool = trainPool.get(key);
+  if (pool && pool.length) {
+    const t = pool.pop();
+    t.group.visible = true;
+    return t;
+  }
+  const t = buildTrain(kind, forward, variant);
+  const free = t.dispose;
+  t.dispose = () => {
+    // back into the pool (a few of each kind), or really gone
+    const list = trainPool.get(key) || [];
+    if (list.length < 3) { t.group.visible = false; list.push(t); trainPool.set(key, list); } else free();
+  };
+  t.destroy = free;
+  return t;
+}
+function clearTrainPool() {
+  for (const list of trainPool.values()) for (const t of list) t.destroy();
+  trainPool.clear();
+}
+function buildTrain(kind, forward, k) {
+  if (kind === 'freight') {
+    const set = new FreightSet({ wagons: 12 + (Math.abs(k * 7) % 9), forward, seed: k * 7919 + 13 });
     scene.add(set.group);
-    trainNight(set);
-    const track = view.up ? () => 0 : (x) => route.upOffset(x);
-    this.add({ set, s, dirReal, v: (95 + Math.random() * 15) / 3.6, track, kind, veh, n: formation.length });
+    return { group: set.group, length: set.length, nCars: set.cars.length, place: (s, off) => set.place(route, s, off, 0.003), dispose: () => set.dispose(), makeVoice: () => sound.addTrain(VEHICLES.e231, set.cars.length) };
   }
-
-  /** a train on a parallel line: on track 0 northbound (+s), on track 1 southbound */
-  spawnParallel(g, s, dirReal) {
-    const T = PAR_TRAINS[g.kind] || PAR_TRAINS.keihin;
-    const forward = dirReal > 0;
-    let set, veh, n;
-    if (T.freight) {
-      set = new FreightSet({ wagons: 12 + Math.floor(Math.random() * 9), forward, seed: Math.floor(Math.random() * 1e6) });
-      veh = VEHICLES.e231; n = set.cars.length;
-    } else {
-      const pick = T.model || ['e231', 'e233', 'e231', 's211'][Math.floor(Math.random() * 4)];
-      veh = VEHICLES[pick];
-      const formation = T.model ? veh.formations[10] : (Math.random() < 0.6 ? veh.formations[15] : veh.formations[10]);
-      n = formation.length;
-      set = new TrainSet(gltfs[pick].scene, veh, formation, { key: modelKey(veh), dest: T.dest[forward ? 0 : 1], forward, passengers: true });
-      if (T.livery) recolorLivery(set, T.livery);
-    }
-    scene.add(set.group);
-    trainNight(set);
-    const i = forward ? 0 : 1;
-    const track = (x) => route.parallelOffset(g, i, x);
-    this.add({ set, s, dirReal, v: (T.v + Math.random() * 10 - 5) / 3.6, track, kind: g.kind, veh, n, group: g });
+  if (kind === 'shin-tokaido' || kind === 'shin-tohoku') {
+    const list = kind === 'shin-tokaido' ? TOKAIDO_SETS : SHIN_SETS;
+    const spec = list[Math.abs(k) % list.length];
+    const tr = new ShinkansenSet(spec);
+    scene.add(tr.group);
+    const p = {};
+    let dirSet = 0;
+    return {
+      group: tr.group, length: tr.length, nCars: tr.cars.length, shinkansen: true,
+      place: (s, off, dir) => {
+        if (dir !== dirSet) { tr.setDir(dir); dirSet = dir; }
+        tr.place(s, dir, (x) => { route.pose(x, off(x), p); return { x: p.x, y: p.y, z: p.z, yaw: p.yaw }; });
+      },
+      dispose: () => tr.dispose(),
+      makeVoice: () => (sound.addShinkansen ? sound.addShinkansen(tr.cars.length) : null),
+    };
   }
-
-  add(t) {
-    t.voice = sound.addTrain(t.veh, t.n);
-    t.axles = axleOffsets(t.n);
-    t.torque = t.kind === 'freight' ? 0.5 : Math.random() < 0.5 ? 0.3 : 0;
-    this.list.push(t);
-  }
-
-  update(dt, sp) {
-    this.timer.up -= dt;
-    if (this.timer.up <= 0) {
-      this.timer.up = 150 + Math.random() * 200;
-      const s = sp + 2600;
-      if (s < view.sMax - 200) this.spawn('main', s);
-    }
-    // parallel lines near us: oncoming trains from ahead, or same-direction ones coming up from behind
-    const here = view.toRoute(sp);
-    for (const g of route.parallelsIn(here - 3000, here + 3000)) {
-      const T = PAR_TRAINS[g.kind] || PAR_TRAINS.keihin;
-      let tm = this.groupTimer.has(g) ? this.groupTimer.get(g) : 4 + Math.random() * 25;
-      tm -= dt;
-      if (tm <= 0) {
-        tm = T.every[0] + Math.random() * (T.every[1] - T.every[0]);
-        const ahead = view.toRoute(sp + 2400), behind = view.toRoute(sp - 900);
-        const inside = (s) => s >= g.s0 && s <= g.s1;
-        // trains never run onto a junction with our own tracks: only away from a 'merge' end
-        const ok = (dir) => !(dir > 0 && g.end1 === 'merge') && !(dir < 0 && g.end0 === 'merge');
-        const opts = [];
-        if (inside(ahead) && ok(-view.sign)) opts.push([ahead, -view.sign]);
-        if (inside(behind) && ok(view.sign)) opts.push([behind, view.sign]);
-        if (opts.length) { const [s, d] = opts[Math.random() < 0.6 ? 0 : opts.length - 1]; this.spawnParallel(g, s, d); }
-      }
-      this.groupTimer.set(g, tm);
-    }
-    const lp = view.toRoute(listenerS());
-    for (const t of this.list) {
-      const prev = t.s;
-      t.s += t.dirReal * t.v * dt;
-      t.set.place(route, t.s, t.track, 0.004);
-      // rail joints under every axle (its cars trail behind the front, against its direction)
-      if (Math.abs(t.s - lp) < 700) {
-        for (const off of t.axles) {
-          const a = prev - t.dirReal * off, b = t.s - t.dirReal * off;
-          if (Math.floor(a / 25) !== Math.floor(b / 25)) {
-            const sj = Math.max(Math.floor(a / 25), Math.floor(b / 25)) * 25;
-            const p = route.pose(sj, t.track(sj), this.pose);
-            sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, t.v * 3.6, false, Math.abs(b - sj) / Math.max(t.v, 0.5));
-          }
-        }
-      }
-      if (t.voice) {
-        const pos = [0.12, 0.5, 0.88].map((f) => {
-          const sv = t.s - t.dirReal * t.set.length * f;
-          const p = route.pose(sv, t.track(sv), {});
-          return { x: p.x, y: p.y + 0.8, z: p.z };
-        });
-        t.voice.update(pos, t.v * 3.6, t.torque, { curvature: route.curvature(t.s), brake: 0 });
-      }
-    }
-    this.list = this.list.filter((t) => {
-      const tv = view.fromRoute(t.s);     // its front in our coordinates
-      const tail = view.fromRoute(t.s - t.dirReal * t.set.length);
-      const keep = Math.max(tv, tail) > sp - 900 && Math.min(tv, tail) < sp + 3600 && t.s > route.sMin + 100 && t.s < route.sMax - 100;
-      if (!keep) { t.set.dispose(); if (t.voice) t.voice.dispose(); }
-      return keep;
-    });
-  }
+  const L = LINE_TRAINS[kind] || LINE_TRAINS.main;
+  const pick = L.model || ['e231', 'e233', 'e231', 's211'][Math.abs(k) % 4];
+  const veh = VEHICLES[pick];
+  const formation = L.formation || (L.cars === 15 || Math.abs(k) % 5 < 3 ? veh.formations[15] : veh.formations[10]);
+  const dest = kind === 'main' || kind === 'parked' ? '普通 ' + mainDests()[forward ? 0 : 1] : L.dest[forward ? 0 : 1];
+  const set = new TrainSet(gltfs[pick].scene, veh, formation, { key: modelKey(veh), dest, forward });
+  if (L.livery) recolorLivery(set, L.livery);
+  scene.add(set.group);
+  trainNight(set);
+  return { group: set.group, length: set.length, nCars: formation.length, place: (s, off) => set.place(route, s, off, 0.004), dispose: () => set.dispose(), makeVoice: () => sound.addTrain(veh, formation.length) };
 }
 
 // liveries of the parallel-line trains: the 湘南色 bands (orange / green) of our models, and the same
@@ -931,6 +914,9 @@ const LIVERIES = {
   yamanote: [0x80c241, 0x80c241],    // 山手線: ウグイス色
   joban: [0x1d5aa8, 0x1d5aa8],       // 常磐線 E531系: 青
   yokosuka: [0x1b2c66, 0xe2d7b0],    // 横須賀線: 紺とクリーム (スカ色)
+  chuo: [0xf15a22, 0xf15a22],        // 中央線快速 E233系0番台: オレンジバーミリオン
+  sobu: [0xffd400, 0xffd400],        // 中央・総武線各駅停車: カナリアイエロー
+  saikyo: [0x00ac84, 0x00ac84],      // 埼京線 E233系7000番台: ウグイス色の濃いグリーン
 };
 const liveryMats = new Map();
 function liveryFront(mat, cols) {
@@ -1428,7 +1414,7 @@ function updateView(dt) {
       leadVoice.update(pos, lead.v * 3.6, lead.v > 0.5 && !lead.dwell ? 0.3 : 0, { curvature: view.curvature(lead.x), brake: 0 });
     }
   } else if (leadSet && lead && lead.done) { leadSet.dispose(); leadSet = null; if (leadVoice) { leadVoice.dispose(); leadVoice = null; } }
-  for (const t of traffic.list) trains.push({ front: t.s, len: t.set.length, dir: t.dirReal });
+  for (const t of traffic.list) trains.push({ front: t.s, len: t.len, dir: t.dirReal });
   world.animate(dt, trains, cp);
   const fp = view.pose(physics.s - 20, 0, {});
   const sd = world.env.sunDir;

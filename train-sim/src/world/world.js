@@ -1,7 +1,6 @@
 // Streams the scenery around the train in 200 m chunks.
 import * as THREE from 'three';
 import { stationProtos, PERSON_KEYS, SIT_KEYS, departureBoardTexture, clockTexture } from './people.js';
-import { PLATFORM_LEN, PF_EDGE, SIDE_PF_W, PAR_RAMP as PAR_RAMP_W } from '../route.js';
 import { makeTextures } from './textures.js';
 import { atmosphere, addWindowLights } from './atmosphere.js';
 import { Environment, GROUND_Y } from './sky.js';
@@ -26,7 +25,7 @@ function canvasTex(w, h, draw, repeat = true) {
   return t;
 }
 
-function stationSignTexture(st, prev, next) {
+function stationSignTexture(st, prev, next, color = null) {
   // JR East style: white board, name in large type, line-colour band with neighbours
   return canvasTex(768, 288, (g, w, h) => {
     g.fillStyle = '#fbfbf8'; g.fillRect(0, 0, w, h);
@@ -34,8 +33,8 @@ function stationSignTexture(st, prev, next) {
     g.font = `bold 96px ${FONT}`; g.fillText(st.name, w / 2, 112);
     g.font = `500 32px ${FONT}`; g.fillText(st.kana, w / 2, 42);
     g.font = `30px ${FONT}`; g.fillStyle = '#333'; g.fillText(st.en, w / 2, 176);
-    g.fillStyle = '#f68b1e'; g.fillRect(0, 202, w, 16);
-    g.fillStyle = '#1e9645'; g.fillRect(0, 218, w, 8);
+    if (color) { g.fillStyle = color; g.fillRect(0, 202, w, 24); }
+    else { g.fillStyle = '#f68b1e'; g.fillRect(0, 202, w, 16); g.fillStyle = '#1e9645'; g.fillRect(0, 218, w, 8); }
     g.fillStyle = '#111'; g.font = `30px ${FONT}`;
     if (prev) { g.textAlign = 'left'; g.fillText('◀ ' + prev.name, 24, 256); }
     if (next) { g.textAlign = 'right'; g.fillText(next.name + ' ▶', w - 24, 256); }
@@ -50,6 +49,22 @@ function textBoardTexture(text, bg, fg, w = 256, h = 256, size = 150) {
     g.font = `bold ${size}px ${FONT}`; g.fillText(text, w / 2, h / 2 + 6);
   }, false);
 }
+
+// departure boards of the other lines' platforms: [kind, colour, destination, cars] x 2
+const BOARD_ROWS = {
+  keihin: [['各駅停車', '#4cc4ff', '大宮', '10両'], ['各駅停車', '#4cc4ff', '大船', '10両']],
+  yamanote: [['山手線', '#9fe060', '池袋・新宿方面', '11両'], ['山手線', '#9fe060', '東京・品川方面', '11両']],
+  joban: [['快速', '#ff4a3a', '取手', '15両'], ['普通', '#ff9a1a', '土浦', '15両']],
+  chuo: [['快速', '#ff4a3a', '高尾', '10両'], ['中央特快', '#4cc4ff', '青梅', '10両']],
+  sobu: [['各駅停車', '#ffd400', '千葉', '10両'], ['各駅停車', '#ffd400', '三鷹', '10両']],
+  yokosuka: [['快速', '#ff4a3a', '逗子', '15両'], ['普通', '#ff9a1a', '久里浜', '15両']],
+  saikyo: [['各駅停車', '#4cff6a', '川越', '10両'], ['快速', '#ff4a3a', '新木場', '10両']],
+  local: [['普通', '#ff9a1a', '籠原', '15両'], ['快速', '#ff4a3a', '宇都宮', '15両']],
+  'tohoku-cargo': [['特別快速', '#ff4a3a', '小田原', '15両'], ['快速', '#ff4a3a', '高崎', '15両']],
+  freight: [['湘南ライナー', '#4cc4ff', '小田原', '15両'], ['回送', '#ffd040', '', '15両']],
+  'shin-tokaido': [['のぞみ', '#ffd040', '新大阪', '16両'], ['ひかり', '#ff6040', '名古屋', '16両']],
+  'shin-tohoku': [['はやぶさ', '#4cff6a', '新函館北斗', '17両'], ['かがやき', '#ff9a1a', '金沢', '12両']],
+};
 
 /** sweeps 2D profiles along the route; the profile may change with s */
 class Sweeper {
@@ -324,10 +339,10 @@ export class World {
     for (const [k, ch] of this.chunks) {
       if (k < first - 1 || k > last + 1) { this.disposeChunk(ch); this.chunks.delete(k); }
     }
-    for (const st of r.stations) {
-      const near = st.s > s - behind - 50 && st.s - PLATFORM_LEN < s + ahead;
-      if (near && !this.stations.has(st.name)) this.stations.set(st.name, this.buildStation(st));
-      else if (!near && this.stations.has(st.name)) { this.disposeChunk(this.stations.get(st.name)); this.stations.delete(st.name); }
+    for (const si of r.sites) {
+      const near = si.mid + 260 > s - behind - 50 && si.mid - 260 < s + ahead;
+      if (near && !this.stations.has(si.name)) this.stations.set(si.name, this.buildStation(si));
+      else if (!near && this.stations.has(si.name)) { this.disposeChunk(this.stations.get(si.name)); this.stations.delete(si.name); }
     }
     for (const rv of this.route.rivers) {
       const near = rv.s1 > s - behind - 200 && rv.s0 < s + ahead + 800;
@@ -367,19 +382,13 @@ export class World {
   }
 
   /** every track in [a, b]: ours, then the parallel lines (with the stretch each one has track on) */
-  tracksIn(a, b) {
-    const r = this.route;
-    const list = [{ off: () => 0, s0: -Infinity, s1: Infinity }, { off: (x) => r.upOffset(x), s0: -Infinity, s1: Infinity }];
-    for (const g of r.parallelsIn(a, b)) {
-      for (const i of [0, 1]) list.push({ off: (x) => r.parallelOffset(g, i, x), s0: g.s0 - PAR_RAMP_W, s1: g.s1 + PAR_RAMP_W, group: g });
-    }
-    return list;
-  }
+  tracksIn(a, b) { return this.route.layout.tracksIn(a, b); }
 
   /** lateral extent of all tracks at s */
   trackSpan(s) {
     const r = this.route;
-    return { min: r.outerTrack(s) - 2.2, max: 2.2 };
+    const sp = r.span(s);
+    return { min: sp.min - 2.2, max: sp.max + 2.2 };
   }
 
   buildChunk(k) {
@@ -433,6 +442,17 @@ export class World {
       }
     }
 
+    // buffer stops (車止め) where station tracks end
+    for (const t of tracks) {
+      const sb = t.stopAt === 's0' ? t.s0 : t.stopAt === 's1' ? t.s1 : null;
+      if (sb == null || sb < s0 || sb >= s1) continue;
+      const dir = t.stopAt === 's0' ? 1 : -1;
+      r.pose(sb + dir * 0.6, t.off(sb), p);
+      const m = new THREE.Mesh(this.bufferGeo || (this.bufferGeo = new THREE.BoxGeometry(1.0, 1.1, 2.2)), this.M.bufferStop || (this.M.bufferStop = new THREE.MeshStandardMaterial({ color: 0xc8b23a, roughness: 0.6 })));
+      m.position.set(p.x, p.y + 0.4, p.z); m.rotation.y = p.yaw; m.castShadow = true;
+      group.add(m);
+    }
+
     // structures under the track: embankment / viaduct deck + piers (bridges: see buildRiver)
     for (let s = s0; s < s1; s += 10) {
       const st = r.structureAt(s + 5);
@@ -448,12 +468,8 @@ export class World {
         }]);
       } else if (st.type === 'viaduct' && h > 1) {
         const pf = r.stationNear(s + 5, 30);
-        const widen = (ss, side) => {
-          const stn = r.stationNear(ss, 30);
-          if (!stn) return 0;
-          if (side > 0) return stn.door === 'left' ? SIDE_PF_W + 2 : 0;
-          return stn.door === 'left' ? SIDE_PF_W + 2 : 0;
-        };
+        // (the platforms are part of the track span)
+        const widen = () => 0;
         void pf;
         sw.sweep(s, s + 10, 5, () => 0, [
           { pts: (ss) => { const sp = this.trackSpan(ss); const L = sp.max + 1.6 + widen(ss, 1), Rr = sp.min - 1.6 - widen(ss, -1); return [[L, -1.9], [L, -0.62], [L + 0.25, -0.62], [L + 0.25, 0.75], [L + 0.05, 0.75], [L + 0.05, -0.62]]; }, mat: this.M.concrete, uScale: 6, vScale: 6 },
@@ -483,7 +499,19 @@ export class World {
         place('catenary_gate', s, 0, 0, 0, new THREE.Vector3(1, 1, 0.55));
         place('catenary_gate', s, up, 0, 0, new THREE.Vector3(1, 1, 0.55));
       }
-      for (const g of r.parallelsIn(s)) place('catenary_gate', s, (r.parallelOffset(g, 0, s) + r.parallelOffset(g, 1, s)) / 2);
+      for (const t of tracks) {
+        if (t.kind === 'ours' || s < t.s0 || s > t.s1 || t.siding) continue;
+        // a pair of a parallel line under one gate; station tracks and the extra island tracks each get their own
+        if (t.kind === 'group' && t.i === 1) continue;
+        if (t.kind === 'group' && t.i === 0) {
+          const o1 = r.parallelOffset(t.group, 1, s), o0 = t.off(s);
+          if (Math.abs(o1 - o0) < 4.6) { place('catenary_gate', s, (o0 + o1) / 2); continue; }
+          place('catenary_gate', s, o0, 0, 0, new THREE.Vector3(1, 1, 0.55));
+          place('catenary_gate', s, o1, 0, 0, new THREE.Vector3(1, 1, 0.55));
+          continue;
+        }
+        place('catenary_gate', s, t.off(s), 0, 0, new THREE.Vector3(1, 1, 0.55));
+      }
     }
     const wirePts = [], feederPts = [];
     for (const t of tracks) {
@@ -995,143 +1023,192 @@ export class World {
     }
   }
 
-  buildStation(st) {
+  /**
+   * a station: every platform there (ours, our extra platform tracks, the other lines' islands,
+   * the 新幹線), with roofs, signs, boards, benches and people, and the station building over it
+   */
+  buildStation(si) {
     const r = this.route;
+    const st = si.ours;
     const group = new THREE.Group();
     const disposables = [];
     const textures = [], materials = [];
     const sw = new Sweeper(r);
     const batch = new InstanceBatch();
-    const a = st.s - PLATFORM_LEN + 5, b = st.s + 15;
     const H = 1.1;
-    const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
     const p = {};
     const place = (key, s, lat, y = 0, yawExtra = 0, scale = null) => {
       r.pose(s, lat, p);
-      Q.setFromAxisAngle(Y, p.yaw + yawExtra);
-      V.set(p.x, p.y + y, p.z);
-      M4.compose(V, Q, scale || new THREE.Vector3(1, 1, 1));
-      batch.add(key, M4);
+      const Q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.yaw + yawExtra);
+      batch.add(key, new THREE.Matrix4().compose(new THREE.Vector3(p.x, p.y + y, p.z), Q, scale || new THREE.Vector3(1, 1, 1)));
     };
-    const elevated = r.elev(st.s) > 3;
-    const W = st.area === 'city' ? 9 : SIDE_PF_W;
-    const platforms = [];
-    if (st.door === 'right') {
-      platforms.push({ edgeA: () => -PF_EDGE, edgeB: (s) => r.upOffset(s) + PF_EDGE, island: true });
-    } else {
-      platforms.push({ edgeA: () => PF_EDGE + W, edgeB: () => PF_EDGE, island: false, side: 1 });
-      platforms.push({ edgeA: (s) => r.upOffset(s) - PF_EDGE, edgeB: (s) => r.upOffset(s) - PF_EDGE - SIDE_PF_W, island: false, side: -1 });
-    }
-    const pfBottom = elevated ? -0.62 : -0.62;
-    for (const pfm of platforms) {
+    const elevated = r.elev(si.mid) > 3;
+    const pfBottom = -0.62;
+    const platforms = r.layout.platformsAt(si);
+    // one sign / board texture per line here
+    const signFor = new Map(), boardFor = new Map();
+    const signMat = (pfm) => {
+      const key = pfm.group ? pfm.group.name : '_ours';
+      if (!signFor.has(key)) {
+        let prev = null, next = null, color = null;
+        if (pfm.group) {
+          const list = pfm.group.stops;
+          const i = list.findIndex((x) => x.name === si.name);
+          prev = list.slice(0, i).sort((x, y) => y.mid - x.mid)[0] || null;
+          next = list.slice(i + 1).sort((x, y) => x.mid - y.mid)[0] || null;
+          // stops are listed either way along the line: neighbours by position
+          const byPos = [...list].sort((x, y) => x.mid - y.mid), j = byPos.findIndex((x) => x.name === si.name);
+          prev = byPos[j - 1] || null; next = byPos[j + 1] || null;
+          color = pfm.group.color;
+        } else if (st) {
+          prev = r.stations[st.index - 1]; next = r.stations[st.index + 1];
+        }
+        const tex = stationSignTexture(si, prev, next, color);
+        textures.push(tex);
+        const sm = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.2 });
+        materials.push(sm);
+        signFor.set(key, sm);
+      }
+      return signFor.get(key);
+    };
+    const boardMat = (pfm, k) => {
+      const key = (pfm.group ? pfm.group.name : '_ours') + (pfm.group ? '' : '|' + (pfm.island ? 'both' : pfm.side === -1 ? 'up' : 'down')) + '|' + (k % 2);
+      if (!boardFor.has(key)) {
+        const pseudo = { name: si.name, index: Math.round(Math.abs(si.mid)) % 97, prefix: st ? st.prefix : true };
+        let rows = pfm.group ? BOARD_ROWS[pfm.group.kind] || null : null;
+        // our own platforms: our train and the trains the other way, from the timetable
+        if (!pfm.group && !pfm.line && st && this.ourDepartures) rows = this.ourDepartures(st, pfm.island ? 'both' : pfm.side === -1 ? 'up' : 'down');
+        // our own platforms: our train and the trains the other way, from the timetable
+        if (!pfm.group && !pfm.line && st && this.ourDepartures) rows = this.ourDepartures(st, pfm.island ? 'both' : pfm.side === -1 ? 'up' : 'down');
+        // with the timetable running: the next two trains, in the order they leave
+        const deps = pfm.group && rows && this.departures ? this.departures(pfm.group, si.name) : null;
+        if (deps && deps.length) {
+          rows = deps.map((d, j) => {
+            // (新幹線: both rows are trains the same way, different services)
+            const r0 = (pfm.shinkansen ? rows[j % 2] : rows[d.dir > 0 ? 0 : 1]) || rows[0];
+            return [r0[0], r0[1], r0[2], r0[3], Math.floor(d.t / 60) % (24 * 60)];
+          });
+        }
+        const dbt = departureBoardTexture(pseudo, k, pfm.group ? 'both' : pfm.island ? 'both' : pfm.side === -1 ? 'up' : 'down', rows);
+        textures.push(dbt);
+        const dbm = new THREE.MeshBasicMaterial({ map: dbt, toneMapped: false });
+        materials.push(dbm);
+        boardFor.set(key, dbm);
+      }
+      return boardFor.get(key);
+    };
+    const dbc = new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.5, metalness: 0.4 });
+    const ck = this.clockTex || (this.clockTex = clockTexture());
+    const ckm = new THREE.MeshStandardMaterial({ map: ck, roughness: 0.4 });
+    materials.push(dbc, ckm);
+    const sg = new THREE.PlaneGeometry(2.2, 0.82);
+    const dbg = new THREE.PlaneGeometry(1.9, 0.48), dbBox = new THREE.BoxGeometry(0.16, 0.56, 2.0), ckg = new THREE.CircleGeometry(0.22, 24);
+    disposables.push(sg, dbg, dbBox, ckg);
+    const big = si.area === 'city';
+
+    platforms.forEach((pfm, pi) => {
+      const a = pfm.a, b = pfm.b;
+      const Hp = pfm.shinkansen ? 1.25 : H;
       const step = 5;
       for (let s = a; s < b; s += step) {
         const s2 = Math.min(b, s + step);
         const A0 = pfm.edgeA(s), B0 = pfm.edgeB(s);
         const hi = Math.max(A0, B0), lo = Math.min(A0, B0), mid = (hi + lo) / 2;
         const strips = [
-          { pts: [[mid, H], [hi, H]], mat: this.M.pfTop, uFn: (j) => (j === 0 ? (hi - mid) / 4 : 0) },
-          { pts: [[lo, H], [mid, H]], mat: this.M.pfTop, uFn: (j) => (j === 0 ? 0 : (mid - lo) / 4) },
+          { pts: [[mid, Hp], [hi, Hp]], mat: this.M.pfTop, uFn: (j) => (j === 0 ? (hi - mid) / 4 : 0) },
+          { pts: [[lo, Hp], [mid, Hp]], mat: this.M.pfTop, uFn: (j) => (j === 0 ? 0 : (mid - lo) / 4) },
           // overhanging edge with the dark recess under it
-          { pts: [[hi, H], [hi, H - 0.18], [hi - 0.35, H - 0.18], [hi - 0.35, pfBottom]], mat: this.M.pfSide },
-          { pts: [[lo + 0.35, pfBottom], [lo + 0.35, H - 0.18], [lo, H - 0.18], [lo, H]], mat: this.M.pfSide },
+          { pts: [[hi, Hp], [hi, Hp - 0.18], [hi - 0.35, Hp - 0.18], [hi - 0.35, pfBottom]], mat: this.M.pfSide },
+          { pts: [[lo + 0.35, pfBottom], [lo + 0.35, Hp - 0.18], [lo, Hp - 0.18], [lo, Hp]], mat: this.M.pfSide },
         ];
         if (!pfm.island) {
           const back = pfm.side > 0 ? hi : lo;
-          strips.push({ pts: [[back, H], [back, H + 1.5]], mat: this.M.fence, uScale: 1.7, vScale: 1.7 });
+          strips.push({ pts: [[back, Hp], [back, Hp + 1.5]], mat: this.M.fence, uScale: 1.7, vScale: 1.7 });
         }
         sw.sweep(s, s2, step, () => 0, strips);
       }
       const centre = (s) => (pfm.edgeA(s) + pfm.edgeB(s)) / 2;
-      const roofFrom = st.area === 'city' ? a + 10 : st.s - 200;
-      for (let s = roofFrom; s < b - 5; s += 10) place('platform_roof', s, centre(s), H, 0, new THREE.Vector3(1, 1, Math.min(1.3, Math.abs(pfm.edgeA(s) - pfm.edgeB(s)) / 6.4)));
+      const width = (s) => Math.abs(pfm.edgeA(s) - pfm.edgeB(s));
+      const roofFrom = big || pfm.shinkansen ? a + 10 : (st ? st.s - 200 : (a + b) / 2 - 90);
+      const roofTo = big || pfm.shinkansen ? b - 5 : (st ? b - 5 : (a + b) / 2 + 90);
+      for (let s = roofFrom; s < roofTo; s += 10) place('platform_roof', s, centre(s), Hp, 0, new THREE.Vector3(1, 1, Math.min(1.3, width(s) / 6.4)));
       const benchAt = [];
       for (let s = a + 30; s < b - 20; s += 37) {
-        if (Math.abs(s - (st.s - 160)) < 14) continue;
+        if (st && Math.abs(s - (st.s - 160)) < 14) continue;
         const vend = Math.floor(s / 37) % 3 === 0;
-        place(vend ? 'vending_machine' : 'bench', s, centre(s) + (pfm.island ? 0 : 0.8 * (pfm.side || 1)), H, Math.PI / 2 * (pfm.side || 1));
+        const off = pfm.island ? 0 : 0.8 * (pfm.side || 1);
+        place(vend ? 'vending_machine' : 'bench', s, centre(s) + off, Hp, Math.PI / 2 * (pfm.side || 1));
         if (!vend) benchAt.push(s);
-        else place('trash_bins', s + 2.4, centre(s) + (pfm.island ? 0 : 0.8 * (pfm.side || 1)), H, Math.PI / 2 * (pfm.side || 1));
+        else place('trash_bins', s + 2.4, centre(s) + off, Hp, Math.PI / 2 * (pfm.side || 1));
       }
-      this.placePeople(st, pfm, a, b, H, batch, benchAt, centre);
-      const i = st.index;
-      const tex = stationSignTexture(st, r.stations[i - 1], r.stations[i + 1]);
-      textures.push(tex);
-      const sm = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.2 });
-      materials.push(sm);
-      const sg = new THREE.PlaneGeometry(2.2, 0.82);
-      disposables.push(sg);
+      const pseudo = { s: b - 5, index: (Math.round(Math.abs(si.mid)) + pi * 13) % 997, area: si.area };
+      this.placePeople(pseudo, pfm, a, b, Hp, batch, benchAt, centre);
+      const sm = signMat(pfm);
       for (let s = a + 25; s < b - 10; s += 64) {
         const c = centre(s);
         const faces = pfm.island ? [1, -1] : [pfm.side === 1 ? 1 : -1];
         for (const f of faces) {
           r.pose(s, c - f * 0.03, p);
           const m = new THREE.Mesh(sg, sm);
-          m.position.set(p.x, p.y + H + 2.2, p.z);
+          m.position.set(p.x, p.y + Hp + 2.2, p.z);
           m.rotation.y = p.yaw + (f === 1 ? 0 : Math.PI);
           group.add(m);
         }
-        place('utility_pole', s, c, H - 5.2, 0, new THREE.Vector3(0.4, 0.62, 0.4));
+        place('utility_pole', s, c, Hp - 5.2, 0, new THREE.Vector3(0.4, 0.62, 0.4));
       }
       // hanging departure boards (発車標) and clocks under the roof, near the stairs
-      // island platforms serve both directions; the side platform beyond the up track serves up trains
-      const dbt = departureBoardTexture(st, pfm.side === -1 ? 1 : 0, pfm.island ? 'both' : pfm.side === -1 ? 'up' : 'down');
-      textures.push(dbt);
-      const dbm = new THREE.MeshBasicMaterial({ map: dbt, toneMapped: false });
-      const dbc = new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.5, metalness: 0.4 });
-      const ck = this.clockTex || (this.clockTex = clockTexture());
-      const ckm = new THREE.MeshStandardMaterial({ map: ck, roughness: 0.4 });
-      materials.push(dbm, dbc, ckm);
-      const dbg = new THREE.PlaneGeometry(1.9, 0.48), dbBox = new THREE.BoxGeometry(0.16, 0.56, 2.0), ckg = new THREE.CircleGeometry(0.22, 24);
-      disposables.push(dbg, dbBox, ckg);
-      for (const sb of [st.s - 185, st.s - 135, st.s - 60]) {
-        if (sb < a + 8 || (st.area !== 'city' && sb < st.s - 200)) continue;
+      const mid = (a + b) / 2;
+      const boardAt = st && !pfm.group ? [st.s - 185, st.s - 135, st.s - 60] : [mid - 40, mid + 20];
+      boardAt.forEach((sb, k) => {
+        if (sb < a + 8 || sb > b - 8 || (!big && st && !pfm.group && sb < st.s - 200)) return;
         const c = centre(sb);
         r.pose(sb, c, p);
         const box = new THREE.Mesh(dbBox, dbc);
-        box.position.set(p.x, p.y + H + 2.75, p.z); box.rotation.y = p.yaw;
+        box.position.set(p.x, p.y + Hp + 2.75, p.z); box.rotation.y = p.yaw;
         group.add(box);
+        const dbm = boardMat(pfm, k);
         for (const f of [1, -1]) {
           const m = new THREE.Mesh(dbg, dbm);
-          m.position.set(p.x + Math.cos(p.yaw) * 0.085 * f, p.y + H + 2.75, p.z - Math.sin(p.yaw) * 0.085 * f);
+          m.position.set(p.x + Math.cos(p.yaw) * 0.085 * f, p.y + Hp + 2.75, p.z - Math.sin(p.yaw) * 0.085 * f);
           m.rotation.y = p.yaw + (f === 1 ? Math.PI / 2 : -Math.PI / 2);
           group.add(m);
         }
-        // a clock beside the board
         r.pose(sb + 2.2, c, p);
         for (const f of [1, -1]) {
           const m = new THREE.Mesh(ckg, ckm);
-          m.position.set(p.x + Math.cos(p.yaw) * 0.03 * f, p.y + H + 2.85, p.z - Math.sin(p.yaw) * 0.03 * f);
+          m.position.set(p.x + Math.cos(p.yaw) * 0.03 * f, p.y + Hp + 2.85, p.z - Math.sin(p.yaw) * 0.03 * f);
           m.rotation.y = p.yaw + (f === 1 ? Math.PI / 2 : -Math.PI / 2);
           group.add(m);
         }
-      }
+      });
       // stairs up to the bridge concourse (橋上駅舎) or down from the viaduct
       const B2 = new GeoBuffer();
-      const sStair = st.s - 160;
-      r.pose(sStair, centre(sStair), p);
-      const F = new Frame(p.x, p.y + H, p.z, -p.yaw);
-      const up = !elevated;
-      const stH = up ? 6.6 : 3.0;
-      boxWalls(B2, F, 12, 3.2, 0, stH, TILE.office, [0.92, 0.95, 1]);
-      flatTop(B2, F, 12, 3.2, stH, [0.75, 0.76, 0.78]);
-      const g2 = B2.build(); const m2 = new THREE.Mesh(g2, this.M.office); m2.castShadow = true; group.add(m2); disposables.push(g2);
-    }
+      const sStair = st && !pfm.group ? st.s - 160 : mid - 10;
+      if (sStair > a + 6 && sStair < b - 6 && width(sStair) > 4.5) {
+        r.pose(sStair, centre(sStair), p);
+        const F = new Frame(p.x, p.y + Hp, p.z, -p.yaw);
+        const stH = !elevated ? 6.6 : 3.0;
+        boxWalls(B2, F, 12, Math.min(3.2, width(sStair) - 1.4), 0, stH, TILE.office, [0.92, 0.95, 1]);
+        flatTop(B2, F, 12, Math.min(3.2, width(sStair) - 1.4), stH, [0.75, 0.76, 0.78]);
+        const g2 = B2.build(); const m2 = new THREE.Mesh(g2, this.M.office); m2.castShadow = true; group.add(m2); disposables.push(g2);
+      }
+    });
+
     // 橋上駅舎: concourse spanning the tracks (ground-level stations)
     const B = new GeoBuffer(), Bp = new GeoBuffer();
-    const sC = st.s - 160;
+    const sC = si.mid - 10;
     const sp = this.trackSpan(sC);
-    const latL = sp.max + (st.door === 'left' ? W + 8 : 8), latR = sp.min - (st.door === 'left' ? SIDE_PF_W + 8 : 8);
+    const latL = sp.max + 8, latR = sp.min - 8;
     if (!elevated) {
-      const big = st.area === 'city';
       const len = big ? 34 : 16;
       r.pose(sC, (latL + latR) / 2, p);
       const F = new Frame(p.x, p.y + 7.6, p.z, -p.yaw);
       boxWalls(B, F, len, latL - latR, 0, big ? 6.5 : 4.6, TILE.office, [1, 1, 1]);
       flatTop(Bp, F, len, latL - latR, big ? 6.5 : 4.6, [0.7, 0.71, 0.73]);
       // columns between tracks
-      for (const lat of [latL - 2, (latL + latR) / 2, latR + 2]) {
-        r.pose(sC, lat, p);
+      const nCol = Math.max(3, Math.round((latL - latR) / 14));
+      for (let k = 0; k < nCol; k++) {
+        r.pose(sC, latR + 2 + (latL - latR - 4) * k / (nCol - 1), p);
         solid(Bp, new Frame(p.x, GROUND_Y, p.z, -p.yaw), 0, 0, 0, 7.6 - GROUND_Y + p.y, 1.0, 1.0, [0.8, 0.8, 0.78]);
       }
       // entrance stairs/buildings on both sides
@@ -1143,17 +1220,18 @@ export class World {
       }
     } else {
       // station building under / beside the viaduct
-      r.pose(st.s - 150, latL + 10, p);
+      r.pose(si.mid, latL + 10, p);
       const F = new Frame(p.x, GROUND_Y, p.z, -p.yaw);
       boxWalls(B, F, 80, 14, 0, 12, TILE.office, [1, 1, 1]);
       flatTop(Bp, F, 80, 14, 12, [0.7, 0.71, 0.73]);
     }
-    if (st.area === 'city') {
+    if (big && (st || platforms.length >= 4)) {
       // terminal / major station: big station building + department store
-      r.pose(st.s - 130, latL + (elevated ? 40 : 30), p);
+      const k = Math.round(Math.abs(si.mid) / 7) % 3;
+      r.pose(si.mid + 20, latL + (elevated ? 40 : 30), p);
       const F = new Frame(p.x, GROUND_Y, p.z, -p.yaw);
-      boxWalls(B, F, 110, 40, 0, 28 + (st.index % 3) * 8, TILE.office, [0.95, 0.97, 1]);
-      flatTop(Bp, F, 110, 40, 28 + (st.index % 3) * 8, [0.6, 0.6, 0.6]);
+      boxWalls(B, F, 110, 40, 0, 28 + k * 8, TILE.office, [0.95, 0.97, 1]);
+      flatTop(Bp, F, 110, 40, 28 + k * 8, [0.6, 0.6, 0.6]);
     }
     for (const [buf, mat] of [[B, this.M.office], [Bp, this.M.plain]]) {
       if (buf.empty) continue;
@@ -1163,28 +1241,28 @@ export class World {
       group.add(m);
       disposables.push(g);
     }
-    // stop position marker "15" and starting signal on the platform side of our track
-    const ourSide = st.door === 'right' ? -1 : 1;
-    const stopTex = textBoardTexture('15', '#ffd400', '#111', 128, 128, 84);
-    textures.push(stopTex);
-    const stopMat = new THREE.MeshStandardMaterial({ map: stopTex, emissive: 0xffffff, emissiveMap: stopTex, emissiveIntensity: 0.3 });
-    materials.push(stopMat);
-    const post = new THREE.Group();
-    for (const part of this.P.stop_post) post.add(new THREE.Mesh(part.geometry, part.material.name === 'STOPSIGN' ? stopMat : part.material));
-    r.pose(st.s, ourSide * 2.3, p);
-    post.position.set(p.x, p.y + H - 0.75, p.z);
-    post.rotation.y = p.yaw;
-    group.add(post);
-    // (starting signals: src/signals.js)
-    // up (上り) trains stop with their front 300 m further back, on the up track, facing the other way;
-    // the platform is on the same hand of the train (island between the tracks / side platforms outside)
-    const sUp = st.s - 300;
-    const upSide = st.door === 'right' ? 1 : -1;
-    const postUp = post.clone();
-    r.pose(sUp, r.upOffset(sUp) + upSide * 2.3, p);
-    postUp.position.set(p.x, p.y + H - 0.75, p.z);
-    postUp.rotation.y = p.yaw + Math.PI;
-    group.add(postUp);
+    if (st) {
+      // stop position marker "15" on the platform side of our track; up (上り) trains stop with their
+      // front 300 m further back, on the up track, facing the other way (starting signals: src/signals.js)
+      const ourSide = st.door === 'right' ? -1 : 1;
+      const stopTex = textBoardTexture('15', '#ffd400', '#111', 128, 128, 84);
+      textures.push(stopTex);
+      const stopMat = new THREE.MeshStandardMaterial({ map: stopTex, emissive: 0xffffff, emissiveMap: stopTex, emissiveIntensity: 0.3 });
+      materials.push(stopMat);
+      const post = new THREE.Group();
+      for (const part of this.P.stop_post) post.add(new THREE.Mesh(part.geometry, part.material.name === 'STOPSIGN' ? stopMat : part.material));
+      r.pose(st.s, ourSide * 2.3, p);
+      post.position.set(p.x, p.y + H - 0.75, p.z);
+      post.rotation.y = p.yaw;
+      group.add(post);
+      const sUp = st.s - 300;
+      const upSide = st.door === 'right' ? 1 : -1;
+      const postUp = post.clone();
+      r.pose(sUp, r.upOffset(sUp) + upSide * 2.3, p);
+      postUp.position.set(p.x, p.y + H - 0.75, p.z);
+      postUp.rotation.y = p.yaw + Math.PI;
+      group.add(postUp);
+    }
 
     sw.build(group, disposables, true);
     const instanced = batch.build(group, this.P);

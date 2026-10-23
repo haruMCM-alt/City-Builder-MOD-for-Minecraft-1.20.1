@@ -4,6 +4,7 @@ import { fbm, hash2, rng } from './noise.js';
 import { GeoBuffer, Frame, house, apartment, mansion, office, shopRow, factory, greenhouse, farBlock, pick } from './buildings.js';
 import { GROUND_Y } from './sky.js';
 
+const PLATFORM_LEN_LAND = 320;
 const CELL = 24;          // land cell size (m)
 const NEAR = 420;         // detailed band either side
 const FAR = 1500;         // low-detail silhouettes
@@ -20,7 +21,7 @@ export function crossingRoadsNear(route, s0, s1) {
     const dens = route.density(s);
     const p = dens > 0.68 ? 0.22 : dens > 0.35 ? 0.16 : 0.10;
     if (hash2(k, 7, 99) > p) continue;
-    if (route.stations.some((st) => s > st.s - 600 && s < st.s + 260)) continue;
+    if (route.sites.some((st) => s > st.s - 600 && s < st.s + 260)) continue;
     if (route.riverAt(s, 250)) continue;
     const h = route.elev(s);
     if (h > 0.2 && h < 5.5) continue;           // on a ramp: no road
@@ -45,13 +46,10 @@ export class LandBuilder {
   /** lateral distance from our track centre to the outer edge of the railway on each side */
   edge(s, side) {
     const r = this.route;
-    let e;
-    if (side > 0) e = 6;
-    else {
-      e = -r.outerTrack(s) + 6;
-    }
-    const st = r.stationNear(s, 80);
-    if (st) e += side > 0 ? (st.door === 'left' ? 14 : 4) : (st.door === 'left' ? 12 : 2);
+    const sp = r.span(s);
+    let e = side > 0 ? Math.max(0, sp.max) + 6 : -Math.min(r.upOffset(s), sp.min) + 6;
+    // room for the station buildings and their entrances
+    if (r.sites.some((si) => s > si.s - PLATFORM_LEN_LAND - 80 && s < si.s + 100)) e += 6;
     if (r.elev(s) > 3) e += 4;
     return e;
   }
