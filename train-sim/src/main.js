@@ -227,6 +227,10 @@ function buildMenu() {
   const fillStations = () => {
     const list = menuView().stations;
     const [lo, hi] = stationRange(VEHICLES[settings.vehicle], list);
+    // leaving a vehicle that only runs part of the line (E131): offer the whole line again
+    const limited = !!VEH_RANGE[settings.vehicle];
+    if (fillStations.wasLimited && !limited) { settings.from = 0; settings.to = list.length - 1; }
+    fillStations.wasLimited = limited;
     const opts = list.map((s, i) => (i < lo || i > hi ? '' : `<option value="${i}">${s.name}</option>`)).join('');
     fromSel.innerHTML = opts; toSel.innerHTML = opts;
     settings.from = Math.max(lo, Math.min(settings.from, hi - 1));
@@ -478,6 +482,7 @@ function applyLights(A) {
 
 /** saloon lights after dark: the interior surfaces glow as if lit (cheap stand-in for dozens of lamps) */
 const INTERIOR_MAT = /^(int_wall|int_ceiling|int_floor|seat_|strap|headrest|seat_partition|roller_blind)/;
+const _warm = new THREE.Color(1.0, 0.95, 0.86);
 function trainNight(set) {
   const k = atmo ? atmo.night : 0;
   set.group.traverse((o) => {
@@ -487,13 +492,12 @@ function trainNight(set) {
       // materials are shared between trains (and games): remember the daylight state once
       if (!m.userData.dayEmissive) m.userData.dayEmissive = { c: m.emissive.clone(), map: m.emissiveMap, i: m.emissiveIntensity };
       const d = m.userData.dayEmissive;
-      if (k > 0) {
-        if (m.emissiveMap !== (m.map || null)) { m.emissiveMap = m.map || null; m.needsUpdate = true; }
-        m.emissive.copy(m.color); m.emissiveIntensity = 0.8 * k;
-      } else {
-        if (m.emissiveMap !== d.map) { m.emissiveMap = d.map; m.needsUpdate = true; }
-        m.emissive.copy(d.c); m.emissiveIntensity = d.i;
-      }
+      // the saloon lights are on by day too: a little warm-white self light keeps the interior from
+      // taking the sky's blue cast; after dark it carries the whole interior
+      if (m.emissiveMap !== (m.map || null)) { m.emissiveMap = m.map || null; m.needsUpdate = true; }
+      m.emissive.copy(m.color).multiply(_warm);
+      m.emissiveIntensity = 0.1 + 0.7 * k;
+      void d;
     }
   });
 }
