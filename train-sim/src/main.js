@@ -390,6 +390,8 @@ async function startGame() {
   $('menu').classList.add('hidden');
   $('loading').classList.remove('hidden');
   await sound.init();
+  if (sound.ctx && sound.ctx.state !== 'running') { try { await sound.ctx.resume(); } catch { /* resumes on the next gesture */ } }
+  paused = false;
   if (announcer.loading) { try { await announcer.loading; } catch { /* falls back below */ } }
   if (settings.annMode === 'file' && !announcer.audio) {
     if (!(await announcer.loadBuiltIn())) announcer.mode = 'tts';
@@ -610,7 +612,7 @@ function updateWeather(dt, cp) {
       const s = Math.min(st.s, Math.max(st.s - PLATFORM_LEN, fr + (i - 1.5) * 38 - view.sign * 60));
       const p = route.pose(s, 0, {});
       l.position.set(p.x, p.y + 5.6, p.z);
-      l.intensity = 90 * atmo.night;
+      l.intensity = 38 * atmo.night;
     });
   }
 }
@@ -760,6 +762,13 @@ function teardown() {
 function backToMenu() {
   running = false;
   teardown();
+  // quitting from the pause menu: the audio was suspended there, wake it up again
+  if (paused) {
+    paused = false;
+    announcer.setPaused(false);
+    melody.setPaused(false);
+  }
+  if (sound.ctx && sound.ctx.state === 'suspended') sound.ctx.resume();
   world = null;
   $('hud').classList.add('hidden');
   $('result').classList.add('hidden');

@@ -44,11 +44,11 @@ export function atmosphere(tod = 'day', weather = 'clear') {
   }
   if (tod === 'night') {
     Object.assign(P, {
-      night: 1, lit: 0.42, env: 0.22, exposure: 1.3, bloom: 0.4,
-      sun: { elev: 38, azim: 150, color: 0x9db4e8, intensity: 0.32, shadows: true },
-      hemi: { sky: 0x34466c, ground: 0x1a1612, intensity: 0.2 },
-      fog: { color: 0x0a0f18, density: 0.00045 },
-      sky: { kind: 'grad', top: 0x02040b, horizon: 0x111a2c, bottom: 0x040507, glow: 0x3a2c22, glowAzim: 200 },
+      night: 1, lit: 0.42, env: 0.4, exposure: 1.45, bloom: 0.34,
+      sun: { elev: 38, azim: 150, color: 0xa9bdf0, intensity: 0.7, shadows: true },
+      hemi: { sky: 0x4a5e8c, ground: 0x2a2620, intensity: 0.5 },
+      fog: { color: 0x141c2c, density: 0.00042 },
+      sky: { kind: 'grad', top: 0x050a18, horizon: 0x1c2840, bottom: 0x07090c, glow: 0x4a3828, glowAzim: 200 },
       groundEnv: 0x07080a,
       clouds: { tint: 0x1a2232, opacity: 0.45, show: true },
       far: { tint: 0x1a2130, mountains: true, nightTowns: true },
@@ -70,7 +70,7 @@ export function atmosphere(tod = 'day', weather = 'clear') {
       });
     } else if (tod === 'evening') {
       Object.assign(P, {
-        lit: 0.5, night: 0.75, env: 0.4, exposure: 1.12,
+        lit: 0.5, night: 0.75, env: 0.5, exposure: 1.3,
         sun: { elev: 5, azim: 248, color: 0xff9a70, intensity: 0.25, shadows: false },
         hemi: { sky: 0x9a8c94, ground: 0x2e2a2a, intensity: 0.5 },
         fog: { color: 0x58545e, density: 0.0013 },
@@ -83,9 +83,9 @@ export function atmosphere(tod = 'day', weather = 'clear') {
       Object.assign(P, {
         env: 0.1,
         sun: { elev: 50, azim: 150, color: 0x8090b0, intensity: 0.05, shadows: false },
-        hemi: { sky: 0x2f3546, ground: 0x15130f, intensity: 0.22 },
-        fog: { color: 0x10141a, density: 0.0014 },
-        sky: { kind: 'grad', top: 0x07090c, horizon: 0x171b22, bottom: 0x050607, glow: 0x2c2620, glowAzim: 200 },
+        hemi: { sky: 0x3e4658, ground: 0x221f1a, intensity: 0.48 },
+        fog: { color: 0x1a1f28, density: 0.0013 },
+        sky: { kind: 'grad', top: 0x0c1016, horizon: 0x222833, bottom: 0x08090b, glow: 0x3a3028, glowAzim: 200 },
         clouds: { tint: 0x1a1d24, opacity: 0.6, show: false },
         stars: false, moon: false,
       });

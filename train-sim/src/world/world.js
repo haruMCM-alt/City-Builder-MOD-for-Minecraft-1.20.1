@@ -262,7 +262,7 @@ export class World {
       // lit platforms (fluorescent lamps under the canopies) and glowing sign boards
       M.pfTop.emissive = new THREE.Color(0xfff4e0);
       M.pfTop.emissiveMap = M.pfTop.map;
-      M.pfTop.emissiveIntensity = 0.16 * A.night;
+      M.pfTop.emissiveIntensity = 0.08 * A.night;
       M.sign.emissiveIntensity = 0.12 + 0.6 * A.night;
     }
     if (A.rain) {
