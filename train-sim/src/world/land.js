@@ -48,8 +48,7 @@ export class LandBuilder {
     let e;
     if (side > 0) e = 6;
     else {
-      const ex = r.extraTracks(s);
-      e = -(ex.length ? ex[1] : r.upOffset(s)) + 6;
+      e = -r.outerTrack(s) + 6;
     }
     const st = r.stationNear(s, 80);
     if (st) e += side > 0 ? (st.door === 'left' ? 14 : 4) : (st.door === 'left' ? 12 : 2);

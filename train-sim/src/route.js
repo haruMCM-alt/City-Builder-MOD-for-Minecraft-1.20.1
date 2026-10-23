@@ -96,6 +96,41 @@ export function mulberry32(a) {
 
 const smooth = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 
+// --- parallel lines ------------------------------------------------------------------
+// Other lines that run beside ours in pairs of tracks, stacked outwards on the up side. s0..s1 is
+// where a pair runs at full width; past each end it curves away (end 'out') or runs into our own
+// tracks ('merge') over PAR_RAMP. kind picks the trains that run on it (main.js).
+export const PAR_RAMP = 500;
+const PAR_OUT = 45, PAR_SLOT = TRACK_SPACING + 4.6;
+const MAIN_PARALLELS = [
+  // 上野〜日暮里: 京浜東北線・山手線, and the 常磐線 out of 上野 (they all leave us at 日暮里)
+  { kind: 'keihin', name: '京浜東北線', slot: 0, s0: -1e9, s1: 2300, end0: 'none', end1: 'out' },
+  { kind: 'yamanote', name: '山手線', slot: 1, s0: -1e9, s1: 2300, end0: 'none', end1: 'out' },
+  { kind: 'joban', name: '常磐線', slot: 2, s0: -1e9, s1: 1900, end0: 'none', end1: 'out' },
+  // 赤羽〜大宮: 京浜東北線 and the 東北貨物線 (湘南新宿ライン, freight)
+  { kind: 'keihin', name: '京浜東北線', slot: 0, s0: 9200, s1: 27600, end0: 'out', end1: 'out' },
+  { kind: 'freight', name: '東北貨物線', slot: 1, s0: 9200, s1: 27600, end0: 'out', end1: 'out' },
+];
+const PARALLELS = {
+  utsunomiya: MAIN_PARALLELS.map((g) => ({ ...g, s0: Math.max(g.s0, -1500 + 60), end0: g.s0 < -1500 ? 'none' : g.end0 })),
+  // 東海道線: 京浜東北線 東京〜横浜 (it turns off onto the 根岸線), 山手線 品川〜日暮里,
+  // 横須賀線 鶴見〜大船, 東海道貨物線 戸塚〜小田原
+  'ueno-tokyo': [
+    { kind: 'keihin', name: '京浜東北線', slot: 0, s0: -32900, s1: 2300, end0: 'out', end1: 'out' },
+    { kind: 'yamanote', name: '山手線', slot: 1, s0: -11000, s1: 2300, end0: 'out', end1: 'out' },
+    { kind: 'joban', name: '常磐線', slot: 2, s0: -400, s1: 1900, end0: 'out', end1: 'out' },
+    { kind: 'yokosuka', name: '横須賀線', slot: 1, s0: -50200, s1: -25600, end0: 'out', end1: 'out' },
+    { kind: 'freight', name: '東海道貨物線', slot: 0, s0: -1e9, s1: -45200, end0: 'none', end1: 'out' },
+    ...MAIN_PARALLELS.slice(3),
+  ],
+  // 湘南新宿ライン: 山手線 新宿〜池袋, then from 赤羽 the 宇都宮線 itself and the 京浜東北線 beside us
+  'shonan-shinjuku': [
+    { kind: 'yamanote', name: '山手線', slot: 0, s0: -1e9, s1: 300, end0: 'none', end1: 'out' },
+    { kind: 'local', name: '宇都宮線', slot: 0, s0: 9300, s1: 26200, end0: 'out', end1: 'merge' },
+    { kind: 'keihin', name: '京浜東北線', slot: 1, s0: 9300, s1: 27600, end0: 'out', end1: 'out' },
+  ],
+};
+
 // --- alignment -----------------------------------------------------------------
 /** OSM curve list in the shape the limits / scenery expect */
 function realCurves() {
@@ -121,6 +156,7 @@ export class Route {
     this.rivers = [...(L ? L.rivers : []), ...RIVERS.filter((r) => !L || r.s0 > L.junction)];
     this.viaducts = [...(L ? L.viaducts : []), ...VIADUCTS.filter((v) => !L || v.s0 > L.junction)];
     this.curves = realCurves().filter((c) => !L || c.s0 > L.junction);
+    this.parallels = (PARALLELS[this.line] || []).map((g) => ({ ...g, s0: Math.max(g.s0, S_MIN + 60) }));
     const n = S_MAX - S_MIN + 1;
     this.n = n;
     this.kappa = new Float32Array(n);
@@ -263,19 +299,54 @@ export class Route {
     return o;
   }
 
-  /** extra parallel lines (京浜東北線 etc.) south of 大宮 */
-  extraTracks(s) {
-    const from = this.prefix ? this.prefix.area.parallel === this.prefix.junction + 800 ? this.S_MIN + 300 : this.prefix.area.parallel : -1400;
-    if (s > this.ST['大宮'] + 800 || s < from) return [];
+  /** where the parallel lines start: just outside our up track, past a side platform at left-door stations */
+  parallelBase(s) {
     let base = this.upOffset(s);
-    // leave room for the up-side platform at stations with left doors
     for (const st of this.stations) {
-      if (st.door !== 'left') continue;
+      if (st.door !== 'left' || Math.abs(s - st.s) > PLATFORM_LEN + 700) continue;
       const a = st.s - PLATFORM_LEN - 60, b = st.s + 30, ramp = 220;
       const w = smooth((s - (a - ramp)) / ramp) * (1 - smooth((s - b) / ramp));
       base -= w * (SIDE_PF_W + 2 * PF_EDGE + 1.0);
     }
-    return [base - 5.0, base - 5.0 - TRACK_SPACING];
+    return base;
+  }
+
+  /** lateral offset of track i (0 = inner, 1 = outer) of a parallel group at s (clamped to its extent) */
+  parallelOffset(g, i, s) {
+    const x = Math.min(g.s1 + PAR_RAMP, Math.max(g.s0 - PAR_RAMP, s));
+    const a = this.parallelBase(x) - 5.0 - g.slot * PAR_SLOT, o = a - i * TRACK_SPACING;
+    // the ends: the line curves away outwards, or runs into our own tracks (a junction)
+    const w0 = smooth((x - (g.s0 - PAR_RAMP)) / PAR_RAMP), w1 = 1 - smooth((x - g.s1) / PAR_RAMP);
+    const end = (w, kind) => {
+      if (w >= 1 || kind === 'none') return o;
+      const u = 1 - w;
+      if (kind === 'merge') return o + (i === 0 ? -o : this.upOffset(x) - o) * u;
+      return o - PAR_OUT * u * u;
+    };
+    return x < (g.s0 + g.s1) / 2 ? end(w0, g.end0) : end(w1, g.end1);
+  }
+
+  /** parallel groups that have track somewhere in [a, b] */
+  parallelsIn(a, b = a) {
+    return this.parallels.filter((g) => g.s0 - PAR_RAMP <= b && g.s1 + PAR_RAMP >= a);
+  }
+
+  /** parallel groups running at full width at s (trains can be spawned there) */
+  parallelsAt(s) {
+    return this.parallels.filter((g) => s >= g.s0 && s <= g.s1);
+  }
+
+  /** lateral offsets of every parallel track at s, nearest first (empty where there are none) */
+  extraTracks(s) {
+    const out = [];
+    for (const g of this.parallelsIn(s)) out.push(this.parallelOffset(g, 0, s), this.parallelOffset(g, 1, s));
+    return out.sort((a, b) => b - a);
+  }
+
+  /** the outermost track on the up side (ours or a parallel line) */
+  outerTrack(s) {
+    const ex = this.extraTracks(s);
+    return ex.length ? Math.min(this.upOffset(s), ex[ex.length - 1]) : this.upOffset(s);
   }
 
   buildLimits() {
@@ -370,8 +441,7 @@ export class Route {
       const o = -(S.off[j]), x = S.s0 + j * S.ds;
       if (Math.abs(o) < 7) return o;                            // crossing over the line
       if (o > 0) return Math.max(o, 13);
-      const ex = this.extraTracks(x), outer = ex.length ? ex[1] : this.upOffset(x);
-      return Math.min(o, outer - 13);
+      return Math.min(o, this.outerTrack(x) - 13);
     };
     const lat = clear(i) + (clear(i + 1) - clear(i)) * u;
     // higher where it crosses over the line

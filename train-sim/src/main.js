@@ -47,6 +47,7 @@ import { Route, PLATFORM_LEN, LINE_LIST } from './route.js';
 import { VEHICLES, DEFAULT_VEHICLE, CAR_LEN, BOGIE_C } from './vehicles.js';
 import { World } from './world/world.js';
 import { TrainSet } from './trainmodel.js';
+import { FreightSet } from './freight.js';
 import { TrainPhysics } from './physics.js';
 import { SoundEngine } from './audio/sound.js';
 import { Announcer } from './audio/announce.js';
@@ -781,38 +782,72 @@ function backToMenu() {
 // ---------------------------------------------------------------------------
 // oncoming / parallel traffic
 // ---------------------------------------------------------------------------
+// trains on the parallel lines (route.parallels): model, livery, speed, how often (s), destinations [north, south]
+const PAR_TRAINS = {
+  keihin: { model: 'e233', livery: 'keihin', v: 75, every: [110, 210], dest: ['各駅停車 大宮', '各駅停車 大船'] },
+  yamanote: { model: 'e233', livery: 'yamanote', v: 65, every: [70, 140], dest: ['山手線 池袋・新宿方面', '山手線 東京・品川方面'] },
+  joban: { model: 'e231', livery: 'joban', v: 70, every: [150, 260], dest: ['普通 取手', '快速 品川'] },
+  yokosuka: { model: 'e231', livery: 'yokosuka', v: 90, every: [140, 250], dest: ['快速 千葉', '横須賀線 逗子'] },
+  local: { model: null, v: 90, every: [150, 260], dest: ['普通 籠原', '快速 新宿'] },
+  freight: { freight: true, v: 85, every: [200, 380] },
+};
+
 class Traffic {
   constructor() {
     this.list = [];
-    this.timer = { up: 20, ex: 10 };
+    this.timer = { up: 20 };
+    this.groupTimer = new Map();
     this.pose = {};
   }
-  clear() { for (const t of this.list) { t.set.dispose(); if (t.voice) t.voice.dispose(); } this.list = []; }
-  /** s = spawn position in view coordinates (ahead of us); trains run toward us on the other track */
+  clear() { for (const t of this.list) { t.set.dispose(); if (t.voice) t.voice.dispose(); } this.list = []; this.groupTimer.clear(); }
+
+  /** s = spawn position in view coordinates (ahead of us); main-line trains run toward us on the other track */
   spawn(kind, sView) {
     const s = view.toRoute(sView);
     const dirReal = -view.sign;              // they run the opposite way to us
-    const pick = kind === 'keihin' ? 'e233' : ['e231', 'e233', 'e231', 's211'][Math.floor(Math.random() * 4)];
+    const pick = ['e231', 'e233', 'e231', 's211'][Math.floor(Math.random() * 4)];
     const veh = VEHICLES[pick];
-    let formation, opts;
-    if (kind === 'keihin') {
-      formation = 'CPMMPMMPMR';
-      opts = { key: 'e233', dest: view.up ? '各駅停車 大宮' : '各駅停車 大船', forward: dirReal > 0, recolor: true };
-    } else {
-      formation = Math.random() < 0.6 ? veh.formations[15] : veh.formations[10];
-      opts = view.up
-        ? { key: modelKey(veh), dest: Math.random() < 0.5 ? '普通 宇都宮' : '快速 小金井', forward: true }
-        : { key: modelKey(veh), dest: Math.random() < 0.5 ? '普通 上野' : '快速 小田原', forward: false };
-    }
+    const formation = Math.random() < 0.6 ? veh.formations[15] : veh.formations[10];
+    const opts = view.up
+      ? { key: modelKey(veh), dest: Math.random() < 0.5 ? '普通 宇都宮' : '快速 小金井', forward: true }
+      : { key: modelKey(veh), dest: Math.random() < 0.5 ? '普通 上野' : '快速 小田原', forward: false };
     const set = new TrainSet(gltfs[pick].scene, veh, formation, opts);
-    if (opts.recolor) recolorKeihin(set);
     scene.add(set.group);
     trainNight(set);
-    // (the 京浜東北線 runs both ways on its own pair of tracks; main-line traffic uses the track we are not on)
-    const track = kind === 'keihin' ? (x) => route.extraTracks(x)[1] ?? route.upOffset(x) - 8.8 : view.up ? () => 0 : (x) => route.upOffset(x);
-    const voice = sound.addTrain(kind === 'keihin' ? VEHICLES.e233 : veh, formation.length);
-    this.list.push({ set, s, dirReal, v: (kind === 'keihin' ? 75 : 95 + Math.random() * 15) / 3.6, track, passed: false, kind, voice, axles: axleOffsets(formation.length), torque: Math.random() < 0.5 ? 0.3 : 0 });
+    const track = view.up ? () => 0 : (x) => route.upOffset(x);
+    this.add({ set, s, dirReal, v: (95 + Math.random() * 15) / 3.6, track, kind, veh, n: formation.length });
   }
+
+  /** a train on a parallel line: on track 0 northbound (+s), on track 1 southbound */
+  spawnParallel(g, s, dirReal) {
+    const T = PAR_TRAINS[g.kind] || PAR_TRAINS.keihin;
+    const forward = dirReal > 0;
+    let set, veh, n;
+    if (T.freight) {
+      set = new FreightSet({ wagons: 12 + Math.floor(Math.random() * 9), forward, seed: Math.floor(Math.random() * 1e6) });
+      veh = VEHICLES.e231; n = set.cars.length;
+    } else {
+      const pick = T.model || ['e231', 'e233', 'e231', 's211'][Math.floor(Math.random() * 4)];
+      veh = VEHICLES[pick];
+      const formation = T.model ? veh.formations[10] : (Math.random() < 0.6 ? veh.formations[15] : veh.formations[10]);
+      n = formation.length;
+      set = new TrainSet(gltfs[pick].scene, veh, formation, { key: modelKey(veh), dest: T.dest[forward ? 0 : 1], forward, passengers: true });
+      if (T.livery) recolorLivery(set, T.livery);
+    }
+    scene.add(set.group);
+    trainNight(set);
+    const i = forward ? 0 : 1;
+    const track = (x) => route.parallelOffset(g, i, x);
+    this.add({ set, s, dirReal, v: (T.v + Math.random() * 10 - 5) / 3.6, track, kind: g.kind, veh, n, group: g });
+  }
+
+  add(t) {
+    t.voice = sound.addTrain(t.veh, t.n);
+    t.axles = axleOffsets(t.n);
+    t.torque = t.kind === 'freight' ? 0.5 : Math.random() < 0.5 ? 0.3 : 0;
+    this.list.push(t);
+  }
+
   update(dt, sp) {
     this.timer.up -= dt;
     if (this.timer.up <= 0) {
@@ -820,12 +855,24 @@ class Traffic {
       const s = sp + 2600;
       if (s < view.sMax - 200) this.spawn('main', s);
     }
-    if (view.toRoute(sp) < 29000) {
-      this.timer.ex -= dt;
-      if (this.timer.ex <= 0) {
-        this.timer.ex = 120 + Math.random() * 150;
-        this.spawn('keihin', sp + 2400);
+    // parallel lines near us: oncoming trains from ahead, or same-direction ones coming up from behind
+    const here = view.toRoute(sp);
+    for (const g of route.parallelsIn(here - 3000, here + 3000)) {
+      const T = PAR_TRAINS[g.kind] || PAR_TRAINS.keihin;
+      let tm = this.groupTimer.has(g) ? this.groupTimer.get(g) : 4 + Math.random() * 25;
+      tm -= dt;
+      if (tm <= 0) {
+        tm = T.every[0] + Math.random() * (T.every[1] - T.every[0]);
+        const ahead = view.toRoute(sp + 2400), behind = view.toRoute(sp - 900);
+        const inside = (s) => s >= g.s0 && s <= g.s1;
+        // trains never run onto a junction with our own tracks: only away from a 'merge' end
+        const ok = (dir) => !(dir > 0 && g.end1 === 'merge') && !(dir < 0 && g.end0 === 'merge');
+        const opts = [];
+        if (inside(ahead) && ok(-view.sign)) opts.push([ahead, -view.sign]);
+        if (inside(behind) && ok(view.sign)) opts.push([behind, view.sign]);
+        if (opts.length) { const [s, d] = opts[Math.random() < 0.6 ? 0 : opts.length - 1]; this.spawnParallel(g, s, d); }
       }
+      this.groupTimer.set(g, tm);
     }
     const lp = view.toRoute(listenerS());
     for (const t of this.list) {
@@ -853,18 +900,25 @@ class Traffic {
       }
     }
     this.list = this.list.filter((t) => {
-      const tv = view.fromRoute(t.s);     // its front in our coordinates (it comes toward us)
-      const keep = tv + t.set.length > sp - 900 && t.s > route.sMin + 100 && t.s < route.sMax - 100;
+      const tv = view.fromRoute(t.s);     // its front in our coordinates
+      const tail = view.fromRoute(t.s - t.dirReal * t.set.length);
+      const keep = Math.max(tv, tail) > sp - 900 && Math.min(tv, tail) < sp + 3600 && t.s > route.sMin + 100 && t.s < route.sMax - 100;
       if (!keep) { t.set.dispose(); if (t.voice) t.voice.dispose(); }
       return keep;
     });
   }
 }
 
-// 京浜東北線 E233系1000番台: sky-blue (スカイブルー) instead of the 湘南色 bands, on the sides
-// and on the painted cab front (the orange / green pixels of its texture are re-coloured)
-let keihinMats = null;
-function keihinFront(mat) {
+// liveries of the parallel-line trains: the 湘南色 bands (orange / green) of our models, and the same
+// colours painted on the cab front texture, are re-coloured. [orange →, green →]
+const LIVERIES = {
+  keihin: [0x18a7e0, 0x18a7e0],      // 京浜東北線 E233系1000番台: スカイブルー
+  yamanote: [0x80c241, 0x80c241],    // 山手線: ウグイス色
+  joban: [0x1d5aa8, 0x1d5aa8],       // 常磐線 E531系: 青
+  yokosuka: [0x1b2c66, 0xe2d7b0],    // 横須賀線: 紺とクリーム (スカ色)
+};
+const liveryMats = new Map();
+function liveryFront(mat, cols) {
   const img = mat.map && mat.map.image;
   if (!img || !img.width) return mat;
   const c = document.createElement('canvas');
@@ -872,6 +926,7 @@ function keihinFront(mat) {
   const g = c.getContext('2d');
   g.drawImage(img, 0, 0);
   const d = g.getImageData(0, 0, c.width, c.height), px = d.data;
+  const rgb = cols.map((h) => [(h >> 16) & 255, (h >> 8) & 255, h & 255]);
   for (let i = 0; i < px.length; i += 4) {
     const r = px[i], gg = px[i + 1], b = px[i + 2];
     const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
@@ -879,8 +934,9 @@ function keihinFront(mat) {
     const orange = r > gg && gg > b && r > 150;
     const green = gg > r + 25 && gg > b + 10;
     if (!orange && !green) continue;
-    const l = (mx + mn) / 510;                                    // keep the shading
-    px[i] = 24 * (0.6 + l); px[i + 1] = 167 * (0.6 + l); px[i + 2] = 224 * (0.6 + l);
+    const l = 0.6 + (mx + mn) / 510;                              // keep the shading
+    const [cr, cg, cb] = rgb[orange ? 0 : 1];
+    px[i] = Math.min(255, cr * l); px[i + 1] = Math.min(255, cg * l); px[i + 2] = Math.min(255, cb * l);
   }
   g.putImageData(d, 0, 0);
   const t = new THREE.CanvasTexture(c);
@@ -891,15 +947,25 @@ function keihinFront(mat) {
   m2.map = t;
   return m2;
 }
-function recolorKeihin(set) {
-  if (!keihinMats) keihinMats = { blue: new THREE.MeshStandardMaterial({ color: 0x18a7e0, roughness: 0.45, name: 'keihin_blue' }), front: new Map() };
+function recolorLivery(set, livery) {
+  const cols = LIVERIES[livery];
+  if (!cols) return;
+  if (!liveryMats.has(livery)) {
+    liveryMats.set(livery, {
+      orange: new THREE.MeshStandardMaterial({ color: cols[0], roughness: 0.45, name: livery + '_band_a' }),
+      green: new THREE.MeshStandardMaterial({ color: cols[1], roughness: 0.45, name: livery + '_band_b' }),
+      front: new Map(),
+    });
+  }
+  const L = liveryMats.get(livery);
   set.group.traverse((o) => {
     if (!o.isMesh) return;
     const n = o.material.name || '';
-    if (n === 'shonan_orange' || n === 'shonan_green') o.material = keihinMats.blue;
+    if (n === 'shonan_orange') o.material = L.orange;
+    else if (n === 'shonan_green') o.material = L.green;
     else if (n.startsWith('FRONT_')) {
-      if (!keihinMats.front.has(o.material)) keihinMats.front.set(o.material, keihinFront(o.material));
-      o.material = keihinMats.front.get(o.material);
+      if (!L.front.has(o.material)) L.front.set(o.material, liveryFront(o.material, cols));
+      o.material = L.front.get(o.material);
     }
   });
 }

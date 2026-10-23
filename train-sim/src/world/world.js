@@ -1,7 +1,7 @@
 // Streams the scenery around the train in 200 m chunks.
 import * as THREE from 'three';
 import { stationProtos, PERSON_KEYS, SIT_KEYS, departureBoardTexture, clockTexture } from './people.js';
-import { PLATFORM_LEN, PF_EDGE, SIDE_PF_W } from '../route.js';
+import { PLATFORM_LEN, PF_EDGE, SIDE_PF_W, PAR_RAMP as PAR_RAMP_W } from '../route.js';
 import { makeTextures } from './textures.js';
 import { atmosphere, addWindowLights } from './atmosphere.js';
 import { Environment, GROUND_Y } from './sky.js';
@@ -366,12 +366,12 @@ export class World {
     if (s !== undefined) this.env.setUrban(Math.min(1, Math.max(0, (this.route.density(s) - 0.3) / 0.5)));
   }
 
-  tracksAt(s) {
+  /** every track in [a, b]: ours, then the parallel lines (with the stretch each one has track on) */
+  tracksIn(a, b) {
     const r = this.route;
-    const list = [{ off: () => 0 }, { off: (x) => r.upOffset(x) }];
-    if (r.extraTracks(s).length) {
-      list.push({ off: (x) => r.extraTracks(x)[0] ?? r.upOffset(x) - 5 });
-      list.push({ off: (x) => r.extraTracks(x)[1] ?? r.upOffset(x) - 8.8 });
+    const list = [{ off: () => 0, s0: -Infinity, s1: Infinity }, { off: (x) => r.upOffset(x), s0: -Infinity, s1: Infinity }];
+    for (const g of r.parallelsIn(a, b)) {
+      for (const i of [0, 1]) list.push({ off: (x) => r.parallelOffset(g, i, x), s0: g.s0 - PAR_RAMP_W, s1: g.s1 + PAR_RAMP_W, group: g });
     }
     return list;
   }
@@ -379,8 +379,7 @@ export class World {
   /** lateral extent of all tracks at s */
   trackSpan(s) {
     const r = this.route;
-    const ex = r.extraTracks(s);
-    return { min: (ex.length ? ex[1] : r.upOffset(s)) - 2.2, max: 2.2 };
+    return { min: r.outerTrack(s) - 2.2, max: 2.2 };
   }
 
   buildChunk(k) {
@@ -390,7 +389,7 @@ export class World {
     const disposables = [];
     const sw = new Sweeper(r);
     const batch = new InstanceBatch();
-    const tracks = this.tracksAt(s0 + CHUNK / 2);
+    const tracks = this.tracksIn(s0, s1);
     const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S1 = new THREE.Vector3(1, 1, 1), Y = new THREE.Vector3(0, 1, 0);
     const p = {};
     const place = (key, s, lat, yRel = 0, yawExtra = 0, scale = null, color = null, absY = null) => {
@@ -411,7 +410,9 @@ export class World {
     }
 
     for (const t of tracks) {
-      for (const run of runs) {
+      for (const full of runs) {
+        const run = { bridge: full.bridge, s0: Math.max(full.s0, t.s0), s1: Math.min(full.s1, t.s1) };
+        if (run.s1 - run.s0 < 1) continue;
         if (!run.bridge) {
           sw.sweep(run.s0, run.s1, 5, t.off, [{ pts: [[-2.4, -0.62], [-1.5, -0.27], [1.5, -0.27], [2.4, -0.62]], mat: this.M.ballast, uScale: 2.2, vScale: 2.2 }]);
         }
@@ -482,13 +483,13 @@ export class World {
         place('catenary_gate', s, 0, 0, 0, new THREE.Vector3(1, 1, 0.55));
         place('catenary_gate', s, up, 0, 0, new THREE.Vector3(1, 1, 0.55));
       }
-      const ex = r.extraTracks(s);
-      if (ex.length) place('catenary_gate', s, (ex[0] + ex[1]) / 2);
+      for (const g of r.parallelsIn(s)) place('catenary_gate', s, (r.parallelOffset(g, 0, s) + r.parallelOffset(g, 1, s)) / 2);
     }
     const wirePts = [], feederPts = [];
     for (const t of tracks) {
       let prev = null;
       for (let s = s0; s <= s1; s += 10) {
+        if (s < t.s0 || s > t.s1) { prev = null; continue; }
         const zig = ((Math.floor(s / 50) % 2 === 0 ? 1 : -1) * (1 - 2 * ((s % 50) / 50))) * 0.2;
         r.pose(s, t.off(s) + zig, p);
         const c = new THREE.Vector3(p.x, p.y + 5.1, p.z);
@@ -851,7 +852,10 @@ export class World {
     const spanLen = rv.truss ? 64 : 32;
     const nSpans = Math.max(1, Math.round((rv.w1 - rv.w0) / spanLen));
     const L = (rv.w1 - rv.w0) / nSpans;
-    for (const off of [0, r.upOffset(rv.w0)]) {
+    const mid = (rv.w0 + rv.w1) / 2;
+    const offs = [0, r.upOffset(rv.w0)];
+    for (const g of r.parallelsIn(rv.w0, rv.w1)) offs.push(r.parallelOffset(g, 0, mid), r.parallelOffset(g, 1, mid));
+    for (const off of offs) {
       for (let k = 0; k < nSpans; k++) {
         const a = rv.w0 + k * L, b = a + L;
         if (rv.truss) this.truss(tb, a, b, off);
