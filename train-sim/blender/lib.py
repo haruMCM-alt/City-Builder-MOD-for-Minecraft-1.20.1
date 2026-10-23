@@ -136,7 +136,7 @@ def materials():
         seatshell=mat("seat_shell", srgb("#b4b9c2"), 0.0, 0.5),
         seatback_prio=mat("seatback_priority", srgb("#a02e3c"), 0.0, 0.9),    # red-stripe moquette
         strap_e233=mat("strap_e233", srgb("#1e1e1e"), 0.0, 0.5),
-        int_floor_e231=mat("int_floor_e231", srgb("#8c8d88"), 0.0, 0.8),
+        int_floor_e231=mat("int_floor_e231", srgb("#7c7d79"), 0.0, 0.85),
         int_floor_e233=mat("int_floor_e233", srgb("#a08f72"), 0.0, 0.8),
         floor_strip_e233=mat("floor_strip_e233", srgb("#77705f"), 0.0, 0.8),
         floor_prio_e233=mat("floor_priority_e233", srgb("#a04a44"), 0.0, 0.8),
@@ -151,10 +151,10 @@ def materials():
         # E131-600 (research/vehicles.md §2)
         e131_yellow=mat("e131_yellow", srgb("#ffec00"), 0.0, 0.40),
         e131_brown=mat("e131_brown", srgb("#a54f09"), 0.0, 0.40),
-        plough=mat("snow_plough", srgb("#5a5552"), 0.3, 0.5),
+        plough=mat("snow_plough", srgb("#4a4644"), 0.0, 0.6),
         seat_e131=mat("seat_e131", srgb("#7f5c60"), 0.0, 0.9),               # dusty-rose cushion
         seatback_e131=mat("seatback_e131", srgb("#aa5c35"), 0.0, 0.9),       # orange-brown back
-        int_floor_e131=mat("int_floor_e131", srgb("#82868f"), 0.0, 0.8),
+        int_floor_e131=mat("int_floor_e131", srgb("#7d7c78"), 0.0, 0.85),
         partition_e131=mat("seat_partition_e131", srgb("#ecebe8"), 0.1, 0.4),
         seat_211=mat("seat_211", (0.25, 0.04, 0.06), 0.0, 0.9),
         seat_115=mat("seat_115", (0.06, 0.09, 0.22), 0.0, 0.9),

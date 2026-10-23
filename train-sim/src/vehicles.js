@@ -179,6 +179,50 @@ export const VEHICLES = {
       hornTones: [350, 520],
     },
   },
+  e131: {
+    id: 'e131',
+    name: 'E131系600番台',
+    tag: '近郊形・3両／ワンマン',
+    desc: '小山–黒磯・日光線の新しい顔（2022年〜）。SiCハイブリッドVVVF（SC123）。音はE233系に近い仮のパターンです（実車のメーカー・パターンは不明）。小山–宇都宮間のみ運転できます。',
+    glb: 'assets/models/e131.glb',
+    maxSpeed: 110,
+    accel: 2.3,
+    ctSpeed: 40,
+    powerNotches: 5,
+    brakeNotches: 7,
+    brakeMax: 4.2,
+    ebDecel: 4.6,
+    handle: 'one',
+    doorSound: 'e231',
+    // クモハE131 (leading, 2 pantographs) + モハE131 + クハE130; 6 cars = two sets
+    formations: {
+      3: 'KPR',
+      6: 'KPR' + 'KPR',
+    },
+    destColor: '#ff9a20',
+    // SC123 SiC-hybrid IGBT VVVF, MT83 150 kW, gear 14:99 = 1:7.07, wheel 860 mm (research/vehicles.md §2).
+    // Maker and switching pattern unknown: E233-like steps with a lower SiC-style carrier (assumption).
+    sound: {
+      type: 'vvvf',
+      wheelD: 0.86, gearRatio: 99 / 14, pinion: 14, polePairs: 2, slip: 2.0,
+      gearGain: 0.45, pwmGain: 0.7, fanGain: 0.25, fanBlades: 15,
+      motorModes: [[480, 5, 0.6], [880, 7, 1.0], [1350, 9, 0.8], [1900, 10, 0.6], [2650, 12, 0.45], [3500, 12, 0.3], [5000, 10, 0.18]],
+      modes: [
+        { to: 22, async: [1000, 1000], random: 40 },
+        { to: 38, async: [1000, 1500], random: 40 },
+        { to: 46, sync: 9 },
+        { to: 50, sync: 3, wide: true },
+        { onePulse: true },
+      ],
+      regenModes: [
+        { to: 52, async: [600, 1400], random: 40 },
+        { to: 62, sync: 9 },
+        { to: 66, sync: 3, wide: true },
+        { onePulse: true },
+      ],
+      hornTones: [494, 740],
+    },
+  },
 };
 
 export const DEFAULT_VEHICLE = 'e231';

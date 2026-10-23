@@ -121,6 +121,19 @@ function upgradeMaterial(m) {
     stainlessPatch(m, 0.5);
     return;
   }
+  // per-series saloon materials (int_floor_e231, seatback_e233, seat_box_e231, ...): same treatment as
+  // the generic ones, so the blue sky environment does not tint the floors and seats
+  const n = m.name || '';
+  if (/^int_floor_/.test(n)) {
+    // the saloon is lit mostly by the blue sky ambient: warm the neutral grey floors (E231 / E131) a
+    // little so they read grey, not blue (the brown E233 floor needs no help)
+    if (n !== 'int_floor_e233') m.color.multiply(new THREE.Color(1.75, 1.2, 0.85));
+    m.envMapIntensity = 0.4; detailPatch(m, 6, 0.18, 0.15); return;
+  }
+  if (/^seat(back|box)?_(box_)?(e231|e233|e131|priority)|^seatbox_head_/.test(n) && n !== 'seat_priority') {
+    m.envMapIntensity = 0.3; m.roughness = Math.max(m.roughness, 0.9); detailPatch(m, 38, 0.32, 0.1); return;
+  }
+  if (/^(seat_partition_|seat_shell|strap_e|int_wall_priority|door_inner|route_map|rack_e233)/.test(n)) { m.envMapIntensity = 0.45; return; }
   switch (m.name) {
     case 'stainless_body': case 'stainless_door': case 'silver_paint': case 'stainless_seam':
       m.envMapIntensity = 1.15;

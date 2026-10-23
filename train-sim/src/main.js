@@ -129,7 +129,7 @@ if (!VEHICLES[settings.vehicle]) settings.vehicle = DEFAULT_VEHICLE;
 // ---------------------------------------------------------------------------
 async function loadAssets() {
   const loader = new GLTFLoader();
-  const files = { e231: 'e231', e233: 'e233', s211: '211', s115: '115', cab: 'cab_interior', env: 'environment' };
+  const files = { e231: 'e231', e233: 'e233', s211: '211', s115: '115', e131: 'e131', cab: 'cab_interior', env: 'environment' };
   const entries = Object.entries(files);
   let done = 0;
   await Promise.all(entries.map(async ([k, f]) => {
@@ -217,6 +217,7 @@ function buildMenu() {
     settings.vehicle = b.dataset.id; store.set('vehicle', settings.vehicle);
     vl.querySelectorAll('.veh').forEach((x) => x.classList.toggle('sel', x === b));
     showPreview();
+    fillStations();
     updateFormationNote();
   }));
   const carsSel = $('carsSel');
@@ -225,10 +226,11 @@ function buildMenu() {
   const fromSel = $('fromSel'), toSel = $('toSel');
   const fillStations = () => {
     const list = menuView().stations;
-    const opts = list.map((s, i) => `<option value="${i}">${s.name}</option>`).join('');
+    const [lo, hi] = stationRange(VEHICLES[settings.vehicle], list);
+    const opts = list.map((s, i) => (i < lo || i > hi ? '' : `<option value="${i}">${s.name}</option>`)).join('');
     fromSel.innerHTML = opts; toSel.innerHTML = opts;
-    settings.from = Math.min(settings.from, list.length - 2);
-    settings.to = Math.min(Math.max(settings.to, settings.from + 1), list.length - 1);
+    settings.from = Math.max(lo, Math.min(settings.from, hi - 1));
+    settings.to = Math.min(Math.max(settings.to, settings.from + 1), hi);
     fromSel.value = String(settings.from); toSel.value = String(settings.to);
   };
   fillStations();
@@ -246,8 +248,9 @@ function buildMenu() {
   });
   const fix = () => {
     let f = Number(fromSel.value), t = Number(toSel.value);
-    if (t <= f) { t = Math.min(route.stations.length - 1, f + 1); toSel.value = String(t); }
-    if (f >= route.stations.length - 1) { f = route.stations.length - 2; fromSel.value = String(f); }
+    const [, hi] = stationRange(VEHICLES[settings.vehicle], menuView().stations);
+    if (f >= hi) { f = hi - 1; fromSel.value = String(f); }
+    if (t <= f) { t = Math.min(hi, f + 1); toSel.value = String(t); }
     settings.from = f; settings.to = t; store.set('from', f); store.set('to', t);
     updateFormationNote();
   };
@@ -304,13 +307,14 @@ function menuView() {
 
 function updateFormationNote() {
   const v = VEHICLES[settings.vehicle];
-  const f = v.formations[settings.cars] || v.formations[15];
+  const f = formationFor(v);
   const g = (f.match(/G/g) || []).length;
   const st = menuView().stations;
   const svc = SERVICES[settings.service];
   const nStops = st.filter((x, i) => i >= settings.from && i <= settings.to && (i === settings.from || i === settings.to || !svc.stops || svc.stops.includes(x.name))).length;
   if ($('svcNote')) $('svcNote').textContent = `${svc.desc}（この区間の停車駅 ${nStops} 駅）`;
-  $('formNote').textContent = `${f.length}両編成${g ? `（グリーン車 ${g}両）` : ''} ・ ${st[settings.from].name} → ${st[settings.to].name}  ${(Math.abs(st[settings.to].realS - st[settings.from].realS) / 1000).toFixed(1)} km`;
+  $('formNote').textContent = `${f.length}両編成${g ? `（グリーン車 ${g}両）` : ''} ・ ${st[settings.from].name} → ${st[settings.to].name}  ${(Math.abs(st[settings.to].realS - st[settings.from].realS) / 1000).toFixed(1)} km`
+    + (VEH_RANGE[v.id] ? `　※${v.name}は${VEH_RANGE[v.id][0]}–${VEH_RANGE[v.id][1]}間のみ（実車の運用区間）。両数は10両→3両、15両→6両` : '');
 }
 
 function updateMelStatus() {
@@ -379,7 +383,7 @@ async function startGame() {
   melody.attach();
 
   const veh = VEHICLES[settings.vehicle];
-  const formation = veh.formations[settings.cars] || veh.formations[15];
+  const formation = formationFor(veh);
   sound.altSound = settings.vvvf === 'old';
   sound.setVehicle(veh);
   setupComposer(settings.quality);
@@ -419,7 +423,7 @@ async function startGame() {
   AXLES = axleOffsets(formation.length);
   // cab interior on the leading car
   // per-series cab: cab_<key> roots in cab_interior.glb (E231 / E233 one-handle LCD desks, 211 / 115 two-handle)
-  const cabKey = { e231: 'e231', e233: 'e233', s211: '211', s115: '115' }[veh.id] || 'e231';
+  const cabKey = { e231: 'e231', e233: 'e233', s211: '211', s115: '115', e131: 'e131' }[veh.id] || 'e231';
   cab = (gltfs.cab.scene.getObjectByName('cab_' + cabKey) || gltfs.cab.scene).clone(true);
   cab.position.set(0, 0, 0);
   // the cab has its own roof: let it cast/receive sun shadows (sun patches through the windscreen)
@@ -695,7 +699,22 @@ function clearSeatFor(R) {
   if (pm) inner.add(pm);
 }
 
-function modelKey(veh) { return { e231: 'e231', e233: 'e233', s211: '211', s115: '115' }[veh.id]; }
+function modelKey(veh) { return { e231: 'e231', e233: 'e233', s211: '211', s115: '115', e131: 'e131' }[veh.id]; }
+
+/** formation for the menu's car count; short sets (E131: 3 / 6 cars) map 10 -> 3 and 15 -> 6 */
+function formationFor(v) {
+  return v.formations[settings.cars] || (v.formations[15] ? v.formations[15] : settings.cars >= 15 ? v.formations[6] : v.formations[3]);
+}
+
+/** stations a vehicle may run between (E131: only 小山–宇都宮, its real working south of 黒磯) */
+const VEH_RANGE = { e131: ['小山', '宇都宮'] };
+function stationRange(v, list) {
+  const r = VEH_RANGE[v.id];
+  if (!r) return [0, list.length - 1];
+  const ia = list.findIndex((s) => s.name === r[0]), ib = list.findIndex((s) => s.name === r[1]);
+  if (ia < 0 || ib < 0) return [0, list.length - 1];
+  return [Math.min(ia, ib), Math.max(ia, ib)];
+}
 
 function teardown() {
   if (player) player.dispose();
