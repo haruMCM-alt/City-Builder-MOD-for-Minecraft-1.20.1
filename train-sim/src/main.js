@@ -313,7 +313,19 @@ function buildMenu() {
   $('melAssignBtn').addEventListener('click', () => { buildMelodyAssign(); $('melAssign').classList.remove('hidden'); });
   $('melAssignClose').addEventListener('click', () => { $('melAssign').classList.add('hidden'); if (melody.audio) melody.audio.pause(); });
   $('melAssignReset').addEventListener('click', () => { melody.resetAssign(); buildMelodyAssign(); });
-  $('startBtn').addEventListener('click', startGame);
+  $('startBtn').addEventListener('click', () => startGame());
+  $('continueBtn').addEventListener('click', continueRun);
+  // after a saved run's settings are restored: show them in the menu
+  menuRefresh = () => {
+    lineSel.value = settings.line; dirSel.value = settings.dir; svcSel.value = settings.service;
+    todSel.value = settings.tod; wxSel.value = settings.weather; carsSel.value = String(settings.cars);
+    vl.querySelectorAll('.veh').forEach((x) => x.classList.toggle('sel', x.dataset.id === settings.vehicle));
+    melody.setDirection(settings.dir);
+    fillStations();
+    showPreview();
+    updateFormationNote();
+  };
+  updateSaveButton();
   updateFormationNote();
   updateAnnStatus();
   updateMelStatus();
@@ -386,7 +398,7 @@ function showPreview() {
   } catch (e) { console.warn('preview unavailable', e); }
 }
 
-async function startGame() {
+async function startGame(resume = null) {
   if (preview) preview.stop();
   $('menu').classList.add('hidden');
   $('loading').classList.remove('hidden');
@@ -470,6 +482,8 @@ async function startGame() {
     route: view, physics, timetable: tt, sound, announcer, melody, hud, fromIdx: settings.from, service, up: view.up,
     platform, platformRange: (st) => { const a = view.toRoute(st.s - PLATFORM_LEN), b = view.toRoute(st.s); return { s0: Math.min(a, b), s1: Math.max(a, b) }; },
   });
+  if (resume) resumeAt(resume, tt);
+  lastSavedTi = game.ti;
   traffic = new Traffic();
   if (shinkansen) shinkansen.clear();
   shinkansen = new ShinkansenTraffic(scene, route, sound);
@@ -775,6 +789,7 @@ function backToMenu() {
   $('result').classList.add('hidden');
   $('pause').classList.add('hidden');
   $('menu').classList.remove('hidden');
+  updateSaveButton();
   updateAnnStatus();
   if (preview) preview.start();
 }
@@ -1174,6 +1189,11 @@ function setupInput() {
   hold('btnPause', togglePause);
   $('resumeBtn').addEventListener('click', togglePause);
   $('quitBtn').addEventListener('click', backToMenu);
+  $('saveQuitBtn').addEventListener('click', () => {
+    // standing at a station: save here; otherwise the autosave from the last stop stays
+    if (game && !game.finished && ['dwell', 'melody', 'doorcall'].includes(game.state)) saveRun(true);
+    backToMenu();
+  });
   $('menuBtn').addEventListener('click', backToMenu);
   $('retryBtn').addEventListener('click', () => { $('result').classList.add('hidden'); startGame(); });
 }
@@ -1268,6 +1288,9 @@ function simStep(dt) {
     hud.message(physics.slip > physics.slide ? '空転 <small>雨でレールが滑りやすい</small>' : '滑走 <small>ブレーキを緩めて</small>', 'info', 1.4);
   }
   game.update(dt);
+  // autosave each time the train stands at a station (and drop the save once the run is over)
+  if (game.state === 'dwell' && game.ti !== lastSavedTi) { lastSavedTi = game.ti; saveRun(); }
+  if (game.finished && lastSavedTi !== -1) { lastSavedTi = -1; clearSave(); }
 
   // rail joint sounds under every axle (every 25 m, plus turnouts at station throats),
   // emitted where the joint is so they are delayed / panned / attenuated for the listener
@@ -1432,6 +1455,71 @@ function turnoutBetween(a, b) {
     for (const t of [st.s - 345, st.s - 338, st.s - 331, st.s + 42, st.s + 49, st.s + 56]) if (lo < t && hi >= t) return true;
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// save / continue: the run is saved at every station stop; 「続きから」 starts it again there
+// ---------------------------------------------------------------------------
+const SAVE_VERSION = 1;
+let lastSavedTi = null, menuRefresh = null;
+const RUN_KEYS = ['line', 'dir', 'vehicle', 'cars', 'service', 'from', 'to', 'tod', 'weather'];
+
+function saveRun(quiet = false) {
+  if (!game || game.finished || !game.current) return;
+  const tt = game.tt;
+  const data = {
+    v: SAVE_VERSION, at: Date.now(),
+    settings: Object.fromEntries(RUN_KEYS.map((k) => [k, settings[k]])),
+    ti: game.ti, clock: game.clock, score: game.score, results: game.results, penalties: game.penalties,
+    station: game.current.station.name, dest: tt[tt.length - 1].station.name,
+    lineName: route.lineName, vehName: VEHICLES[settings.vehicle].name,
+  };
+  store.set('save', data);
+  if (!quiet && game.ti > 1) hud.message('セーブしました', 'info', 1.6);
+}
+function loadSave() {
+  const d = store.get('save', null);
+  if (!d || d.v !== SAVE_VERSION || !d.settings || !VEHICLES[d.settings.vehicle] || !SERVICES[d.settings.service]) return null;
+  return d;
+}
+function clearSave() { try { localStorage.removeItem('tsim.save'); } catch { /* ignore */ } updateSaveButton(); }
+function updateSaveButton() {
+  const b = $('continueBtn');
+  if (!b) return;
+  const d = loadSave();
+  b.classList.toggle('hidden', !d);
+  if (!d) return;
+  const when = new Date(d.at);
+  b.innerHTML = `続きから運転<small>${d.lineName || ''} ${d.vehName} ${d.station} から（${d.dest}行き・${fmtTime(d.clock)}）　保存 ${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}</small>`;
+}
+function continueRun() {
+  const d = loadSave();
+  if (!d) { updateSaveButton(); return; }
+  for (const k of RUN_KEYS) if (d.settings[k] !== undefined) { settings[k] = d.settings[k]; store.set(k, settings[k]); }
+  if (route.line !== settings.line) { route = new Route(settings.line); _menuView = null; }
+  if (menuRefresh) menuRefresh();
+  // the station list may have changed shape since the save: fall back to the full run
+  settings.from = d.settings.from; settings.to = d.settings.to;
+  startGame(d);
+}
+/** put a freshly built game at the saved station: standing there with the doors open */
+function resumeAt(d, tt) {
+  const ti = Math.max(1, Math.min(tt.length - 1, d.ti | 0));
+  if (!tt[ti - 1] || tt[ti - 1].station.name !== d.station) return;   // the timetable no longer matches
+  game.ti = ti;
+  game.clock = d.clock;
+  game.score = d.score || 0;
+  game.results = Array.isArray(d.results) ? d.results : [];
+  game.penalties = d.penalties || 0;
+  game.introPlayed = true;
+  game.state = 'dwell';
+  game.stateT = 0;
+  const st = tt[ti - 1].station;
+  physics.s = st.s;
+  physics.v = 0;
+  physics.doorsOpen = true;
+  game.doorSide = st.door;
+  hud.message(`${st.name} から再開`, 'info', 3);
 }
 
 let resultShown = false;

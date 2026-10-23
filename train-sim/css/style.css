@@ -49,6 +49,7 @@ select { flex: 1; background: #151a20; color: var(--text); border: 1px solid var
   background: linear-gradient(90deg, var(--orange), #e36d00); box-shadow: 0 6px 20px rgba(246,139,31,.3); }
 .start:disabled { opacity: .5; cursor: wait; }
 .ghost { display: block; width: 100%; margin-top: 10px; padding: 12px; border-radius: 12px; border: 1px solid var(--panel-line); background: transparent; color: var(--text); font-size: 15px; cursor: pointer; }
+.continue small { display: block; margin-top: 4px; font-size: 12px; opacity: .7; }
 .boot-load .bar { height: 4px; background: #1d232a; border-radius: 2px; margin-top: 10px; overflow: hidden; }
 #loadBar { height: 100%; width: 0; background: var(--orange); transition: width .2s; }
 .help { margin-top: 22px; background: rgba(255,255,255,0.03); border: 1px solid var(--panel-line); border-radius: 12px; padding: 10px 14px; }
