@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>宇都宮線 運転シミュレーター</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=DotGothic16&family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="view"></div>
+
+<!-- ======================= MENU ======================= -->
+<section id="menu" class="overlay">
+  <div class="menu-inner">
+    <header class="title">
+      <div class="line-badge">JU</div>
+      <div>
+        <h1>宇都宮線 運転シミュレーター</h1>
+        <p class="sub">上野 ⇄ 宇都宮 109 km ・ 下り／上り ・ 普通・快速ラビット・特別快速 ・ 全23駅</p>
+      </div>
+    </header>
+
+    <div class="cols">
+      <div class="col">
+        <h2>車両</h2>
+        <canvas id="vehPreview" class="veh-preview" width="640" height="260" aria-label="選択中の車両の3Dプレビュー"></canvas>
+        <div id="vehList" class="veh-list"></div>
+      </div>
+      <div class="col">
+        <h2>運転区間・編成</h2>
+        <div class="row"><label>路線</label><select id="lineSel"></select></div>
+        <div class="row"><label>方向</label><select id="dirSel">
+          <option value="down">下り（上野 → 宇都宮）</option>
+          <option value="up">上り（宇都宮 → 上野）</option>
+        </select></div>
+        <div class="row"><label>種別</label><select id="svcSel"></select></div>
+        <div class="row"><label>時間帯</label><select id="todSel">
+          <option value="day">朝（9時台）</option>
+          <option value="evening">夕方</option>
+          <option value="night">夜</option>
+        </select></div>
+        <div class="row"><label>天気</label><select id="wxSel">
+          <option value="clear">晴れ</option>
+          <option value="rain">雨</option>
+        </select></div>
+        <p id="svcNote" class="note"></p>
+        <div class="row"><label>出発</label><select id="fromSel"></select></div>
+        <div class="row"><label>到着</label><select id="toSel"></select></div>
+        <div class="row"><label>両数</label><select id="carsSel"><option value="15">15両（グリーン車付）</option><option value="10">10両</option></select></div>
+        <p id="formNote" class="note"></p>
+        <div class="row"><label>VVVF音</label><select id="vvvfSel">
+          <option value="new">機器更新車（現在の主流）</option>
+          <option value="old">未更新車（日立 SC59A/SC77・「墜落」）</option>
+        </select></div>
+
+        <h2>車内放送</h2>
+        <div class="row"><label>音源</label>
+          <select id="annMode">
+            <option value="file">収録音声（内蔵）</option>
+            <option value="tts">音声合成</option>
+            <option value="off">なし</option>
+          </select>
+        </div>
+        <p id="annStatus" class="note"></p>
+
+        <h2>発車メロディ</h2>
+        <div class="row"><label>音源</label>
+          <select id="melMode">
+            <option value="on">添付の発車メロディ集</option>
+            <option value="off">なし</option>
+          </select>
+        </div>
+        <div class="file-row">
+          <label class="file-btn">ファイルを選択（.m4a）<input id="melFile" type="file" accept="audio/*,.m4a"></label>
+          <button id="melAssignBtn" class="small-btn" disabled>駅ごとの割り当て</button>
+        </div>
+        <p id="melStatus" class="note"></p>
+
+        <h2>画質</h2>
+        <div class="row"><label>描画</label><select id="qualSel">
+          <option value="ultra">最高（影・AO・ブルーム）</option>
+          <option value="high">高（影・ブルーム）</option>
+          <option value="low">軽量（低スペックPC向け）</option>
+        </select></div>
+        <label class="chk"><input id="shadowChk" type="checkbox"> 影を表示</label>
+
+        <button id="startBtn" class="start" disabled>読み込み中…</button>
+        <button id="continueBtn" class="ghost continue hidden"></button>
+        <div id="bootLoad" class="boot-load"><div class="bar"><div id="loadBar"></div></div></div>
+      </div>
+    </div>
+
+    <details class="help">
+      <summary>操作方法</summary>
+      <table>
+        <tr><td>↑ / W / Z / ホイール上</td><td>力行側へ（ノッチを進める・ブレーキを緩める）</td></tr>
+        <tr><td>↓ / S / A / ホイール下</td><td>ブレーキ側へ</td></tr>
+        <tr><td>Space / N</td><td>ニュートラル</td></tr>
+        <tr><td>Q</td><td>常用最大ブレーキ</td></tr>
+        <tr><td>E / Backspace</td><td>非常ブレーキ</td></tr>
+        <tr><td>H（長押し）</td><td>警笛</td></tr>
+        <tr><td>C / V</td><td>視点切替（運転台・車内・座席・グリーン車2階・正面・側面・後方上空・沿線・フリー）</td></tr>
+        <tr><td>フリー視点</td><td>ドラッグで向き、I/J/K/L で移動、U/O で上下、Shift で速く、G で列車に追従／固定</td></tr>
+        <tr><td>Enter / F</td><td>停車中、発車時刻まで早送り</td></tr>
+        <tr><td>T</td><td>時刻表の表示</td></tr>
+        <tr><td>M / Esc</td><td>消音 / 一時停止</td></tr>
+        <tr><td>ドラッグ</td><td>運転台・車内で見回す（ダブルクリックで正面）</td></tr>
+      </table>
+      <p class="note">停止位置目標「15」にぴったり止め、時刻表どおりに走らせるほど高得点。制限速度を超えると ATS-P が作動します。</p>
+      <p class="note credit">線形・駅位置: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors (ODbL)　勾配: 出典 国土地理院 標高タイル（加工して作成）</p>
+    </details>
+  </div>
+</section>
+
+<section id="loading" class="overlay hidden"><div class="spinner"></div><p>路線を準備中…</p></section>
+
+<!-- ======================= HUD ======================= -->
+<section id="hud" class="hidden">
+  <div id="topBar">
+    <div id="routeStrip"></div>
+  </div>
+  <div id="topRight">
+    <div class="score-box"><span class="lbl">SCORE</span><span id="score">0</span></div>
+    <div class="lamps"><span id="atsLamp" class="lamp">ATS-P</span><span id="doorLamp" class="lamp">戸閉</span></div>
+    <div class="limit-box"><span class="lbl">制限</span><span id="limitNow" class="lim">120</span><span id="limitNext" class="lim-next"></span></div>
+    <div class="sig-box" title="次の信号機"><span class="lbl">信号</span><span id="sigHead" class="sig-head"><i></i><i></i><i></i><i></i></span><span id="sigText" class="sig-text"></span></div>
+    <div class="cam-box"><span id="vehName"></span> ・ <span id="camLabel"></span></div>
+  </div>
+
+  <div id="message"></div>
+
+  <div id="stopGauge"><div class="scale"><span class="mark"></span><span id="stopNeedle" class="needle"></span></div><div id="stopText"></div></div>
+
+  <div id="bottom">
+    <canvas id="speedo" width="260" height="260"></canvas>
+    <div id="notchBox">
+      <div id="notchBig">B7</div>
+      <div id="notches"></div>
+    </div>
+    <div id="infoBox">
+      <div class="row1"><span id="nextKind" class="kind">停車</span><span id="nextName" class="name">—</span></div>
+      <div class="grid">
+        <span class="lbl">停止位置まで</span><span id="nextDist" class="val big">--</span>
+        <span class="lbl">到着時刻</span><span id="nextArr" class="val">--</span>
+        <span class="lbl">現在時刻</span><span id="clock" class="val">--</span>
+        <span class="lbl"></span><span class="val small"><span id="delay"></span> <span id="nextDep"></span></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="touch">
+    <button id="btnPow">▲<small>力行</small></button>
+    <button id="btnN">N</button>
+    <button id="btnBrk">▼<small>ブレーキ</small></button>
+    <button id="btnEB" class="eb">EB</button>
+    <button id="btnHorn">警笛</button>
+    <button id="btnCam">視点</button>
+    <button id="btnSkip">早送り</button>
+    <button id="btnPause">Ⅱ</button>
+  </div>
+
+  <div id="ttBox" class="hidden">
+    <table><thead><tr><th>駅</th><th>着</th><th>発</th></tr></thead><tbody id="ttPanel"></tbody></table>
+  </div>
+</section>
+
+<section id="melAssign" class="overlay hidden">
+  <div class="dialog wide">
+    <h2>発車メロディの割り当て</h2>
+    <p class="note">録音には駅名が入っていないため、初期値は収録順からの推定です。▶で試聴して、各駅で宇都宮方面へ発車するときに鳴らす曲を選んでください（このブラウザに保存されます）。</p>
+    <div id="melAssignList" class="ma-list"></div>
+    <div class="btns"><button id="melAssignReset" class="ghost">初期値に戻す</button><button id="melAssignClose" class="start">閉じる</button></div>
+  </div>
+</section>
+
+<section id="pause" class="overlay hidden">
+  <div class="dialog">
+    <h2>一時停止</h2>
+    <button id="resumeBtn" class="start">運転再開</button>
+    <button id="saveQuitBtn" class="ghost">中断して保存（駅から再開）</button>
+    <button id="quitBtn" class="ghost">メニューへ戻る</button>
+  </div>
+</section>
+
+<section id="result" class="overlay hidden">
+  <div class="dialog wide">
+    <h2>運転終了</h2>
+    <div class="res-head"><div class="grade" id="resGrade">A</div><div><span class="lbl">SCORE</span><div id="resScore" class="res-score">0</div></div></div>
+    <table class="res-table"><thead><tr><th>駅</th><th>停止位置</th><th>時刻</th><th>得点</th></tr></thead><tbody id="resRows"></tbody></table>
+    <div class="btns"><button id="retryBtn" class="start">もう一度</button><button id="menuBtn" class="ghost">メニューへ</button></div>
+  </div>
+</section>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
