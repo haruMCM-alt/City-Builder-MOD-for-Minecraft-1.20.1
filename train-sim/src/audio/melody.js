@@ -17,6 +17,7 @@ export class MelodyPlayer extends ClipPlayer {
   /** separate per-station assignments for 宇都宮方面 (down) and 上野方面 (up) departures */
   setDirection(dir) {
     this.dir = dir === 'up' ? 'up' : 'down';
+    this.randomPick = new Map();
     this.assign = { ...DEFAULTS[this.dir] };
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEYS[this.dir]) || 'null');
@@ -38,10 +39,25 @@ export class MelodyPlayer extends ClipPlayer {
 
   clip(no) { return MELODY_CLIPS.find((c) => c.no === no); }
 
+  /**
+   * the melody number for a station: its assignment, or for stations without one (the
+   * 東海道線 / 上野東京ライン stretch 小田原–東京 and the 湘南新宿ライン) a random melody,
+   * kept for the rest of the run so a station does not change tune between visits
+   */
+  noFor(station) {
+    if (this.assign[station] != null) return this.assign[station];
+    if (!this.randomPick) this.randomPick = new Map();
+    if (!this.randomPick.has(station)) this.randomPick.set(station, MELODY_CLIPS[Math.floor(Math.random() * MELODY_CLIPS.length)].no);
+    return this.randomPick.get(station);
+  }
+
+  /** a new run: draw new random melodies */
+  reshuffle() { this.randomPick = new Map(); }
+
   /** length (s) of the melody for a station, or of the fallback jingle */
   durationFor(station) {
     if (this.audio) {
-      const c = this.clip(this.assign[station]);
+      const c = this.clip(this.noFor(station));
       if (c) return c.end - c.start;
     }
     return 6.4;
@@ -51,7 +67,7 @@ export class MelodyPlayer extends ClipPlayer {
   playFor(station) {
     if (!this.enabled) return 0;
     if (this.audio) {
-      const c = this.clip(this.assign[station]);
+      const c = this.clip(this.noFor(station));
       if (c) return this.playRange(station, c.start, c.end);
     }
     return this.sound.fallbackMelody ? this.sound.fallbackMelody() : 0;

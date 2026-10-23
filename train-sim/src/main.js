@@ -346,7 +346,7 @@ function updateMelStatus() {
 /** per-station melody picker with preview */
 function buildMelodyAssign() {
   const list = $('melAssignList');
-  const opts = MELODY_CLIPS.map((c) => `<option value="${c.no}" title="${c.where}">${c.name}${c.retired ? '（使用終了）' : ''} ・ ${c.where}</option>`).join('');
+  const opts = '<option value="">ランダム（毎回ちがう曲）</option>' + MELODY_CLIPS.map((c) => `<option value="${c.no}" title="${c.where}">${c.name}${c.retired ? '（使用終了）' : ''} ・ ${c.where}</option>`).join('');
   const dirName = settings.dir === 'up' ? '上野方面（上り）' : '宇都宮方面（下り）';
   document.querySelector('#melAssign h2').textContent = `発車メロディの割り当て ・ ${dirName}`;
   document.querySelector('#melAssign .note').textContent = `初期値は、動画に表示される曲名・使用駅と各駅ののりば（方向）から割り当てています。▶で試聴して、${dirName}へ発車するときの曲を変えることもできます（方向ごとにこのブラウザに保存されます）。`;
@@ -355,10 +355,10 @@ function buildMelodyAssign() {
       <select data-st="${st.name}">${opts}</select>
       <button class="ma-play" data-st="${st.name}" aria-label="${st.name}のメロディを試聴">▶</button></div>`).join('');
   list.querySelectorAll('select').forEach((sel) => {
-    sel.value = String(melody.assign[sel.dataset.st]);
-    sel.addEventListener('change', () => melody.setAssign(sel.dataset.st, Number(sel.value)));
+    sel.value = melody.assign[sel.dataset.st] == null ? '' : String(melody.assign[sel.dataset.st]);
+    sel.addEventListener('change', () => melody.setAssign(sel.dataset.st, sel.value === '' ? null : Number(sel.value)));
   });
-  list.querySelectorAll('.ma-play').forEach((b) => b.addEventListener('click', () => melody.preview(melody.assign[b.dataset.st])));
+  list.querySelectorAll('.ma-play').forEach((b) => b.addEventListener('click', () => melody.preview(melody.noFor(b.dataset.st))));
 }
 
 function updateAnnStatus() {
@@ -399,6 +399,7 @@ async function startGame() {
   if (melody.loading) { try { await melody.loading; } catch { /* fallback jingle */ } }
   melody.enabled = settings.melMode !== 'off';
   melody.attach();
+  melody.reshuffle();
 
   const veh = VEHICLES[settings.vehicle];
   const formation = formationFor(veh);
