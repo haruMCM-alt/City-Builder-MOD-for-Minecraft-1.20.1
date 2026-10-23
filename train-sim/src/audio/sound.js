@@ -567,22 +567,34 @@ export class SoundEngine {
   // ---------------------------------------------------------------------------------
   // rain
   // ---------------------------------------------------------------------------------
-  /** a loop of random droplet impacts (tiny decaying pings) */
-  makePatter(sec, rate, fLo, fHi, seed) {
+  /**
+   * a loop of raindrop impacts: each drop is a tiny burst of filtered noise (no pitch), so a
+   * dense layer reads as the soft crackle of rain rather than bubbling. dur = burst length (s),
+   * lp / hp = one-pole filter corners (Hz)
+   */
+  makeDrops(sec, rate, dur, lp, hp, seed) {
     const ctx = this.ctx, sr = ctx.sampleRate, len = Math.floor(sr * sec);
     const b = ctx.createBuffer(1, len, sr), d = b.getChannelData(0);
     const R = mulberry(seed);
     const n = Math.floor(sec * rate);
     for (let k = 0; k < n; k++) {
-      const i0 = Math.floor(R() * len), f = fLo * Math.pow(fHi / fLo, R()), dec = 250 + R() * 900, amp = R() ** 2.5;
-      const m = Math.floor(sr * 6 / dec);
-      for (let i = 0; i < m; i++) {
-        const tt = i / sr;
-        d[(i0 + i) % len] += Math.sin(2 * Math.PI * f * tt) * Math.exp(-tt * dec) * amp;
+      const i0 = Math.floor(R() * len), amp = Math.pow(R(), 3), m = Math.floor(sr * dur * (0.5 + R()));
+      const tau = m / 3.5;
+      for (let i = 0; i < m; i++) d[(i0 + i) % len] += (R() * 2 - 1) * amp * Math.exp(-i / tau) * Math.min(1, i / 6);
+    }
+    // band-limit (run twice so the loop seam has settled filter state)
+    const aL = Math.exp(-2 * Math.PI * lp / sr), aH = Math.exp(-2 * Math.PI * hp / sr);
+    let l = 0, h = 0, px = 0;
+    const out = new Float32Array(len);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < len; i++) {
+        l = l * aL + d[i] * (1 - aL);
+        h = aH * (h + l - px); px = l;
+        if (pass) out[i] = h;
       }
     }
-    let peak = 1e-6; for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(d[i]));
-    for (let i = 0; i < len; i++) d[i] /= peak;
+    let peak = 1e-6; for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(out[i]));
+    for (let i = 0; i < len; i++) d[i] = out[i] / peak;
     return b;
   }
 
@@ -593,14 +605,22 @@ export class SoundEngine {
     if (level > 0 && !this.rain) {
       const mk = (src, filters, dest) => { let n = src; for (const f of filters) n = n.connect(f); const g = ctx.createGain(); g.gain.value = 0; n.connect(g).connect(dest); return g; };
       const bq = (type, f, q = 0.7) => { const x = ctx.createBiquadFilter(); x.type = type; x.frequency.value = f; x.Q.value = q; return x; };
+      // slow gusts: the rain bed swells and fades a little
+      const gust = ctx.createGain(); gust.gain.value = 0.85;
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.07;
+      const lfo2 = ctx.createOscillator(); lfo2.frequency.value = 0.023;
+      const lg = ctx.createGain(); lg.gain.value = 0.12;
+      lfo.connect(lg); lfo2.connect(lg); lg.connect(gust.gain); lfo.start(); lfo2.start();
+      gust.connect(this.master);
       this.rain = {
-        // the wide hiss of rain on everything around
-        hiss: mk(this.loopSource(this.pinkBuf), [bq('highpass', 700), bq('lowpass', 7500)], this.master),
-        hissMuffled: mk(this.loopSource(this.pinkBuf), [bq('bandpass', 1400, 0.4), bq('lowpass', 2500)], this.master),
-        // drops close by: on the windscreen (bright pings) and drumming on the roof (dull)
-        glass: mk(this.loopSource(this.makePatter(3.3, 420, 1800, 6500, 5)), [bq('highpass', 900)], this.master),
-        roof: mk(this.loopSource(this.makePatter(2.9, 900, 250, 1400, 9)), [bq('lowpass', 1600)], this.master),
-        near: mk(this.loopSource(this.makePatter(3.7, 700, 900, 5200, 13)), [], this.master),
+        // the wide wash of rain falling on everything around (soft, no harsh highs)
+        hiss: mk(this.loopSource(this.pinkBuf), [bq('highpass', 300), bq('lowpass', 2600, 0.5)], gust),
+        hissMuffled: mk(this.loopSource(this.pinkBuf), [bq('highpass', 200), bq('lowpass', 1300, 0.5)], gust),
+        // nearby drops: a dense, fine crackle outdoors
+        near: mk(this.loopSource(this.makeDrops(4.1, 1600, 0.0014, 3200, 500, 13)), [bq('lowpass', 4500, 0.5)], gust),
+        // in the cab: light ticks on the windscreen, a dull patter on the roof
+        glass: mk(this.loopSource(this.makeDrops(3.7, 260, 0.0018, 3000, 700, 5)), [bq('lowpass', 4000, 0.5)], this.master),
+        roof: mk(this.loopSource(this.makeDrops(3.3, 900, 0.006, 900, 90, 9)), [], gust),
       };
     }
     this.rainLevel = level;
@@ -611,10 +631,10 @@ export class SoundEngine {
     if (!this.rain) return;
     const t = this.ctx.currentTime, l = this.rainLevel || 0, m = this.mode, r = this.rain;
     const set = (g, v) => g.gain.setTargetAtTime(v * l, t, 0.3);
-    set(r.hiss, m === 'outside' ? 0.09 : 0);
-    set(r.near, m === 'outside' ? 0.05 : 0);
-    set(r.hissMuffled, m === 'cab' ? 0.035 : m === 'car' ? 0.025 : 0);
-    set(r.glass, m === 'cab' ? 0.07 : m === 'car' ? 0.025 : 0);
+    set(r.hiss, m === 'outside' ? 0.05 : 0);
+    set(r.near, m === 'outside' ? 0.035 : 0);
+    set(r.hissMuffled, m === 'cab' ? 0.03 : m === 'car' ? 0.022 : 0);
+    set(r.glass, m === 'cab' ? 0.045 : m === 'car' ? 0.012 : 0);
     set(r.roof, m === 'cab' ? 0.05 : m === 'car' ? 0.035 : 0);
   }
 

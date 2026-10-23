@@ -78,26 +78,27 @@ function coniferCluster(R) {
   return leafTex(c);
 }
 
-/** bamboo grove sprite: culms + feathery leaves (kept as tall cards) */
+/** bamboo grove sprite: many slender culms, arching tops, feathery leaf sprays (kept as tall cards) */
 function bambooSprite(R) {
   const c = canvas(256, 512);
   const g = c.getContext('2d');
   g.clearRect(0, 0, 256, 512);
-  for (let i = 0; i < 22; i++) {
-    const x = 20 + R() * 216, top = 30 + R() * 90, bend = (R() - 0.5) * 70;
-    const l = 0.8 + R() * 0.4;
-    g.strokeStyle = `rgb(${110 * l | 0},${140 * l | 0},${70 * l | 0})`;
-    g.lineWidth = 3 + R() * 2.5;
-    g.beginPath(); g.moveTo(x, 512); g.quadraticCurveTo(x + bend * 0.3, 280, x + bend, top); g.stroke();
-    // nodes
-    g.strokeStyle = 'rgba(60,70,40,0.6)'; g.lineWidth = 1;
-    for (let y = 500; y > top + 40; y -= 26 + R() * 8) { g.beginPath(); g.moveTo(x - 3, y); g.lineTo(x + 3, y); g.stroke(); }
+  // culms: slender, grey-green to yellow-green, leaning and arching at the top
+  for (let i = 0; i < 46; i++) {
+    const x = 8 + R() * 240, top = 40 + R() * 120, bend = (R() - 0.5) * 90;
+    const l = 0.7 + R() * 0.45, y = R() < 0.3;
+    g.strokeStyle = `rgb(${(y ? 120 : 92) * l | 0},${128 * l | 0},${(y ? 66 : 74) * l | 0})`;
+    g.lineWidth = 1.2 + R() * 1.6;
+    g.beginPath(); g.moveTo(x, 512); g.quadraticCurveTo(x + bend * 0.15, 300, x + bend, top); g.stroke();
+    g.strokeStyle = 'rgba(50,60,36,0.55)'; g.lineWidth = 1;
+    for (let yy = 505; yy > top + 60; yy -= 24 + R() * 10) { g.beginPath(); g.moveTo(x - 2, yy); g.lineTo(x + 2, yy); g.stroke(); }
   }
-  for (let i = 0; i < 2600; i++) {
-    const x = 10 + R() * 236, y = 20 + Math.pow(R(), 1.6) * 330;
-    const sh = 0.6 + 0.5 * (1 - y / 360) + (R() - 0.5) * 0.25;
-    g.fillStyle = `rgb(${(80 + R() * 40) * sh | 0},${(120 + R() * 40) * sh | 0},${(45 + R() * 20) * sh | 0})`;
-    g.beginPath(); g.ellipse(x, y, 7 + R() * 5, 1.6 + R(), (R() - 0.5) * 1.2 + 0.3, 0, 7); g.fill();
+  // leaves: narrow lanceolate leaves in sprays, dense at the top, thinning toward mid height
+  for (let i = 0; i < 4200; i++) {
+    const yy = 20 + Math.pow(R(), 1.35) * 380, x = 6 + R() * 244;
+    const sh = 0.55 + 0.55 * (1 - yy / 400) + (R() - 0.5) * 0.3;
+    g.fillStyle = `rgb(${(70 + R() * 40) * sh | 0},${(104 + R() * 36) * sh | 0},${(40 + R() * 20) * sh | 0})`;
+    g.beginPath(); g.ellipse(x, yy, 5 + R() * 4, 1.1 + R() * 0.7, 0.5 + (R() - 0.5) * 1.6, 0, 7); g.fill();
   }
   return leafTex(c);
 }
@@ -200,7 +201,7 @@ function coniferCrown(R, y0, y1, r0) {
     for (let k = 0; k < n; k++) {
       const phi = (k / n) * Math.PI * 2 + R() * 0.7 + y * 1.7;
       const dir = V(Math.cos(phi), 0, Math.sin(phi));
-      const c = V(dir.x * rad * 0.55, y + 0.15, dir.z * rad * 0.55);
+      const c = V(dir.x * rad * 0.62, y + 0.15, dir.z * rad * 0.62);
       // card hangs from the stem: one edge toward the stem/top, drooping outward
       const a = V(-dir.z, 0, dir.x);                       // tangential
       const b = V(dir.x * 0.75, 0.66, dir.z * 0.75).normalize();   // up-and-in (texture top = stem)
@@ -208,7 +209,7 @@ function coniferCrown(R, y0, y1, r0) {
       if (nrm.dot(dir) < 0) nrm.negate();
       const sn = nrm.clone().addScaledVector(up, 0.5).normalize();
       const shade = (0.55 + 0.45 * f) * (0.9 + R() * 0.2);
-      B.card(c, a, b, rad * 1.7 + 1.0, sn, shade);
+      B.card(c, a, b, rad * 1.05 + 0.7, sn, shade);
     }
   }
   // tip
@@ -268,6 +269,125 @@ function crossedCards(n, w, h) {
   return B;
 }
 
+// ---------------------------------------------------------------------------
+// solid foliage: clipped shrubs, hedges and the dense core of tree crowns.
+// A leaf texture mapped in world space (three planes blended by the normal) so it keeps its
+// scale on hedges of any length and never shows a seam; the surface is bumped by noise.
+// ---------------------------------------------------------------------------
+function foliageTex(R, cols, leaf = [3, 6], n = 5200) {
+  const N = 256, c = canvas(N);
+  const g = c.getContext('2d');
+  const base = cols[0];
+  g.fillStyle = `rgb(${base[0] * 0.45 | 0},${base[1] * 0.45 | 0},${base[2] * 0.45 | 0})`;
+  g.fillRect(0, 0, N, N);
+  for (let i = 0; i < n; i++) {
+    const x = R() * N, y = R() * N, col = cols[Math.floor(R() * cols.length)];
+    const k = 0.55 + R() * 0.6;
+    g.fillStyle = `rgb(${Math.min(255, col[0] * k) | 0},${Math.min(255, col[1] * k) | 0},${Math.min(255, col[2] * k) | 0})`;
+    const s = leaf[0] + R() * (leaf[1] - leaf[0]), rot = R() * Math.PI;
+    // draw wrapped so the texture tiles
+    for (const dx of [0, -N, N]) for (const dy of [0, -N, N]) {
+      if (x + dx < -10 || x + dx > N + 10 || y + dy < -10 || y + dy > N + 10) continue;
+      g.beginPath(); g.ellipse(x + dx, y + dy, s * 0.6, s * 0.33, rot, 0, 7); g.fill();
+    }
+  }
+  const tx = leafTex(c);
+  tx.wrapS = tx.wrapT = THREE.RepeatWrapping;
+  return tx;
+}
+
+function solidFoliageMat(map, scale = 1 / 1.1) {
+  const m = new THREE.MeshStandardMaterial({ map, roughness: 0.88, envMapIntensity: 0.45 });
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vFolPos; varying vec3 vFolN;')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+        vec4 fwp = vec4(transformed, 1.0);
+        vec3 fwn = objectNormal;
+        #ifdef USE_INSTANCING
+        fwp = instanceMatrix * fwp;
+        fwn = mat3(instanceMatrix) * fwn;
+        #endif
+        vFolPos = (modelMatrix * fwp).xyz;
+        vFolN = normalize(mat3(modelMatrix) * fwn);`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vFolPos; varying vec3 vFolN;')
+      .replace('#include <map_fragment>', `
+        vec3 bw = pow(abs(vFolN), vec3(4.0)); bw /= (bw.x + bw.y + bw.z + 1e-5);
+        float S = ${scale.toFixed(4)};
+        vec4 tx = texture2D(map, vFolPos.zy * S) * bw.x + texture2D(map, vFolPos.xz * S) * bw.y + texture2D(map, vFolPos.xy * S + 0.37) * bw.z;
+        // a little darker deep in the bush (low down / facing the ground)
+        tx.rgb *= 0.78 + 0.32 * clamp(vFolN.y * 0.5 + 0.5, 0.0, 1.0);
+        diffuseColor *= tx;`);
+  };
+  m.customProgramCacheKey = () => 'solidfoliage' + scale.toFixed(4);
+  return m;
+}
+
+/** smooth lumpy noise on a sphere direction */
+function lump(R) {
+  const w = [];
+  for (let i = 0; i < 7; i++) w.push([R() * 6.28, R() * 6.28, R() * 6.28, 1.5 + R() * 3.5, 0.5 + R() * 0.5]);
+  return (d) => {
+    let v = 0, sum = 0;
+    for (const [a, b, c, f, amp] of w) { v += Math.sin(d.x * f + a) * Math.sin(d.y * f + b) * Math.sin(d.z * f + c) * amp; sum += amp; }
+    return v / sum;
+  };
+}
+
+/** a clipped, slightly lumpy ellipsoid (bush / crown core) */
+function blobGeometry(R, center, radii, bumps = 0.12, detail = 3) {
+  const g = new THREE.IcosahedronGeometry(1, detail);
+  const P = g.attributes.position, L = lump(R), d = new THREE.Vector3();
+  for (let i = 0; i < P.count; i++) {
+    d.fromBufferAttribute(P, i).normalize();
+    // flatter underside (clipped bushes sit on a flat base)
+    const k = 1 + L(d) * bumps * 2;
+    let y = d.y;
+    if (y < -0.35) y = -0.35 - (y + 0.35) * 0.35;
+    P.setXYZ(i, center.x + d.x * radii.x * k, center.y + y * radii.y * k, center.z + d.z * radii.z * k);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/** a trimmed hedge: unit box (x = length, y = height, z = depth) with rounded top edges and a slightly uneven face */
+function hedgeGeometry(R) {
+  const g = new THREE.BoxGeometry(1, 1, 1, 12, 4, 3);
+  g.translate(0, 0.5, 0);
+  const P = g.attributes.position;
+  for (let i = 0; i < P.count; i++) {
+    let x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+    if (y > 0.98 && Math.abs(z) > 0.49) { z *= 0.8; y -= 0.06; }           // rounded top edges
+    if (y > 0.02) { z += (R() - 0.5) * 0.06; y += y > 0.98 ? (R() - 0.5) * 0.04 : 0; x += (R() - 0.5) * 0.01; }
+    P.setXYZ(i, x, y, z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/** a cedar / cypress core: a tall cone with soft tiers */
+function coniferCore(R, y0, y1, r0) {
+  const pts = [];
+  const n = 18;
+  pts.push(new THREE.Vector2(0.05, y0 - 0.2));
+  for (let i = 0; i <= n; i++) {
+    const f = i / n, y = y0 + (y1 - y0) * f;
+    const tier = 0.82 + 0.18 * Math.abs(Math.sin(f * Math.PI * 4.5));
+    pts.push(new THREE.Vector2(Math.max(0.08, r0 * Math.pow(1 - f, 0.85) * tier * 0.78), y));
+  }
+  pts.push(new THREE.Vector2(0.02, y1 + 0.6));
+  const g = new THREE.LatheGeometry(pts, 12);
+  const P = g.attributes.position, L = lump(R), d = new THREE.Vector3();
+  for (let i = 0; i < P.count; i++) {
+    d.set(P.getX(i), P.getY(i) * 0.25, P.getZ(i)).normalize();
+    const k = 1 + L(d) * 0.18;
+    P.setX(i, P.getX(i) * k); P.setZ(i, P.getZ(i) * k);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
 /**
  * All tree kinds: { parts: [{ geometry, material, noColor? }] } ready for the
  * world's instancing. Sizes match the previous sprites (broad ≈ 9 × 10 m …).
@@ -296,25 +416,37 @@ export function makeTreeKinds() {
   const bambooTex = bambooSprite(R);
 
   const kinds = {};
-  // broadleaf: trunk to ~3.5 m, round crown 7.5 m wide centred at 6.2 m
+  const broadSolid = solidFoliageMat(foliageTex(R, [[62, 104, 40], [92, 132, 52], [44, 78, 32], [76, 116, 46]], [4, 8]), 1 / 1.6);
+  const conSolid = solidFoliageMat(foliageTex(R, [[42, 76, 40], [52, 88, 46], [34, 62, 34]], [3, 6], 6500), 1 / 1.3);
+  const shrubSolid = solidFoliageMat(foliageTex(R, [[58, 98, 40], [84, 126, 54], [46, 82, 34], [70, 110, 44]], [2.5, 5], 7000), 1 / 0.9);
+  // broadleaf: trunk to ~3.5 m, round crown 7.5 m wide centred at 6.2 m; a dense core inside the
+  // leaf cards so the crown never shows the cards' flat edges or the sky through them
   {
-    const crown = ellipsoidCanopy(R, V(0, 6.2, 0), V(3.8, 3.2, 3.8), 20, 4.4).build();
+    const crown = ellipsoidCanopy(R, V(0, 6.2, 0), V(3.8, 3.2, 3.8), 26, 3.6, 0.15).build();
     kinds.broad = [
       { geometry: crown, material: leafMat(broadTex) },
+      { geometry: blobGeometry(R, V(0, 6.1, 0), V(3.0, 2.5, 3.0), 0.14, 3), material: broadSolid },
       { geometry: trunkGeometry(R, 5.2, 0.26, 2), material: bark, noColor: true },
     ];
   }
-  // cedar / cypress windbreaks (屋敷林): slim tall cone, bare stem below
+  // cedar / cypress windbreaks (屋敷林): slim tall cone with soft tiers, short sprays around it
   {
     const crown = coniferCrown(R, 3.2, 13.0, 2.4).build();
     kinds.conifer = [
+      { geometry: coniferCore(R, 3.0, 12.8, 2.5), material: conSolid },
       { geometry: crown, material: leafMat(conTex) },
       { geometry: trunkGeometry(R, 13.5, 0.22, 0), material: bark, noColor: true },
     ];
   }
   // bamboo grove clump
-  kinds.bamboo = [{ geometry: crossedCards(5, 8, 13).build(), material: leafMat(bambooTex) }];
-  // hedge / garden shrub
-  kinds.shrub = [{ geometry: ellipsoidCanopy(R, V(0, 1.15, 0), V(1.5, 1.15, 1.5), 9, 2.0, 0.1).build(), material: leafMat(shrubTex) }];
+  kinds.bamboo = [
+    { geometry: crossedCards(7, 8, 13).build(), material: leafMat(bambooTex) },
+    { geometry: blobGeometry(R, V(0, 9.6, 0), V(2.6, 2.4, 2.6), 0.16, 2), material: broadSolid },
+  ];
+  // garden shrub: a clipped, rounded bush (ツツジ / ツゲの玉物)
+  kinds.shrub = [{ geometry: blobGeometry(R, V(0, 0.95, 0), V(1.35, 0.95, 1.35), 0.1, 3), material: shrubSolid }];
+  // trimmed hedge (生け垣): unit box scaled per instance to its length / height / depth
+  kinds.hedge = [{ geometry: hedgeGeometry(R), material: shrubSolid }];
+  void shrubTex;
   return kinds;
 }

@@ -582,8 +582,8 @@ export class World {
     for (const t of inst.trees) {
       Q.setFromAxisAngle(Y, t.rot);
       V.set(t.x, GROUND_Y, t.z);
-      M4.compose(V, Q, new THREE.Vector3(t.s, t.s * (0.85 + (t.s % 0.3)), t.s));
-      col.setHSL(0.24 + (t.x % 7) * 0.006, 0.25, 0.42 + (t.z % 5) * 0.02);
+      M4.compose(V, Q, t.sx ? new THREE.Vector3(t.sx, t.sy, t.sz) : new THREE.Vector3(t.s, t.s * (0.85 + (t.s % 0.3)), t.s));
+      col.setHSL(0.24 + (Math.abs(t.x) % 7) * 0.006, 0.25, 0.42 + (Math.abs(t.z) % 5) * 0.02);
       batch.add('tree_' + t.kind, M4, col.clone().multiplyScalar(2.2));
     }
     for (const c of inst.cars) {

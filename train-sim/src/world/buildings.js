@@ -290,7 +290,7 @@ export function house(B, F, R) {
   // eaves gutter line (dark fascia) on pitched roofs
   if (slope && L > 0) solid(B.plain, F, 0, slope.w0 - 0.04, slope.y0 - 0.14, slope.y0 + 0.02, w + 1.0, 0.1, R() < 0.5 ? [0.85, 0.85, 0.83] : [0.30, 0.28, 0.26]);
   // balcony on the upper floor: slab, railing panel or aluminium rails
-  const res = { w, d, shrubs: [] };
+  const res = { w, d, shrubs: [], hedges: [] };
   if (L === 0) return res;
   if (floors === 2 && R() < 0.75) {
     const bw = 2.5 + R() * 2.5, bu = (R() - 0.5) * (w - bw);
@@ -324,9 +324,14 @@ export function house(B, F, R) {
   const lw = w + 2.5 + R() * 1.5, ld = d + 3 + R() * 1.5;
   if (R() < 0.6) blockWall(B, F, R, lw, ld, du);
   else {
-    for (let u = -lw / 2 + 1.1; u < lw / 2 - 0.6; u += 2.4) if (Math.abs(u - du) > 1.8) res.shrubs.push([u, -ld / 2, 0.75]);
+    // a trimmed hedge along the front with a gap at the gate, often down the sides too
+    const hh = 1.1 + R() * 0.5;
+    res.hedges.push([-lw / 2, du - 1.1, -ld / 2, -ld / 2, hh], [du + 1.1, lw / 2, -ld / 2, -ld / 2, hh]);
+    if (R() < 0.6) res.hedges.push([-lw / 2, -lw / 2, -ld / 2, ld / 2, hh], [lw / 2, lw / 2, -ld / 2, ld / 2, hh]);
   }
-  if (R() < 0.5) res.shrubs.push([(R() - 0.5) * w, d / 2 + 1.2, 0.9]);
+  // clipped shrubs in the front garden / by the gate
+  if (R() < 0.7) res.shrubs.push([(R() - 0.5) * (w - 2), -d / 2 - 1.2, 0.6 + R() * 0.3]);
+  if (R() < 0.5) res.shrubs.push([(R() - 0.5) * w, d / 2 + 1.2, 0.8]);
   return res;
 }
 

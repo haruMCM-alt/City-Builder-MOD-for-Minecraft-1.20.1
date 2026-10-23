@@ -66,6 +66,7 @@ export class LandBuilder {
     const p = {};
     const world = (s, l) => r.pose(s, l, p);
     const occupied = new Set();
+    this.footprints = [];
 
     for (const side of [1, -1]) {
       // parallel road along the line
@@ -99,6 +100,18 @@ export class LandBuilder {
       this.far(B, inst, R, s0, s1, side);
     }
     for (const rd of roads) this.crossingRoad(B, inst, rd, s0, s1);
+    // no tree growing through a roof: drop trees whose crown would reach into a building
+    const reach = { broad: 3.6, conifer: 2.2, bamboo: 4.0 };
+    inst.trees = inst.trees.filter((t) => {
+      const rr = reach[t.kind];
+      if (!rr) return true;
+      const m = rr * (t.s || 1);
+      return !this.footprints.some(({ F, w, d }) => {
+        const dx = t.x - F.x, dz = t.z - F.z;
+        const u = dx * F.c + dz * F.s, ww = -dx * F.s + dz * F.c;
+        return Math.abs(u) < w / 2 + m && Math.abs(ww) < d / 2 + m;
+      });
+    });
     return roads;
   }
 
@@ -139,11 +152,20 @@ export class LandBuilder {
     const place = (fn, ...args) => {
       const F = this.frameAt(sc + jit(), lc + jit() * side, (R() - 0.5) * 0.08);
       const res = fn(B, F, R, ...args);
+      if (res && res.w) this.footprints.push({ F, w: res.w, d: res.d });
       // garden hedges / shrubs the builder asked for (local u, w, scale)
       if (res && res.shrubs) {
         for (const [u, w, sc] of res.shrubs) {
           const [x, , z] = F.p(u, 0, w);
           inst.trees.push({ kind: 'shrub', x, z, s: sc * (0.8 + R() * 0.4), rot: R() * 6.28 });
+        }
+      }
+      if (res && res.hedges) {
+        for (const [u0, u1, w0, w1, h] of res.hedges) {
+          const a = F.p(u0, 0, w0), b = F.p(u1, 0, w1);
+          const len = Math.hypot(b[0] - a[0], b[2] - a[2]);
+          if (len < 0.8) continue;
+          inst.trees.push({ kind: 'hedge', x: (a[0] + b[0]) / 2, z: (a[2] + b[2]) / 2, sx: len, sy: h, sz: 0.7, rot: Math.atan2(-(b[2] - a[2]), b[0] - a[0]) });
         }
       }
       return res;
@@ -157,6 +179,7 @@ export class LandBuilder {
       if ((this.roads || []).some((rd) => rd.s > s - rd.w / 2 - 4 && rd.s < s + w + rd.w / 2 + 4)) return false;
       const F = this.frameAt(s + w / 2, side * (l + 2 + d / 2));
       factory(B, F, R, w, d);
+      this.footprints.push({ F, w, d });
       // claim the cells it covers so nothing else is built inside it
       for (let a = 0; a <= Math.ceil(w / CELL); a++) for (let b = 0; b <= Math.ceil((d + 2) / CELL); b++) {
         occupied.add(`${Math.floor(s / CELL) + a},${Math.floor(l / CELL) + b},${side}`);
