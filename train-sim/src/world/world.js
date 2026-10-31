@@ -154,6 +154,7 @@ class InstanceBatch {
       if (!parts || !it.m.length) continue;
       for (const p of parts) {
         const im = new THREE.InstancedMesh(p.geometry, p.material, it.m.length);
+        im.name = key;
         it.m.forEach((m, i) => im.setMatrixAt(i, m));
         if (!p.noColor && it.c.some((c) => c)) it.c.forEach((c, i) => im.setColorAt(i, c || new THREE.Color(1, 1, 1)));
         im.castShadow = cast && !p.noShadow;
@@ -434,7 +435,7 @@ export class World {
         }
         for (let s = Math.ceil(run.s0 / 0.6) * 0.6; s < run.s1; s += 0.6) {
           place(run.bridge ? 'sleeperWood' : 'sleeper', s, t.off(s));
-          if (!run.bridge && this.quality !== 'low') {
+          if (!run.bridge && this.quality !== 'low' && t.kind === 'ours') {
             place('fastener', s, t.off(s) + 0.62, -0.13);
             place('fastener', s, t.off(s) - 0.62, -0.13);
           }
@@ -975,7 +976,7 @@ export class World {
   placePeople(st, pfm, a, b, H, batch, benchAt, centre) {
     const r = this.route;
     const R = rng(st.index * 977 + (pfm.side || 0) * 31 + 5);
-    const busy = st.area === 'city' ? 0.75 : st.area === 'suburb' ? 0.5 : 0.3;
+    const busy = (st.area === 'city' ? 0.75 : st.area === 'suburb' ? 0.5 : 0.3) * (st.busy ?? 1);
     const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
     const p1 = {}, p2 = {};
     const put = (key, s, lat, latFace, scale, dy = 0) => {
@@ -1105,6 +1106,14 @@ export class World {
     const dbg = new THREE.PlaneGeometry(1.9, 0.48), dbBox = new THREE.BoxGeometry(0.16, 0.56, 2.0), ckg = new THREE.CircleGeometry(0.22, 24);
     disposables.push(sg, dbg, dbBox, ckg);
     const big = si.area === 'city';
+    // signs, boards and clocks: one instanced mesh per geometry + material
+    const instMap = new Map();
+    const _q = new THREE.Quaternion(), _y = new THREE.Vector3(0, 1, 0);
+    const inst = (geo, mat, x, y, z, yaw) => {
+      const k = geo.uuid + mat.uuid;
+      if (!instMap.has(k)) instMap.set(k, { geo, mat, m: [] });
+      instMap.get(k).m.push(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), _q.setFromAxisAngle(_y, yaw), new THREE.Vector3(1, 1, 1)));
+    };
 
     platforms.forEach((pfm, pi) => {
       const a = pfm.a, b = pfm.b;
@@ -1141,7 +1150,7 @@ export class World {
         if (!vend) benchAt.push(s);
         else place('trash_bins', s + 2.4, centre(s) + off, Hp, Math.PI / 2 * (pfm.side || 1));
       }
-      const pseudo = { s: b - 5, index: (Math.round(Math.abs(si.mid)) + pi * 13) % 997, area: si.area };
+      const pseudo = { s: b - 5, index: (Math.round(Math.abs(si.mid)) + pi * 13) % 997, area: si.area, busy: pfm.group || pfm.line ? 0.45 : 1 };
       this.placePeople(pseudo, pfm, a, b, Hp, batch, benchAt, centre);
       const sm = signMat(pfm);
       for (let s = a + 25; s < b - 10; s += 64) {
@@ -1149,10 +1158,7 @@ export class World {
         const faces = pfm.island ? [1, -1] : [pfm.side === 1 ? 1 : -1];
         for (const f of faces) {
           r.pose(s, c - f * 0.03, p);
-          const m = new THREE.Mesh(sg, sm);
-          m.position.set(p.x, p.y + Hp + 2.2, p.z);
-          m.rotation.y = p.yaw + (f === 1 ? 0 : Math.PI);
-          group.add(m);
+          inst(sg, sm, p.x, p.y + Hp + 2.2, p.z, p.yaw + (f === 1 ? 0 : Math.PI));
         }
         place('utility_pole', s, c, Hp - 5.2, 0, new THREE.Vector3(0.4, 0.62, 0.4));
       }
@@ -1163,22 +1169,14 @@ export class World {
         if (sb < a + 8 || sb > b - 8 || (!big && st && !pfm.group && sb < st.s - 200)) return;
         const c = centre(sb);
         r.pose(sb, c, p);
-        const box = new THREE.Mesh(dbBox, dbc);
-        box.position.set(p.x, p.y + Hp + 2.75, p.z); box.rotation.y = p.yaw;
-        group.add(box);
+        inst(dbBox, dbc, p.x, p.y + Hp + 2.75, p.z, p.yaw);
         const dbm = boardMat(pfm, k);
         for (const f of [1, -1]) {
-          const m = new THREE.Mesh(dbg, dbm);
-          m.position.set(p.x + Math.cos(p.yaw) * 0.085 * f, p.y + Hp + 2.75, p.z - Math.sin(p.yaw) * 0.085 * f);
-          m.rotation.y = p.yaw + (f === 1 ? Math.PI / 2 : -Math.PI / 2);
-          group.add(m);
+          inst(dbg, dbm, p.x + Math.cos(p.yaw) * 0.085 * f, p.y + Hp + 2.75, p.z - Math.sin(p.yaw) * 0.085 * f, p.yaw + (f === 1 ? Math.PI / 2 : -Math.PI / 2));
         }
         r.pose(sb + 2.2, c, p);
         for (const f of [1, -1]) {
-          const m = new THREE.Mesh(ckg, ckm);
-          m.position.set(p.x + Math.cos(p.yaw) * 0.03 * f, p.y + Hp + 2.85, p.z - Math.sin(p.yaw) * 0.03 * f);
-          m.rotation.y = p.yaw + (f === 1 ? Math.PI / 2 : -Math.PI / 2);
-          group.add(m);
+          inst(ckg, ckm, p.x + Math.cos(p.yaw) * 0.03 * f, p.y + Hp + 2.85, p.z - Math.sin(p.yaw) * 0.03 * f, p.yaw + (f === 1 ? Math.PI / 2 : -Math.PI / 2));
         }
       });
       // stairs up to the bridge concourse (橋上駅舎) or down from the viaduct
@@ -1266,6 +1264,13 @@ export class World {
 
     sw.build(group, disposables, true);
     const instanced = batch.build(group, this.P);
+    for (const { geo, mat, m } of instMap.values()) {
+      const im = new THREE.InstancedMesh(geo, mat, m.length);
+      m.forEach((x, i) => im.setMatrixAt(i, x));
+      im.computeBoundingSphere();
+      group.add(im);
+      instanced.push(im);
+    }
     this.root.add(group);
     return { group, disposables, instanced, textures, materials };
   }

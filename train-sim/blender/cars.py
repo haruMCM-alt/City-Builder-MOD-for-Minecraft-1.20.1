@@ -239,8 +239,9 @@ def inset_half(pts, d):
     return out
 
 
-def loft(mb, rows, matfn, zc):
-    """rows: list of closed loops of 3D points (same count). Shared vertices."""
+def loft(mb, rows, matfn, zc, skip=None, inward=False):
+    """rows: list of closed loops of 3D points (same count). Shared vertices.
+    skip(c, nrm): leave that face out (window openings); inward: faces point into the loop (an inner skin)."""
     n = len(rows[0])
     ids = [[mb._v(p) for p in r] for r in rows]
     for i in range(len(rows) - 1):
@@ -253,9 +254,11 @@ def loft(mb, rows, matfn, zc):
             if nrm.length < 1e-9:
                 nrm = (P[2] - P[1]).cross(P[3] - P[1])
             out = Vector((0, c.y, c.z - zc))
-            if nrm.dot(out) < 0:
+            if (nrm.dot(out) < 0) != inward:
                 q.reverse()
                 nrm = -nrm
+            if skip and skip(c, nrm.normalized()):
+                continue
             mb.faces.append((q, mb._mi(matfn(c, nrm.normalized())), True))
     return ids
 
@@ -1098,7 +1101,8 @@ def add_wheelsets(parent, M, coll, name, motor):
 
 def door_leaves(parent, S, M, coll, name, door_list, leaf_windows, zones, n_leaves=2, slide_dirs=None):
     """sliding door leaves as separate child objects (named <car>_door<i>_<L|R>_<a|b>).
-    They sit 50-75 mm inside the outer skin and slide into the wall pocket."""
+    They sit 10-34 mm inside the outer skin, within the wall, so they slide into the wall pocket
+    (hidden between the outer skin and the saloon wall) like the real ones."""
     leaf_mat = M[getattr(S, "door_mat", None) or "door"]
     inner_mat = M.get("door_in_" + S.key, M["door"])        # E233: white laminate inside
     for di, (x0, x1, z0, z1) in enumerate(door_list):
@@ -1118,8 +1122,8 @@ def door_leaves(parent, S, M, coll, name, door_list, leaf_windows, zones, n_leav
                 xl = [xa + 0.004, xb - 0.004]
                 if win:
                     xl = sorted(xl + [win[0] - win[2] / 2, win[0] + win[2] / 2])
-                yo = lambda z: side * (S.width(z) - 0.050)
-                yi = lambda z: side * (S.width(z) - 0.075)
+                yo = lambda z: side * (S.width(z) - 0.010)
+                yi = lambda z: side * (S.width(z) - 0.034)
 
                 def zone_mat(zc):
                     for (za, zb, m, skip) in zones:
@@ -1140,16 +1144,17 @@ def door_leaves(parent, S, M, coll, name, door_list, leaf_windows, zones, n_leav
                 # rubber seal on the meeting edge, window gasket and glass
                 xm = xl[-1] if tag == "a" else xl[0]
                 if n_leaves == 2:
-                    mb.box((xm, side * (S.width(1.9) - 0.046), (z0 + z1) / 2), (0.018, 0.012, z1 - z0 - 0.02), M["rubber"])
+                    # 戸先ゴム: on the leaf edge, just proud of the leaf face
+                    mb.box((xm, side * (S.width(1.9) - 0.0115), (z0 + z1) / 2), (0.018, 0.009, z1 - z0 - 0.02), M["rubber"])
                     if S.key == "e233":   # full-height yellow strip on the leading edge, inside
                         xs_ = xm + (-0.025 if tag == "a" else 0.025)
-                        mb.box((xs_, side * (S.width(1.9) - 0.0775), (z0 + z1) / 2), (0.04, 0.004, z1 - z0 - 0.04), M["door_yellow"])
+                        mb.box((xs_, side * (S.width(1.9) - 0.0365), (z0 + z1) / 2), (0.04, 0.004, z1 - z0 - 0.04), M["door_yellow"])
                 if win:
                     wx0, wx1 = win[0] - win[2] / 2, win[0] + win[2] / 2
                     wz0, wz1 = win[1] - win[3] / 2, win[1] + win[3] / 2
-                    ym = side * (S.width(win[1]) - 0.0625)
+                    ym = side * (S.width(win[1]) - 0.022)
                     for (pa, pb) in (((wx0, wz0), (wx1, wz0)), ((wx0, wz1), (wx1, wz1)), ((wx0, wz0), (wx0, wz1)), ((wx1, wz0), (wx1, wz1))):
-                        mb.beam((pa[0], ym, pa[1]), (pb[0], ym, pb[1]), 0.022, 0.03, M["rubber"])
+                        mb.beam((pa[0], ym, pa[1]), (pb[0], ym, pb[1]), 0.022, 0.028, M["rubber"])
                     mb.poly([(wx0, ym, wz0), (wx1, ym, wz0), (wx1, ym, wz1), (wx0, ym, wz1)], M["sglass"], (0, side, 0))
                 ob = mb.build(coll)
                 ob.parent = parent
@@ -1675,8 +1680,24 @@ def make_green(S, M, coll):
     mbD = MB("green_dd")
     rows = []
     n_end = 6
+    rect = lambda cx, w, z0, z1, r: (cx, (z0 + z1) / 2, w, z1 - z0, r)
+    up = [rect(cx, w, *G["up_z"], 0.14) for (cx, w) in G["up"]]
+    low = [rect(cx, w, *G["low_z"], 0.08) for (cx, w) in G["low"]]
+    DI0, DI1 = D0 + 0.62, D1 - 0.62
+    # the double-deck windows are left open in the outer and inner skins (no boolean cutting: it
+    # used to fail on this shape and took the side walls and the lower floor with it)
+    win_x = sorted({x for (cx, _, w, _, _) in up + low for x in (cx - w / 2, cx + w / 2)} | {DI0, DI1})
     xs = [D0 + (0.55 * (1 - math.cos(math.pi / 2 * k / n_end))) for k in range(n_end + 1)]
+    xs += [x for x in win_x if D0 + 0.56 < x < D1 - 0.56]
     xs += [D1 - (0.55 * (1 - math.cos(math.pi / 2 * k / n_end))) for k in range(n_end, -1, -1)]
+
+    def in_window(c, nrm):
+        if abs(nrm.y) < 0.5:
+            return False
+        for (cx, cz, w, h, _) in up + low:
+            if abs(c.x - cx) < w / 2 and abs(c.z - cz) < h / 2:
+                return True
+        return False
     for x in xs:
         e = min(x - D0, D1 - x)
         f = math.sin(min(1.0, e / 0.55) * math.pi / 2)
@@ -1691,24 +1712,47 @@ def make_green(S, M, coll):
         def in_door(self, x, z):
             return False
     nd = NoDoors()
-    ids = loft(mbD, rows, lambda c, n: mats["roofgrey"] if n.z > 0.45 else side_material(TD, mats, nd, c, n), (G["dd_zb"] + G["dd_top"]) / 2)
+    ids = loft(mbD, rows, lambda c, n: mats["roofgrey"] if n.z > 0.45 else side_material(TD, mats, nd, c, n), (G["dd_zb"] + G["dd_top"]) / 2, skip=in_window)
     mbD.faces.append((list(reversed(ids[0])), mbD._mi(mats["body"]), False))
     mbD.faces.append((list(ids[-1]), mbD._mi(mats["body"]), False))
+    # inner skin of the saloon: lower-deck floor, walls, ceiling, with the same window openings
+    lv_in = [z for z in lvD if G["dd_floor"] + 0.01 < z < G["dd_cant"] - 0.01]
+    loop_in, _ = profile(TD, lv_in, zb=G["dd_floor"], cant=G["dd_cant"], top=G["dd_top"], inset=WALL)
+    xs_in = [x for x in win_x if DI0 - 1e-6 <= x <= DI1 + 1e-6]
+    rows_in = [[(x, y, z) for (y, z) in loop_in] for x in xs_in]
+
+    def inner_mat(c, n):
+        if n.z > 0.7:
+            return mats["int_floor"]
+        if n.z < -0.4:
+            return mats["int_ceiling"]
+        return mats["int_wall"]
+    # (a separate object: the outer shell's normal fixing would turn these faces round)
+    mbI = MB("green_dd_inner")
+    ids_in = loft(mbI, rows_in, inner_mat, (G["dd_floor"] + G["dd_top"]) / 2, skip=in_window, inward=True)
+    mbI.faces.append((list(ids_in[0]), mbI._mi(mats["int_wall"]), False))
+    mbI.faces.append((list(reversed(ids_in[-1])), mbI._mi(mats["int_wall"]), False))
+    # window reveals between the skins
+    for (cx, cz, w, h, _) in up + low:
+        x0, x1, z0, z1 = cx - w / 2, cx + w / 2, cz - h / 2, cz + h / 2
+        for s in (-1, 1):
+            yo = lambda z: s * (TD.width(z) + 0.002)
+            yi = lambda z: s * (TD.width(z) - WALL - 0.006)
+            mbI.poly([(x0, yo(z0), z0), (x1, yo(z0), z0), (x1, yi(z0), z0), (x0, yi(z0), z0)], mats["rubber"], (0, 0, 1))
+            mbI.poly([(x0, yo(z1), z1), (x1, yo(z1), z1), (x1, yi(z1), z1), (x0, yi(z1), z1)], mats["rubber"], (0, 0, -1))
+            mbI.poly([(x0, yo(z0), z0), (x0, yo(z1), z1), (x0, yi(z1), z1), (x0, yi(z0), z0)], mats["rubber"], (1, 0, 0))
+            mbI.poly([(x1, yo(z0), z0), (x1, yo(z1), z1), (x1, yi(z1), z1), (x1, yi(z0), z0)], mats["rubber"], (-1, 0, 0))
+    ddi = mbI.build(coll)
     dd = mbD.build(coll)
     weld(dd, 1e-6)
     fix_normals(dd)
     # windows
     wz0, wz1 = G["win_z"]
-    rect = lambda cx, w, z0, z1, r: (cx, (z0 + z1) / 2, w, z1 - z0, r)
     winA = [rect(cx, w, wz0, wz1, 0.08) for (cx, w) in G["winA"]]
     winB = [rect(cx, w, wz0, wz1, 0.08) for (cx, w) in G["winB"]]
     dwin = [rect((a + b) / 2, (b - a) - 0.40, G["dwin_z"][0], G["dwin_z"][1], 0.05) for (a, b) in G["doors"]]
-    up = [rect(cx, w, *G["up_z"], 0.14) for (cx, w) in G["up"]]
-    low = [rect(cx, w, *G["low_z"], 0.08) for (cx, w) in G["low"]]
     hollow(endA, SA, M, coll, A0 + 0.08, A1 - 0.06, lv=lvA)
     hollow(endB, SA, M, coll, B0 + 0.06, B1 - 0.08, lv=lvA)
-    DI0, DI1 = D0 + 0.62, D1 - 0.62
-    hollow(dd, TD, M, coll, DI0, DI1, floor=G["dd_floor"], cant=G["dd_cant"], top=G["dd_top"], lv=lvD)
     for ob, rects, grooves in ((endA, winA, [doors[0]]), (endB, winB, [doors[1]])):
         g = side_cutter(SA, M, [((a + b) / 2, (c + d_) / 2, b - a, d_ - c, 0.0) for (a, b, c, d_) in grooves], coll, "dcut", M["gap"], depth=WALL + 0.06)
         apply_boolean(ob, g)
@@ -1716,9 +1760,6 @@ def make_green(S, M, coll):
         wc = side_cutter(SA, M, rects, coll, "wcut", M["rubber"], depth=WALL + 0.06)
         apply_boolean(ob, wc)
         delete(wc)
-    wc = side_cutter(TD, M, up + low, coll, "wcutD", M["rubber"], depth=WALL + 0.06)
-    apply_boolean(dd, wc)
-    delete(wc)
     for ob in (endA, endB, dd):
         smooth(ob, 30)
     det = MB("green_details")
@@ -1780,7 +1821,7 @@ def make_green(S, M, coll):
     coupler(det, M, H, 1)
     d = det.build(coll)
     smooth(d, 40)
-    obj = join([endA, endB, dd, d, gsal], f"{S.key}_green")
+    obj = join([endA, endB, dd, ddi, d, gsal], f"{S.key}_green")
     add_wheelsets(obj, M, coll, f"{S.key}_green", motor=False)
     lw = [((a + b) / 2, (G["dwin_z"][0] + G["dwin_z"][1]) / 2, (b - a) - 0.40, G["dwin_z"][1] - G["dwin_z"][0], 0.05) for (a, b) in G["doors"]]
     door_leaves(obj, SA, M, coll, f"{S.key}_green", doors, lw, green_side, n_leaves=1, slide_dirs=["a", "b"])

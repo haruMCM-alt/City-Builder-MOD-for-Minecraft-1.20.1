@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CAR_LEN, BOGIE_C } from './vehicles.js';
 import { makeDestTexture, makeAdTexture, makeTvTexture, InfoDisplay, UI_FONT } from './displays.js';
 import { passengerMesh } from './world/people.js';
+import { lodCar } from './carlod.js';
 
 const WHEEL_R = 0.43;            // tread radius of the modelled wheels (860 mm wheel)
 const DOOR_OPEN_T = 1.9;         // s, pneumatic / linear-motor door stroke
@@ -286,7 +287,8 @@ export class TrainSet {
    * @param gltfScene loaded glTF scene for the series
    * @param veh vehicle definition
    * @param formation string like "CPMMR..."
-   * @param opts { key, dest, destType, forward (true = runs toward +s) }
+   * @param opts { key, dest, destType, forward (true = runs toward +s),
+   *   lod: undefined (full detail) | 'only' (simplified cars) | 'dynamic' (both, switched per car with setDetail) }
    */
   constructor(gltfScene, veh, formation, opts) {
     this.veh = veh;
@@ -327,86 +329,112 @@ export class TrainSet {
     const infoOff = new THREE.MeshStandardMaterial({ color: 0x0b0b0d, roughness: 0.25 });
     this.disposables.push(infoOff);
     const ads = adMaterials();
+    const lodMode = opts.lod || null;
     for (let i = 0; i < n; i++) {
       const code = formation[i];
       const tmpl = gltfScene.getObjectByName(`${key}_${KIND[code]}`) || gltfScene.getObjectByName(`${key}_mid`);
-      const obj = tmpl.clone(true);
-      obj.position.set(0, 0, 0);
-      obj.rotation.set(0, 0, 0);
-      // セミクロスシート cars (号車 = n - i, 1号車 at the Ueno end): swap in the semi-cross seat bays
-      let seatKey = tmpl.name;
-      if ((SEMICROSS[veh.id] || []).includes(n - i)) {
-        const kind = tmpl.name.slice(key.length + 1);
-        const sc = gltfScene.getObjectByName(`${key}_${kind === 'mid_panto' ? 'mid' : kind}_seats_sc`);
-        const cur = obj.getObjectByName(`${tmpl.name}_seats`);
-        if (sc && cur) {
-          const c = sc.clone(true);
-          c.position.copy(cur.position); c.quaternion.copy(cur.quaternion);
-          cur.parent.add(c); cur.removeFromParent();
-          seatKey += '_sc';
-        }
-      }
+      const holder = new THREE.Group();
+      const inner = new THREE.Group();
       const isFront = i === 0, isRear = i === n - 1;
-      obj.traverse((o) => {
+      // lamps, destination and side lamps: this train's own materials
+      const ownMats = (root) => root.traverse((o) => {
         if (!o.isMesh) return;
-        o.castShadow = true;
-        o.receiveShadow = false;
         const mname = o.material && o.material.name;
-        upgradeMaterial(o.material);
-        if (mname === 'side_glass') { o.castShadow = false; o.renderOrder = 2; }
-        if (mname && (mname.startsWith('int_') || mname.startsWith('seat') || mname === 'strap' || mname === 'pole' || mname === 'headrest_cover')) {
-          o.castShadow = false; o.receiveShadow = true;
-        }
         if (mname === 'SIDELAMP') o.material = this.sideLampMat;
-        else if (mname === 'LCD_INFO') { screenFrontOnly(o.geometry); o.material = this.info ? this.info.mat : infoOff; }
-        else if (mname === 'LCD_ADTV') { screenFrontOnly(o.geometry); o.material = this.info ? ads.tv : infoOff; }
-        else if (mname && /^AD_\d$/.test(mname)) o.material = ads[Number(mname[3])];
         else if (mname === 'DEST') o.material = destMat;
         else if (mname === 'headlight') o.material = ((code === 'C' || code === 'K') && isFront) ? lights.headOn : lights.headOff;
         else if (mname === 'taillight') o.material = (code === 'R' && isRear) ? lights.tailOn : lights.tailOff;
       });
-      // moving parts exported as separate nodes from Blender
-      const isR = code === 'R';
-      obj.updateMatrixWorld(true);
-      obj.traverse((o) => {
-        if (/_ws\d+$/.test(o.name)) this.wheels.push({ obj: o, sign: isR ? -1 : 1 });
-        const m = /_door(\d+)_(L|R)_(a|b)$/.exec(o.name);
-        if (m) {
-          const box = new THREE.Box3().setFromObject(o);
-          const w = box.max.x - box.min.x;
-          // L = the model's left (Blender +Y); a reversed cab car is turned round
-          const left = (m[2] === 'L') !== isR;
-          this.leaves.push({ obj: o, x0: o.position.x, dir: m[3] === 'a' ? -1 : 1, travel: w - 0.01, side: left ? 'left' : 'right', car: i, cx: (box.max.x + box.min.x) / 2 + (m[3] === 'a' ? w / 2 : -w / 2) });
+      let obj = null, lod = null;
+      if (lodMode !== 'only') {
+        obj = tmpl.clone(true);
+        obj.position.set(0, 0, 0);
+        obj.rotation.set(0, 0, 0);
+        // セミクロスシート cars (号車 = n - i, 1号車 at the Ueno end): swap in the semi-cross seat bays
+        let seatKey = tmpl.name;
+        if ((SEMICROSS[veh.id] || []).includes(n - i)) {
+          const kind = tmpl.name.slice(key.length + 1);
+          const sc = gltfScene.getObjectByName(`${key}_${kind === 'mid_panto' ? 'mid' : kind}_seats_sc`);
+          const cur = obj.getObjectByName(`${tmpl.name}_seats`);
+          if (sc && cur) {
+            const c = sc.clone(true);
+            c.position.copy(cur.position); c.quaternion.copy(cur.quaternion);
+            cur.parent.add(c); cur.removeFromParent();
+            seatKey += '_sc';
+          }
         }
-      });
-      // passengers (not in the double-deck green cars; fewer on passing trains)
-      if (code !== 'G' && opts.passengers !== false) {
-        const seats = seatCushions(seatKey, obj);
-        const doorX = [];
-        for (const l of this.leaves) if (l.car === i && l.dir < 0 && l.side === 'left') doorX.push(l.cx);
-        const rnd = mulberry(i * 7919 + (opts.forward === false ? 101 : 1));
-        const pm = passengerMesh(seats, doorX.length ? doorX : [-4.9, 0, 4.9], 1.17, rnd, opts.forward === false ? 0.35 : 0.42);
-        if (pm) { obj.add(pm); this.disposables.push(pm.geometry); }
+        obj.traverse((o) => {
+          if (!o.isMesh) return;
+          o.castShadow = true;
+          o.receiveShadow = false;
+          const mname = o.material && o.material.name;
+          upgradeMaterial(o.material);
+          if (mname === 'side_glass') { o.castShadow = false; o.renderOrder = 2; }
+          if (mname && (mname.startsWith('int_') || mname.startsWith('seat') || mname === 'strap' || mname === 'pole' || mname === 'headrest_cover')) {
+            o.castShadow = false; o.receiveShadow = true;
+          }
+          if (mname === 'SIDELAMP') o.material = this.sideLampMat;
+          else if (mname === 'LCD_INFO') { screenFrontOnly(o.geometry); o.material = this.info ? this.info.mat : infoOff; }
+          else if (mname === 'LCD_ADTV') { screenFrontOnly(o.geometry); o.material = this.info ? ads.tv : infoOff; }
+          else if (mname && /^AD_\d$/.test(mname)) o.material = ads[Number(mname[3])];
+          else if (mname === 'DEST') o.material = destMat;
+          else if (mname === 'headlight') o.material = ((code === 'C' || code === 'K') && isFront) ? lights.headOn : lights.headOff;
+          else if (mname === 'taillight') o.material = (code === 'R' && isRear) ? lights.tailOn : lights.tailOff;
+        });
+        // moving parts exported as separate nodes from Blender
+        const isR = code === 'R';
+        obj.updateMatrixWorld(true);
+        obj.traverse((o) => {
+          if (/_ws\d+$/.test(o.name)) this.wheels.push({ obj: o, sign: isR ? -1 : 1 });
+          const m = /_door(\d+)_(L|R)_(a|b)$/.exec(o.name);
+          if (m) {
+            const box = new THREE.Box3().setFromObject(o);
+            const w = box.max.x - box.min.x;
+            // L = the model's left (Blender +Y); a reversed cab car is turned round
+            const left = (m[2] === 'L') !== isR;
+            this.leaves.push({ obj: o, x0: o.position.x, dir: m[3] === 'a' ? -1 : 1, travel: w - 0.01, side: left ? 'left' : 'right', car: i, cx: (box.max.x + box.min.x) / 2 + (m[3] === 'a' ? w / 2 : -w / 2) });
+          }
+        });
+        // passengers (not in the double-deck green cars; fewer on passing trains)
+        if (code !== 'G' && opts.passengers !== false) {
+          const seats = seatCushions(seatKey, obj);
+          const doorX = [];
+          for (const l of this.leaves) if (l.car === i && l.dir < 0 && l.side === 'left') doorX.push(l.cx);
+          const rnd = mulberry(i * 7919 + (opts.forward === false ? 101 : 1));
+          const pm = passengerMesh(seats, doorX.length ? doorX : [-4.9, 0, 4.9], 1.17, rnd, opts.forward === false ? 0.35 : 0.42);
+          if (pm) { obj.add(pm); this.disposables.push(pm.geometry); }
+        }
+        inner.add(obj);
+        // car number decals on both sides near the car end
+        const nt = numberTexture(numbers[i]);
+        const nm = new THREE.MeshBasicMaterial({ map: nt, transparent: true, depthWrite: false, toneMapped: true, color: 0x9a9a9a });
+        const ng = new THREE.PlaneGeometry(0.80, 0.10);
+        this.disposables.push(nt, nm, ng);
+        for (const side of [-1, 1]) {
+          const d = new THREE.Mesh(ng, nm);
+          // three.js car space: +x forward, +y up, -z = left
+          const hw = { e231: 1.462, e233: 1.462, s211: 1.472, s115: 1.457 }[veh.id] || 1.465;
+          d.position.set(side > 0 ? -8.55 : 8.55, 1.30, side * -hw);
+          d.rotation.y = side > 0 ? Math.PI : 0;
+          obj.add(d);
+        }
       }
-      const holder = new THREE.Group();
-      const inner = new THREE.Group();
-      inner.add(obj);
-      // car number decals on both sides near the car end
-      const nt = numberTexture(numbers[i]);
-      const nm = new THREE.MeshBasicMaterial({ map: nt, transparent: true, depthWrite: false, toneMapped: true, color: 0x9a9a9a });
-      const ng = new THREE.PlaneGeometry(0.80, 0.10);
-      this.disposables.push(nt, nm, ng);
-      for (const side of [-1, 1]) {
-        const d = new THREE.Mesh(ng, nm);
-        // three.js car space: +x forward, +y up, -z = left
-        const hw = { e231: 1.462, e233: 1.462, s211: 1.472, s115: 1.457 }[veh.id] || 1.465;
-        d.position.set(side > 0 ? -8.55 : 8.55, 1.30, side * -hw);
-        d.rotation.y = side > 0 ? Math.PI : 0;
-        obj.add(d);
+      if (lodMode) {
+        // the simplified car: merged exterior, its door leaves in four groups
+        const L = lodCar(tmpl, opts.bands || null);
+        lod = L.group;
+        ownMats(lod);
+        const isR = code === 'R';
+        for (const l of L.leaves) {
+          const left = (l.side === 'L') !== isR;
+          this.leaves.push({ obj: l.obj, x0: 0, dir: l.dir, travel: l.travel, side: left ? 'left' : 'right', car: i, cx: 0, lod: true });
+        }
+        inner.add(lod);
+        if (lodMode === 'dynamic') lod.visible = false;
       }
       if (code === 'R') inner.rotation.y = Math.PI; // cab faces backwards
       holder.add(inner);
-      holder.userData = { code, inner, model: obj };
+      holder.userData = { code, inner, model: obj || lod, detail: obj, lod, detailOn: !!obj, shown: true };
       this.group.add(holder);
       this.cars.push(holder);
     }
@@ -470,7 +498,22 @@ export class TrainSet {
   setSideLamps(on) { this.sideLampMat.emissiveIntensity = on ? 3 : 0; }
 
   setVisible(i, visible) {
-    this.cars[i].userData.model.visible = visible;
+    this.cars[i].userData.shown = visible;
+    this.showCar(i);
+  }
+
+  /** full detail (true) or the simplified car (false) for car i, where the train has both */
+  setDetail(i, on) {
+    const u = this.cars[i].userData;
+    if (!u.detail || !u.lod || u.detailOn === on) return;
+    u.detailOn = on;
+    this.showCar(i);
+  }
+
+  showCar(i) {
+    const u = this.cars[i].userData;
+    if (u.detail) u.detail.visible = u.shown && (u.detailOn || !u.lod);
+    if (u.lod) u.lod.visible = u.shown && (!u.detailOn || !u.detail);
   }
 
   dispose() {

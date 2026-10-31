@@ -47,6 +47,7 @@ import { Route, PLATFORM_LEN, LINE_LIST } from './route.js';
 import { VEHICLES, DEFAULT_VEHICLE, CAR_LEN, BOGIE_C } from './vehicles.js';
 import { World } from './world/world.js';
 import { TrainSet } from './trainmodel.js';
+import { setLodNight } from './carlod.js';
 import { FreightSet } from './freight.js';
 import { TrainPhysics } from './physics.js';
 import { SoundEngine } from './audio/sound.js';
@@ -202,7 +203,19 @@ function setupComposer(q) {
   composer.addPass(gradePass);
 }
 
+/** our own cars: full detail only near the camera (inside, or close outside), simplified further away */
+const _cw = new THREE.Vector3();
+function updateCarDetail() {
+  if (!player) return;
+  const cp = camera.getWorldPosition(new THREE.Vector3());
+  for (let i = 0; i < player.cars.length; i++) {
+    player.cars[i].getWorldPosition(_cw);
+    player.setDetail(i, !window.__forceLod && _cw.distanceTo(cp) < 32);
+  }
+}
+
 function draw() {
+  updateCarDetail();
   if (gradePass) gradePass.uniforms.uTime.value = (performance.now() % 10000) / 10;
   if (composer) composer.render();
   else renderer.render(scene, camera);
@@ -443,7 +456,7 @@ async function startGame(resume = null) {
   announcer.serviceName = service.short === '快速' ? '快速ラビット' : service.name;
   physics = new TrainPhysics(veh, formation.length);
   physics.adhesion = atmo.rain ? 0.58 : 1;
-  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', info: true, service, forward: !view.up });
+  player = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', info: true, service, forward: !view.up, lod: 'dynamic' });
   scene.add(player.group);
   // the passenger view rides in the first motor car
   carIdx = Math.max(1, formation.indexOf('P'));
@@ -498,7 +511,7 @@ async function startGame(resume = null) {
   signals = new SignalSystem(view, scene);
   lead = new LeadTrain(view, tt, physics.len, 210 + Math.random() * 150);
   for (let t = tt[0].dep - lead.headwayStart; t < game.clock; t += 0.5) lead.update(0.5, t);
-  leadSet = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', forward: !view.up });
+  leadSet = new TrainSet(gltfs[veh.id].scene, veh, formation, { key: modelKey(veh), dest: `${service.short} ${tt[tt.length - 1].station.name}`, destType: veh.id === 's115' || veh.id === 's211' ? 'roll' : 'led', forward: !view.up, lod: 'only' });
   scene.add(leadSet.group);
   trainNight(leadSet);
   leadVoice = sound.addTrain(veh, formation.length);
@@ -530,6 +543,7 @@ const INTERIOR_MAT = /^(int_wall|int_ceiling|int_floor|seat_|strap|headrest|seat
 const _warm = new THREE.Color(1.0, 0.95, 0.86);
 function trainNight(set) {
   const k = atmo ? atmo.night : 0;
+  setLodNight(k);
   set.group.traverse((o) => {
     if (!o.isMesh) return;
     for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
@@ -900,7 +914,7 @@ function buildTrain(kind, forward, k) {
   const veh = VEHICLES[pick];
   const formation = L.formation || (L.cars === 15 || Math.abs(k) % 5 < 3 ? veh.formations[15] : veh.formations[10]);
   const dest = kind === 'main' || kind === 'parked' ? '普通 ' + mainDests()[forward ? 0 : 1] : L.dest[forward ? 0 : 1];
-  const set = new TrainSet(gltfs[pick].scene, veh, formation, { key: modelKey(veh), dest, forward });
+  const set = new TrainSet(gltfs[pick].scene, veh, formation, { key: modelKey(veh), dest, forward, lod: 'only', bands: L.livery ? LIVERIES[L.livery] : null });
   if (L.livery) recolorLivery(set, L.livery);
   scene.add(set.group);
   trainNight(set);
@@ -1551,7 +1565,7 @@ boot();
 // debugging handle (used by automated tests)
 window.__sim = {
   get physics() { return physics; }, get game() { return game; }, get world() { return world; }, get view() { return view; }, get traffic() { return traffic; }, get signals() { return signals; }, get shinkansen() { return shinkansen; }, get lead() { return lead; },
-  get route() { return route; }, setCamMode, sound, announcer, melody, simStep, updateView, THREE,
+  get route() { return route; }, get player() { return player; }, setCamMode, sound, announcer, melody, simStep, updateView, THREE,
   get renderer() { return renderer; }, get scene() { return scene; }, get camera() { return camera; }, draw,
   /** fast-forward the logic by `sec` seconds in fixed steps (no rendering) */
   advance(sec, dt = 0.05, each) { for (let t = 0; t < sec && !game.finished; t += dt) { if (each) each(); simStep(dt); } updateView(0.016); },

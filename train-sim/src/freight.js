@@ -2,6 +2,7 @@
 // (コキ106 with 12 ft containers). Built from boxes; same place() interface as TrainSet.
 import * as THREE from 'three';
 import { CAR_LEN, BOGIE_C } from './vehicles.js';
+import { mergedMesh } from './carlod.js';
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 let M = null;
@@ -77,11 +78,21 @@ export class FreightSet {
     this.forward = forward;
     this.group = new THREE.Group();
     this.cars = [];
+    this.geos = [];
     const n = wagons + 1;
     for (let i = 0; i < n; i++) {
       const holder = new THREE.Group(), inner = new THREE.Group();
       if (i === 0) locomotive(inner, M, true);
       else wagon(inner, M, rnd, i === n - 1);
+      // one draw call per car: merge every box but the lamps
+      const parts = inner.children.filter((m) => m.material !== M.head && m.material !== M.tail);
+      const merged = mergedMesh(parts.map((m) => {
+        m.updateMatrix();
+        return { geometry: BOX.clone().applyMatrix4(m.matrix), color: m.material.color, metal: m.material.metalness, rough: m.material.roughness };
+      }));
+      for (const m of parts) m.removeFromParent();
+      inner.add(merged);
+      this.geos.push(merged.geometry);
       holder.add(inner);
       holder.userData = { inner };
       this.group.add(holder);
@@ -109,5 +120,5 @@ export class FreightSet {
     }
   }
 
-  dispose() { this.group.removeFromParent(); }
+  dispose() { this.group.removeFromParent(); for (const g of this.geos) g.dispose(); }
 }
