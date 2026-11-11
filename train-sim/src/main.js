@@ -489,6 +489,8 @@ async function startGame(resume = null) {
   if (cabLcd) cabLcd.dispose();
   cabLcd = new CabDisplays(cab);
   player.cars[0].userData.inner.add(cab);
+  // the full cab model is in: hide the simple cab space the car carries for views through the windscreen
+  player.cars[0].traverse((o) => { if (/_cabint$/.test(o.name)) o.visible = false; });
   cabFill.intensity = 0.9 * atmo.cabFill;
   setupWeatherObjects();
   hud.setup(veh, tt);

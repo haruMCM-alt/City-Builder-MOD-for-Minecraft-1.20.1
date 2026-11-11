@@ -111,6 +111,39 @@ function detailPatch(mat, scale, amount, roughAdd) {
   mat.needsUpdate = true;
 }
 
+/**
+ * running gear and underfloor equipment: brake dust, rust streaks and dirt in object space
+ * (value noise, no texture): brownish where the brake dust settles, rougher, a few rust patches
+ */
+function grimePatch(mat, amount = 1) {
+  if (mat.userData.patched) return;
+  mat.userData.patched = true;
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjPos = position;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vObjPos;
+        float gHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+        float gNoise(vec3 x) {
+          vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(mix(gHash(i), gHash(i + vec3(1, 0, 0)), f.x), mix(gHash(i + vec3(0, 1, 0)), gHash(i + vec3(1, 1, 0)), f.x), f.y),
+                     mix(mix(gHash(i + vec3(0, 0, 1)), gHash(i + vec3(1, 0, 1)), f.x), mix(gHash(i + vec3(0, 1, 1)), gHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+        }`)
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+        float n1 = gNoise(vObjPos * 3.1), n2 = gNoise(vObjPos * 11.0 + 7.3), n3 = gNoise(vObjPos * vec3(1.5, 9.0, 1.5) + 3.1);
+        float dust = clamp(0.35 + 0.5 * n1 + 0.25 * (n2 - 0.5), 0.0, 1.0) * ${amount.toFixed(2)};
+        float rust = smoothstep(0.62, 0.82, n1 * 0.6 + n3 * 0.5) * ${amount.toFixed(2)};
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.20, 0.15, 0.11) * (0.7 + 0.6 * n2), dust * 0.55);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.30, 0.15, 0.07), rust * 0.6);
+        roughnessFactor = clamp(roughnessFactor + dust * 0.25 + rust * 0.2, 0.0, 1.0);
+        metalnessFactor *= 1.0 - 0.6 * dust;`);
+  };
+  mat.customProgramCacheKey = () => 'grime' + amount;
+  mat.needsUpdate = true;
+}
+
 const UPGRADED = new WeakSet();
 function upgradeMaterial(m) {
   if (!m || UPGRADED.has(m)) return;
@@ -152,6 +185,16 @@ function upgradeMaterial(m) {
       m.envMapIntensity = 1.6;
       m.color.setRGB(0.10, 0.14, 0.13);
       break;
+    case 'front_glass':
+      // windscreen: tinted and reflective, the cab only faintly visible behind it by day
+      m.transparent = true;
+      m.opacity = 0.62;
+      m.depthWrite = false;
+      m.roughness = 0.03;
+      m.metalness = 0.0;
+      m.envMapIntensity = 1.8;
+      m.color.setRGB(0.05, 0.07, 0.07);
+      break;
     case 'window_glass': case 'front_black':
       m.envMapIntensity = 1.5;
       break;
@@ -171,11 +214,11 @@ function upgradeMaterial(m) {
       m.toneMapped = false;
       if (m.emissive) m.emissiveIntensity = Math.max(m.emissiveIntensity, 1.6);
       break;
-    case 'bogie':
-      m.color.setRGB(0.055, 0.048, 0.042);
+    case 'bogie': case 'underfloor': case 'equipment': case 'spring': case 'brake_shoe': case 'air_spring':
+      grimePatch(m, 1);
       break;
-    case 'underfloor':
-      m.color.setRGB(0.10, 0.10, 0.105);
+    case 'wheel': case 'brake_disc': case 'cooling_fin':
+      grimePatch(m, 0.6);
       break;
     default:
   }
@@ -369,7 +412,7 @@ export class TrainSet {
           o.receiveShadow = false;
           const mname = o.material && o.material.name;
           upgradeMaterial(o.material);
-          if (mname === 'side_glass') { o.castShadow = false; o.renderOrder = 2; }
+          if (mname === 'side_glass' || mname === 'front_glass') { o.castShadow = false; o.renderOrder = 2; }
           if (mname && (mname.startsWith('int_') || mname.startsWith('seat') || mname === 'strap' || mname === 'pole' || mname === 'headrest_cover')) {
             o.castShadow = false; o.receiveShadow = true;
           }

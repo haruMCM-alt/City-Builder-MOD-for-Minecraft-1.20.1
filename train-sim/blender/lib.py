@@ -67,8 +67,15 @@ def materials():
         tail=mat("taillight", (0.5, 0.02, 0.02), 0, 0.3, (1.0, 0.05, 0.03), 3.0),
         # three.js swaps this one for a canvas texture ("普通 宇都宮")
         dest=mat("DEST", (0.05, 0.03, 0.0), 0, 0.5, (1.0, 0.55, 0.05), 1.5),
-        bogie=mat("bogie", (0.05, 0.05, 0.055), 0.4, 0.6),
-        wheel=mat("wheel", (0.35, 0.35, 0.36), 0.9, 0.4),
+        bogie=mat("bogie", (0.075, 0.068, 0.062), 0.35, 0.72),             # dark grey, brake dust brown
+        spring=mat("spring", (0.10, 0.10, 0.105), 0.5, 0.5),
+        equip=mat("equipment", (0.16, 0.16, 0.17), 0.35, 0.65),
+        fin=mat("cooling_fin", (0.30, 0.31, 0.32), 0.7, 0.45),
+        brakeshoe=mat("brake_shoe", (0.09, 0.075, 0.065), 0.2, 0.85),
+        red=mat("cock_red", (0.55, 0.04, 0.03), 0.0, 0.5),
+        wheel=mat("wheel", (0.16, 0.15, 0.14), 0.75, 0.5),                  # worn steel, dark web
+        cabsp_wall=mat("cabspace_wall", srgb("#b9bcb8"), 0.0, 0.6),        # cab seen through the glass
+        cabsp_floor=mat("cabspace_floor", srgb("#4d4f52"), 0.0, 0.8),
         panto=mat("pantograph", (0.25, 0.26, 0.28), 0.7, 0.5),
         green_mark=mat("green_mark", (0.1, 0.55, 0.25), 0, 0.4),
         # cab interior
@@ -117,6 +124,7 @@ def materials():
         gfrp=mat("front_black", (0.01, 0.012, 0.015), 0.1, 0.12),
         # v3: see-through side windows and passenger saloon
         sglass=mat("side_glass", (0.10, 0.13, 0.12), 0.0, 0.03, alpha=0.38),
+        fglass=mat("front_glass", (0.03, 0.04, 0.045), 0.0, 0.02, alpha=0.42),
         int_wall=mat("int_wall", (0.80, 0.80, 0.77), 0.0, 0.6),
         int_floor=mat("int_floor", (0.30, 0.33, 0.36), 0.0, 0.8),
         int_ceiling=mat("int_ceiling", (0.88, 0.88, 0.86), 0.0, 0.55),

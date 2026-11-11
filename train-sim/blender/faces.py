@@ -38,7 +38,8 @@ E231_FACE = dict(
     corner_r=0.14,
     frp_wrap=0.40,                       # grey FRP mask runs ≈ 400 back along each side
     levels=[1.029, 1.148, 1.30, 1.426, 1.463, 1.655, 1.79, 1.879, 2.10, 2.40, 2.70, 3.00, 3.27, 3.40],
-    cols=28,
+    cols=40,
+    glass=[(-1.25, 1.25, 2.12, 3.20)],   # see-through windscreen (y0, y1, z0, z1): the cab shows through
     cab_side=dict(crew=(7.85, 8.335, 1.127, 3.006), door_windows=[(8.093, 2.60, 0.33, 0.66, 0.04)],
                   windows=[(8.946, 2.728, 0.725, 0.555, 0.06)]),
 )
@@ -90,9 +91,9 @@ def features_e231(det, S, M, fp, fr, extra, add_logo):
         # flush with the strip (black when off, red when lit; the headlights are up top)
         ti0, ti1 = sorted((s * 0.95, s * 1.215))
         fr(det, M["tail"], ti0, ti1, 1.19, 1.38, eps=0.0008, r=0.015)
-        # headlights: round lamps either side of the destination display, in a dark bezel
-        det.cyl(fp(s * 0.92, 3.35, 0.003), (1, 0, 0), 0.085, 0.003, M["black"], seg=24)
-        det.cyl(fp(s * 0.92, 3.35, 0.007), (1, 0, 0), 0.068, 0.004, M["head"], seg=24)
+        # headlights: round lamps either side of the destination display (bezel, reflector, lens)
+        import detail
+        detail.lamp_unit(det, det, M, fp(s * 0.92, 3.35, 0.002), 0.068, M["head"])
         # light-grey lower plates either side of the coupler gap
         y0, y1 = sorted((s * 0.333, s * 1.30))
         det.box((fp(0, 0.96)[0] - 0.05, (y0 + y1) / 2, 0.9625), (0.10, y1 - y0, 0.105), M["light_grey"])
@@ -117,7 +118,8 @@ E233_FACE = dict(
     corner_r=0.18,
     frp_wrap=0.495, frp_mat="white",      # the white corner runs ≈495 mm back along the side
     levels=[1.06, 1.10, 1.165, 1.25, 1.41, 1.50, 1.644, 1.772, 1.90, 2.026, 2.10, 2.40, 2.70, 3.00, 3.14, 3.16],
-    cols=30,
+    cols=40,
+    glass=[(-1.17, 1.17, 2.12, 3.12)],
     cab_side=dict(crew=(7.71, 8.347, 1.13, 2.945), door_windows=[(8.035, 2.443, 0.37, 0.75, 0.05)],
                   windows=[(8.857, 2.698, 0.715, 0.545, 0.08)]),
 )
@@ -145,7 +147,8 @@ def paint_e233(P: Painter, S):
 
 def features_e233(det, S, M, fp, fr, extra, add_logo):
     for s in (-1, 1):
-        det.cyl(fp(s * 0.94, 3.294, 0.004), (1, 0, 0), 0.055, 0.004, M["head"], seg=16)
+        import detail
+        detail.lamp_unit(det, det, M, fp(s * 0.94, 3.294, 0.003), 0.055, M["head"], bezel=0.012)
         fr(det, M["tail"], *sorted((s * 0.66, s * 0.78)), 3.198, 3.338, eps=0.004, r=0.01)
     fr(det, M["dest"], -0.58, 0.58, 3.18, 3.36, eps=0.004)
     fr(det, M["lcd"], -1.07, -0.83, 2.41, 2.51, eps=0.003)
@@ -305,7 +308,8 @@ E131_FACE = dict(
     plan_d=0.03, plan_e=2.0, plan_w=1.45,
     corner_r=0.12,
     levels=[1.24, 1.40, 1.54, 1.68, 1.88, 1.98, 2.20, 2.60, 3.05, 3.20, 3.23, 3.42, 3.45],
-    cols=30,
+    cols=40,
+    glass=[(0.52, 1.26, 2.00, 3.10), (-1.26, -0.52, 2.00, 3.10)],
     cab_side=dict(crew=(7.71, 8.347, 1.13, 2.945), door_windows=[(8.035, 2.443, 0.37, 0.75, 0.05)],
                   windows=[(8.857, 2.698, 0.715, 0.545, 0.08)]),
 )

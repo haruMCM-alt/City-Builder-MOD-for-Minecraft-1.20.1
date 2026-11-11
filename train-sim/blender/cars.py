@@ -14,6 +14,7 @@ from mathutils import Vector, Matrix
 from lib import MB, apply_boolean, delete, join, smooth, text_mesh, rounded_rect, prism
 from frontpaint import Painter, front_material
 import faces
+import detail
 
 L = 19.5           # body length; couplers make it 20.0 m over couplers
 H = L / 2
@@ -459,6 +460,8 @@ def build_nose(mb, S, M, rows_side, ids_side, lv, top_i, mf_side):
         row.append(b)
         face_rows.append(row)
     mi = mb._mi(fm)
+    mg = mb._mi(M["fglass"])
+    glass = F.get("glass", [])
 
     def add(q):
         P = [mb.verts[k] for k in q]
@@ -467,7 +470,10 @@ def build_nose(mb, S, M, rows_side, ids_side, lv, top_i, mf_side):
             nrm = (P[2] - P[1]).cross(P[3] - P[1])
         if nrm.x < 0:
             q = list(reversed(q))
-        mb.faces.append((q, mi, True))
+        c = sum(P, Vector()) / len(P)
+        # the windscreen: see-through glass instead of the painted face
+        inside = any(y0 < c.y < y1 and z0 < c.z < z1 for (y0, y1, z0, z1) in glass)
+        mb.faces.append((q, mg if inside else mi, True))
     for ra, rb in zip(face_rows, face_rows[1:]):
         if len(rb) == 1:
             for j in range(len(ra) - 1):
@@ -809,8 +815,8 @@ def long_seat(mb, M, S, a, b, s, seat, ends=(True, True), over=True, prio=False)
     R = Matrix.Rotation(-s * math.radians(10), 3, "X")
     for k in range(n):
         x = a + 0.05 + sw * (k + 0.5)
-        mb.box((x, s * (ws - 0.33), f + 0.385), (sw - 0.018, 0.44, 0.095), seat)           # bucket cushion
-        mb.box((x, s * (ws - 0.13), f + 0.71), (sw - 0.022, 0.08, 0.50), back, R)          # backrest
+        detail.cushion(mb, seat, x, sw - 0.018, s * (ws - 0.11), s, 0.46, f + 0.335, 0.10)  # bucket cushion
+        detail.backrest(mb, back, x, sw - 0.022, s * (ws - 0.10), s, f + 0.46, 0.52)        # backrest
     mb.box((xc, s * (ws - 0.33), f + 0.336), (ln - 0.12, 0.42, 0.012), M["dkgrey"])
     if S.key == "e233":                                                            # dark strip under the seat front
         mb.box((xc, s * (ws - 0.62), f + 0.003), (ln, 0.16, 0.006), M["floor_strip_e233"])
@@ -1062,25 +1068,7 @@ def wheelset_mesh(M, motor, coll):
     if key in _WS_MESH:
         return _WS_MESH[key]
     mb = MB(key)
-    for s in (-1, 1):
-        mb.cyl((0, s * 0.60, 0), (0, 1, 0), 0.43, 0.13, M["wheel"], seg=28)            # tread
-        mb.cyl((0, s * 0.525, 0), (0, 1, 0), 0.455, 0.022, M["wheel"], seg=28)         # flange
-        mb.cyl((0, s * 0.63, 0), (0, 1, 0), 0.37, 0.10, M["grey"], seg=24)             # dished web
-        mb.cyl((0, s * 0.64, 0), (0, 1, 0), 0.13, 0.15, M["dkgrey"], seg=14)           # hub
-        # visible features so the rotation reads: hub bolts, web holes, a white paint mark
-        for k in range(6):
-            a = k * math.pi / 3
-            mb.cyl((0.095 * math.cos(a), s * 0.72, 0.095 * math.sin(a)), (0, 1, 0), 0.016, 0.02, M["chrome"], seg=6)
-        for k in range(4):
-            a = k * math.pi / 2 + 0.4
-            mb.cyl((0.25 * math.cos(a), s * 0.685, 0.25 * math.sin(a)), (0, 1, 0), 0.035, 0.012, M["black"], seg=10)
-        mb.box((0.0, s * 0.69, 0.31), (0.025, 0.01, 0.10), M["white"])
-        if not motor:
-            mb.cyl((0, s * 0.28, 0), (0, 1, 0), 0.30, 0.07, M["brakedisc"], seg=24)    # axle-mounted disc
-            for k in range(8):
-                a = k * math.pi / 4
-                mb.cyl((0.12 * math.cos(a), s * 0.315, 0.12 * math.sin(a)), (0, 1, 0), 0.014, 0.012, M["dkgrey"], seg=6)
-    mb.cyl((0, 0, 0), (0, 1, 0), 0.08, 1.12, M["grey"], seg=12)
+    detail.wheelset(mb, M, motor)
     ob = mb.build(coll)
     smooth(ob, 40)
     _WS_MESH[key] = ob
@@ -1243,30 +1231,14 @@ def panto_pg16(mb, M, x, roof_z):
     mb.box((x, 0, base + 0.20), (1.7, 1.2, 0.06), M["panto"])
 
 
-def roof_ac(mb, M, S, x, roof_z, length=2.7):
+def roof_ac(mb, M, S, x, roof_z, length=2.7, fine=None):
+    fb = fine if fine is not None else mb
     if S.ac == "au726":
-        # AU726: low stainless unit with ribbed grilles and two fan openings
-        hl = length / 2
-        outline = [(-hl, 0.0), (hl, 0.0), (hl - 0.05, 0.30), (hl - 0.25, 0.38), (-hl + 0.25, 0.38), (-hl + 0.05, 0.30)]
-        prism(mb, outline, lambda u, v, d: (x + u, d, roof_z - 0.03 + v), -0.98, 0.98, M["silver"])
-        # the grilled AU726 part sits at the rear end of a long plain cover (cab cars)
-        gx = x - (hl - 1.25) if length > 3.6 else x
-        for s in (-1, 1):
-            for k in range(14):
-                mb.box((gx - 0.95 + k * 0.146, s * 0.99, roof_z + 0.16), (0.05, 0.02, 0.22), M["grille"])
-        for dx in (-0.55, 0.55):
-            mb.cyl((gx + dx, 0, roof_z + 0.36), (0, 0, 1), 0.32, 0.03, M["grille"], seg=20)
-            mb.cyl((gx + dx, 0, roof_z + 0.37), (0, 0, 1), 0.06, 0.02, M["silver"], seg=10)
+        detail.roof_ac_au726(mb, fb, M, x, roof_z, length)
     elif S.ac == "au75s":
-        outline = [(-1.6, 0.0), (1.6, 0.0), (1.55, 0.36), (-1.55, 0.36)]
-        prism(mb, outline, lambda u, v, d: (x + u, d, roof_z - 0.02 + v), -0.95, 0.95, M["light_grey"])
-        for dx in (-0.8, 0.8):
-            mb.cyl((x + dx, 0, roof_z + 0.35), (0, 0, 1), 0.30, 0.03, M["grille"], seg=18)
+        detail.roof_ac_box(mb, fb, M, x, roof_z, 3.2, 0.95, 0.36, 2, M["light_grey"])
     else:  # AU75 big unit on 115
-        outline = [(-2.0, 0.0), (2.0, 0.0), (1.9, 0.42), (-1.9, 0.42)]
-        prism(mb, outline, lambda u, v, d: (x + u, d, roof_z - 0.02 + v), -1.05, 1.05, M["light_grey"])
-        for k in range(4):
-            mb.cyl((x - 1.35 + k * 0.9, 0, roof_z + 0.41), (0, 0, 1), 0.30, 0.03, M["grille"], seg=18)
+        detail.roof_ac_box(mb, fb, M, x, roof_z, 4.0, 1.05, 0.42, 4, M["light_grey"])
     # rain gutters along the cant rail
     for s in (-1, 1):
         mb.box((0, s * (S.width(S.cant) - 0.005), S.cant + 0.012), (L - 0.3, 0.025, 0.02), M["silver"])
@@ -1509,11 +1481,19 @@ def make_car(S, M, kind, coll):
     cut_body(body, S, M, car, coll)
     smooth(body, 30)
     det = MB(f"{S.key}_{name_kind}_details")
+    fine = MB(f"{S.key}_{name_kind}_fine")          # small parts: left out of the distant simplified cars
     glass_panes(det, S, M, [w for w in car.windows if w[0] < xi1] + [w for w in car.door_windows if w[0] < xi1])
-    # door sills / thresholds
-    for (dx0, dx1, dz0, _) in car.doors:
+    # door sills / thresholds and the drip strips over the doors
+    for (dx0, dx1, dz0, dz1) in car.doors:
         for s_ in (-1, 1):
             det.box(((dx0 + dx1) / 2, s_ * (S.width(dz0) - 0.03), dz0 + 0.008), (dx1 - dx0, 0.07, 0.016), M["light_grey"])
+            detail.door_header(det, M, S, dx0, dx1, dz1 + 0.035, s_)
+    for (cx0, cx1, cz0, cz1) in car.crew:
+        for s_ in (-1, 1):
+            # hand rails either side of the crew door and the step below it
+            for gx in (cx0 - 0.07, cx1 + 0.07):
+                detail.grab_bar(fine, M, gx, s_ * (S.width(2.0) + 0.005), 1.35, 2.35, s_)
+            fine.box(((cx0 + cx1) / 2, s_ * (S.width(1.0) + 0.04), 0.82), (0.40, 0.14, 0.03), M["dkgrey"])
     if cab:  # cab side windows stay dark (no saloon behind them)
         glass_panes(det, S, M, [w for w in car.windows if w[0] >= xi1] + [w for w in car.door_windows if w[0] >= xi1], m=M["win"])
     inner = MB(f"{S.key}_{name_kind}_sal")
@@ -1528,20 +1508,22 @@ def make_car(S, M, kind, coll):
         side_lamps(det, M, S, -H + 0.55)
         side_dest(det, S, M, S.doors[1] + 1.25, S.win_z[1] + 0.13)
     for b in (-BOGIE, BOGIE):
-        bogie(det, M, b, motor=(panto_cab or kind == "mid_panto" or (kind == "mid" and S.key in ("115", "211"))))
-    underfloor(det, M, "mid_panto" if panto_cab else kind, hash((S.key, name_kind)) & 0xffff)
+        detail.bogie(det, fine, M, b, motor=(panto_cab or kind == "mid_panto" or (kind == "mid" and S.key in ("115", "211"))))
+    detail.underfloor(det, fine, M, "mid_panto" if panto_cab else kind)
     if getattr(S, "ac_pos", None):
         acx, acl = S.ac_pos[kind]
-        roof_ac(det, M, S, acx, S.top - 0.02, acl)
+        roof_ac(det, M, S, acx, S.top - 0.02, acl, fine)
     else:
-        roof_ac(det, M, S, -0.5 if kind != "mid_panto" else -3.6, S.top - 0.02)
+        roof_ac(det, M, S, -0.5 if kind != "mid_panto" else -3.6, S.top - 0.02, 2.7, fine)
     if kind == "mid_panto":
         (panto_ps33 if S.panto == "single" else panto_pg16)(det, M, getattr(S, "panto_x", 5.4), S.top - 0.03)
     if panto_cab:
         for px in S.cab_panto_x:
             panto_ps33(det, M, px, S.top - 0.03)
     gangway(det, M, -H, -1, top=S.door_z[1] + 0.05)
+    detail.bellows(fine, M, -H, -1, S.door_z[1] + 0.05)
     coupler(det, M, -H, -1)
+    detail.end_fittings(det, fine, M, -H, -1)
     extra = []
     if cab and getattr(S, "face", None):
         def fr(mb, m, y0, y1, z0, z1, eps=0.006, r=0.0):
@@ -1569,10 +1551,25 @@ def make_car(S, M, kind, coll):
             det.cyl((H - 2.4, 0.0, S.top + 0.08), (0, 0, 1), 0.05, 0.16, M["black"], seg=8)  # antenna
     else:
         gangway(det, M, H, 1, top=S.door_z[1] + 0.05)
+        detail.bellows(fine, M, H, 1, S.door_z[1] + 0.05)
         coupler(det, M, H, 1)
+        detail.end_fittings(det, fine, M, H, 1)
     d = det.build(coll)
     smooth(d, 40)
     obj = join([body, d] + extra, f"{S.key}_{name_kind}")
+    fo = fine.build(coll)
+    smooth(fo, 40)
+    fo.name = f"{S.key}_{name_kind}_fine"
+    fo.parent = obj
+    if cab and getattr(S, "face", None) and S.face.get("glass"):
+        # what you see through the windscreen from outside (the player's own train has the full cab model)
+        cs = MB(f"{S.key}_{name_kind}_cabint")
+        xf = min(face_x(S, y, 2.6) for y in (-1.0, 0.0, 1.0)) - 0.10
+        detail.cab_space(cs, M, S, H - 2.30, xf)
+        co = cs.build(coll)
+        smooth(co, 35)
+        co.name = f"{S.key}_{name_kind}_cabint"
+        co.parent = obj
     # saloon fittings + seat bays stay separate child nodes: the game swaps the seat bays for the
     # セミクロスシート variant, and mid_panto reuses the mid meshes (same doors) to keep the GLB small
     key_ = (S.key, "mid" if kind == "mid_panto" else kind)
@@ -1770,8 +1767,9 @@ def make_green(S, M, coll):
             y = s * (S.width(2.6) + 0.004)
             det.poly([(x - 0.13, y, 2.48), (x + 0.13, y, 2.48), (x + 0.13, y, 2.74), (x - 0.13, y, 2.74)], M["green_mark"], (0, s, 0))
     side_dest(det, SA, M, G["side_dest"], G.get("side_dest_z", 3.20 if S.key == "e231" else wz1 + 0.12))
+    gfine = MB(f"{S.key}_green_fine")
     for b in (-BOGIE, BOGIE):
-        bogie(det, M, b)
+        detail.bogie(det, gfine, M, b)
     side_lamps(det, M, SA, -H + 0.55)
     # green car interior: reclining seats on both decks and in the flat end section
     gi = MB("green_saloon")
@@ -1822,6 +1820,10 @@ def make_green(S, M, coll):
     d = det.build(coll)
     smooth(d, 40)
     obj = join([endA, endB, dd, ddi, d, gsal], f"{S.key}_green")
+    gfo = gfine.build(coll)
+    smooth(gfo, 40)
+    gfo.name = f"{S.key}_green_fine"
+    gfo.parent = obj
     add_wheelsets(obj, M, coll, f"{S.key}_green", motor=False)
     lw = [((a + b) / 2, (G["dwin_z"][0] + G["dwin_z"][1]) / 2, (b - a) - 0.40, G["dwin_z"][1] - G["dwin_z"][0], 0.05) for (a, b) in G["doors"]]
     door_leaves(obj, SA, M, coll, f"{S.key}_green", doors, lw, green_side, n_leaves=1, slide_dirs=["a", "b"])

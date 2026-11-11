@@ -53,6 +53,9 @@ function build(tmpl, bands) {
     const mat = o.material;
     const name = mat.name || '';
     if (o.name === 'passengers' || INTERIOR.test(name)) return;
+    // the small parts (springs, bolts, fins, hoses), the cab seen through the windscreen, and the
+    // detailed wheelsets (plain wheels are added below instead)
+    for (let p = o; p && p !== root; p = p.parent) if (/_(fine|cabint)$/.test(p.name) || /_ws\d+$/.test(p.name)) return;
     if (/^LCD|^AD_/.test(name)) return;
     // which door leaf (if any) this part slides with
     let leaf = null;
@@ -107,6 +110,29 @@ function build(tmpl, bands) {
     const geo = list.length > 1 ? mergeGeometries(list, false) : list[0];
     geo.computeBoundingSphere();
     sep.push({ geometry: geo, material: b.material, leafKey: b.leafKey });
+  }
+  // plain wheels for the wheelsets left out above (12-sided, no web or disc detail)
+  const wheelGeo = [];
+  root.traverse((o) => {
+    if (!/_ws\d+$/.test(o.name)) return;
+    for (const side of [-1, 1]) {
+      const g = new THREE.CylinderGeometry(0.43, 0.43, 0.13, 12, 1);
+      g.rotateX(Math.PI / 2);
+      g.translate(0, 0, side * 0.60);
+      g.applyMatrix4(o.matrixWorld);
+      const ng = g.toNonIndexed();
+      for (const k of Object.keys(ng.attributes)) if (k !== 'position' && k !== 'normal') ng.deleteAttribute(k);
+      const n = ng.attributes.position.count;
+      const c = new Float32Array(n * 3).fill(0.16), mre = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { mre[i * 3] = 0.7; mre[i * 3 + 1] = 0.5; }
+      ng.setAttribute('color', new THREE.BufferAttribute(c, 3));
+      ng.setAttribute('aMRE', new THREE.BufferAttribute(mre, 3));
+      wheelGeo.push(ng);
+    }
+  });
+  if (wheelGeo.length) {
+    if (!buckets.has('body')) buckets.set('body', []);
+    buckets.get('body').push(...wheelGeo);
   }
   const parts = [];
   for (const [key, list] of buckets) {
