@@ -813,6 +813,25 @@ export class SoundEngine {
     return this.synthChime();
   }
 
+  /** door chime as the doors open (JR East trains sound it on opening as well as before closing) */
+  doorChimeOpen() {
+    if (!this.ready) return;
+    if (this.usesDoorSample()) {
+      // the chime and the door engine from the start of the recording, faded out as the leaves stop
+      const ctx = this.ctx, t = ctx.currentTime;
+      const s = ctx.createBufferSource();
+      s.buffer = this.doorCloseBuf;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.95, t);
+      g.gain.setValueAtTime(0.95, t + 1.75);
+      g.gain.linearRampToValueAtTime(0, t + 2.15);
+      s.connect(g).connect(this.chimeBus);
+      s.start(t, 0, 2.2);
+      return;
+    }
+    this.synthChime();
+  }
+
   /** JR East style door chime (3 two-tone pairs), synthesized */
   synthChime() {
     if (!this.ready) return 0;

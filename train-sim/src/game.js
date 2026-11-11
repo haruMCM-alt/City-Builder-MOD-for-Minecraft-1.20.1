@@ -154,7 +154,9 @@ export class Game {
       if (this.stateT > 1.2 && !ph.doorsOpen) {
         ph.doorsOpen = true;
         this.doorSide = this.target.station.door;
-        this.sound.doorMove(true);
+        // the chime sounds as the doors open too (the recording carries its own door engine sound)
+        if (this.sound.doorChimeOpen) this.sound.doorChimeOpen();
+        if (!this.sound.usesDoorSample || !this.sound.usesDoorSample()) this.sound.doorMove(true);
         this.platformSay('name', this.target.station);
       }
       if (this.stateT > 3) {
@@ -242,15 +244,19 @@ export class Game {
     else if (Math.abs(late) <= 5) { tp = 10; tl = late > 0 ? `${Math.round(late)}秒遅れ` : `${Math.round(-late)}秒早着`; }
     else if (late > 0) { tp = -Math.min(30, Math.floor(late / 5)); tl = `${Math.round(late)}秒遅れ`; }
     else { tp = -Math.min(15, Math.floor(-late / 10)); tl = `${Math.round(-late)}秒早着`; }
-    let jolt = 0;
-    if (ph.brake > 0.6) jolt = -5;
-    const total = pts + tp + jolt;
+    // how it came to rest: brakes still applied hard (a jolt), or released just before the stop so the
+    // residual brake cylinder pressure brought it to rest smoothly (残圧停車)
+    const si = ph.stopInfo && (ph.time || 0) - ph.stopInfo.t < 5 ? ph.stopInfo : { handle: ph.handle, brake: ph.brake };
+    let jolt = 0, zan = 0;
+    if (si.brake > 0.45) jolt = -5;                       // still braking hard: the train lurches
+    else if (si.handle >= 0 && si.brake > 0.01) zan = 10;   // released, the last of the pressure stops it
+    const total = pts + tp + jolt + zan;
     this.addScore(total);
     const sign = err >= 0 ? '+' : '−';
     this.hud.message(
-      `<div class="big">${label}</div>停止位置 ${sign}${ae.toFixed(2)} m　/　${tl}${jolt ? '　/　停止衝動 -5' : ''}<div class="pts">${total >= 0 ? '+' : ''}${total}</div>`,
+      `<div class="big">${label}</div>停止位置 ${sign}${ae.toFixed(2)} m　/　${tl}${jolt ? '　/　停止衝動 -5' : ''}${zan ? '　/　<b>残圧停車 +10</b>' : ''}<div class="pts">${total >= 0 ? '+' : ''}${total}</div>`,
       total >= 20 ? 'great' : total >= 0 ? 'good' : 'bad', 4.5);
-    this.results.push({ name: tgt.station.name, err, late, pts: total, label, tl });
+    this.results.push({ name: tgt.station.name, err, late, pts: total, label, tl, zan: !!zan });
     this.state = 'arrived';
     this.stateT = 0;
     this.stillT = 0;

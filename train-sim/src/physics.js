@@ -1,5 +1,9 @@
 import { tractiveAccel, resistance } from './vehicles.js';
 
+// brake cylinder release: exponential exhaust (time constant, s) plus a slow linear tail (per s)
+const BC_RELEASE_TAU = 1.4;
+const BC_RELEASE_MIN = 0.06;
+
 /**
  * Train dynamics with a one-handle master controller.
  * handle: -(brakeNotches+1) = EB, -brakeNotches..-1 = B, 0 = N, 1..powerNotches = P
@@ -14,7 +18,8 @@ export class TrainPhysics {
     this.a = 0;
     this.handle = -veh.brakeNotches; // start fully braked
     this.power = 0; // 0..1 actual
-    this.brake = 1; // 0..1 actual service brake
+    this.brake = 1; // 0..1 actual service brake (brake cylinder pressure)
+    this.stopInfo = null;  // how the train last came to rest (for 残圧停車 / 停止衝動)
     this.ebActive = false;
     this.doorsOpen = false;
     this.ats = { braking: false, near: false, pattern: 999, events: 0 };
@@ -84,8 +89,14 @@ export class TrainPhysics {
     // actuator dynamics
     const pr = pTarget > this.power ? 1.6 : 4.0;
     this.power += Math.sign(pTarget - this.power) * Math.min(Math.abs(pTarget - this.power), pr * dt);
-    const br = bTarget > this.brake ? (eb ? 5 : 2.2) : 1.8;
-    this.brake += Math.sign(bTarget - this.brake) * Math.min(Math.abs(bTarget - this.brake), br * dt);
+    if (bTarget > this.brake) {
+      this.brake = Math.min(bTarget, this.brake + (eb ? 5 : 2.2) * dt);
+    } else if (bTarget < this.brake) {
+      // releasing: the brake cylinders exhaust over a second or so (fast at first, a slow tail),
+      // so a train released just before it stops is brought to rest by the residual pressure (残圧停車)
+      const fall = ((this.brake - bTarget) / BC_RELEASE_TAU + BC_RELEASE_MIN) * dt;
+      this.brake = Math.max(bTarget, this.brake - fall);
+    }
     this.ebActive = eb;
     const vk = this.kmh;
     const decel = eb ? (veh.ebDecel / 3.6) * Math.min(1, this.brake) : (veh.brakeMax / 3.6) * this.brake;
@@ -103,9 +114,15 @@ export class TrainPhysics {
     this.slide += (slide - this.slide) * Math.min(1, dt * 6);
     let a = aTr - resistance(vk) - aBr - 9.81 * this.grade;
     const prevA = this.a;
-    // held by the brakes when standing (no rolling back)
-    if (this.v <= 0 && (a <= 0 || this.brake > 0.3)) { a = 0; this.v = 0; }
+    // held by the brakes when standing (no rolling back); a train left standing with no power stays put
+    if (this.v <= 0 && (a <= 0 || this.brake > 0.3 || this.power < 0.02)) { a = 0; this.v = 0; }
+    const wasMoving = this.v > 0;
     this.v = Math.max(0, this.v + a * dt);
+    // creeping below ~0.3 km/h with no power: starting resistance and the last of the brake hold it
+    if (this.v > 0 && this.v < 0.08 && this.power < 0.02 && a <= 0.02) this.v = 0;
+    // the moment it comes to rest: how it was stopped (handle, brake cylinder pressure, deceleration)
+    if (wasMoving && this.v <= 0) this.stopInfo = { handle: this.handle, brake: this.brake, decel: aBr, t: this.time || 0 };
+    this.time = (this.time || 0) + dt;
     this.s += this.v * dt;
     this.jerk = (a - prevA) / Math.max(dt, 1e-3);
     this.a = a;

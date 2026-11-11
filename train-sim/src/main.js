@@ -1532,7 +1532,7 @@ function showResult() {
     const grade = avg >= 40 ? 'S' : avg >= 28 ? 'A' : avg >= 16 ? 'B' : avg >= 5 ? 'C' : 'D';
     $('resGrade').textContent = grade;
     $('resScore').textContent = game.score;
-    $('resRows').innerHTML = rs.map((r) => `<tr><td>${r.name}</td><td>${r.pass ? '通過' : (r.err >= 0 ? '+' : '−') + Math.abs(r.err).toFixed(2) + ' m'}</td><td>${r.pass ? '' : r.tl}</td><td class="${r.pts >= 0 ? 'pos' : 'neg'}">${r.pts >= 0 ? '+' : ''}${r.pts}</td></tr>`).join('');
+    $('resRows').innerHTML = rs.map((r) => `<tr><td>${r.name}</td><td>${r.pass ? '通過' : (r.err >= 0 ? '+' : '−') + Math.abs(r.err).toFixed(2) + ' m'}</td><td>${r.pass ? '' : r.tl}${r.zan ? ' ・残圧停車' : ''}</td><td class="${r.pts >= 0 ? 'pos' : 'neg'}">${r.pts >= 0 ? '+' : ''}${r.pts}</td></tr>`).join('');
     $('result').classList.remove('hidden');
     running = false;
   }, 3500);
