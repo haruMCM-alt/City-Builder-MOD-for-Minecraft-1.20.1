@@ -45,12 +45,12 @@ export const TOKAIDO_SETS = [{ name: 'のぞみ', parts: [['N700', 16]], w: 1 }]
  * win: side windows [bottom y, height, width, pitch]; panto: cars (from the north end) with a pantograph
  */
 const NOSE = {
-  E5: { aw: 2.2, bw: 0.55, tipW: 0.16, tipTop: 1.05, ah: 0.55, bh: 1.7, can: [0.34, 0.2, 0.11], glass: [0.1, 0.31, 0.42, 0.55], lampT: 0.52, win: [2.3, 0.42, 0.62, 1.04] },
-  E6: { aw: 1.6, bw: 0.7, tipW: 0.1, tipTop: 0.92, ah: 0.75, bh: 1.4, can: [0.5, 0.25, 0.12], glass: [0.13, 0.36, 0.4, 0.5], lampT: 0.56, win: [2.22, 0.4, 0.58, 0.98] },
-  E8: { aw: 1.8, bw: 0.6, tipW: 0.14, tipTop: 1.0, ah: 0.8, bh: 1.3, can: [0.36, 0.3, 0.13], glass: [0.16, 0.42, 0.42, 0.6], lampT: 0.62, win: [2.2, 0.42, 0.6, 0.98] },
-  E2: { aw: 2.6, bw: 0.5, tipW: 0.34, tipTop: 1.25, ah: 1.0, bh: 1.05, can: [0.12, 0.36, 0.15], glass: [0.2, 0.46, 0.5, 0.8], lampT: 0.64, win: [1.98, 0.5, 0.68, 0.98] },
-  E7: { aw: 2.0, bw: 0.55, tipW: 0.3, tipTop: 1.2, ah: 0.9, bh: 1.25, can: [0.26, 0.34, 0.14], glass: [0.18, 0.46, 0.52, 0.8], lampT: 0.64, win: [2.04, 0.52, 0.66, 1.04] },
-  N700: { aw: 3.0, bw: 0.42, tipW: 0.44, tipTop: 1.0, ah: 0.6, bh: 1.6, can: [0.26, 0.3, 0.13], glass: [0.16, 0.42, 0.5, 0.75], lampT: 0.56, win: [2.22, 0.46, 0.62, 1.04] },
+  E5: { aw: 2.4, bw: 0.55, tipW: 0.6, tipTop: 1.25, ah: 1.0, bh: 1.45, can: [0.34, 0.2, 0.11], glass: [0.1, 0.31, 0.42, 0.55], lampT: 0.52, win: [2.3, 0.42, 0.62, 1.04] },
+  E6: { aw: 1.9, bw: 0.65, tipW: 0.42, tipTop: 1.15, ah: 1.0, bh: 1.3, can: [0.5, 0.25, 0.12], glass: [0.13, 0.36, 0.4, 0.5], lampT: 0.56, win: [2.22, 0.4, 0.58, 0.98] },
+  E8: { aw: 2.0, bw: 0.6, tipW: 0.45, tipTop: 1.2, ah: 1.05, bh: 1.15, can: [0.36, 0.3, 0.13], glass: [0.16, 0.42, 0.42, 0.6], lampT: 0.62, win: [2.2, 0.42, 0.6, 0.98] },
+  E2: { aw: 2.6, bw: 0.5, tipW: 0.6, tipTop: 1.4, ah: 1.15, bh: 0.95, can: [0.12, 0.36, 0.15], glass: [0.2, 0.46, 0.5, 0.8], lampT: 0.64, win: [1.98, 0.5, 0.68, 0.98] },
+  E7: { aw: 2.2, bw: 0.55, tipW: 0.62, tipTop: 1.35, ah: 1.3, bh: 1.0, can: [0.26, 0.34, 0.14], glass: [0.18, 0.46, 0.52, 0.8], lampT: 0.64, win: [2.04, 0.52, 0.66, 1.04] },
+  N700: { aw: 3.0, bw: 0.42, tipW: 0.7, tipTop: 1.15, ah: 0.85, bh: 1.7, can: [0.26, 0.3, 0.13], glass: [0.16, 0.42, 0.5, 0.75], lampT: 0.56, win: [2.22, 0.46, 0.62, 1.04] },
 };
 NOSE.H5 = NOSE.E5;
 
@@ -62,7 +62,7 @@ const UNDER = 0x2a2c2f;
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 /** paint: metalness, roughness, emissive (windows glow with the saloon lights) */
-const PAINT = [0.12, 0.3, 0], GLASS = [0.4, 0.06, 1], DARK = [0.2, 0.5, 0], METAL = [0.6, 0.5, 0], RUBBER = [0, 0.85, 0];
+const PAINT = [0.12, 0.3, 0], GLASS = [0.4, 0.06, 0.45], DARK = [0.2, 0.5, 0], METAL = [0.6, 0.5, 0], RUBBER = [0, 0.85, 0];
 
 /** collects non-indexed triangles with colour and material per vertex, merged into one mesh per car */
 class Parts {
@@ -173,7 +173,7 @@ function carGeometry(type, L, nose, panto) {
   const sec = (t) => {
     if (t < 0) return { w: W2, bot: YB, top: H, cb: 0 };
     const w = Math.max(ns.tipW, W2 * Math.pow(Math.max(0, 1 - Math.pow(t, ns.aw)), ns.bw));
-    const bot = YB - 0.45 * sstep(0.3, 0.65, t) + 0.1 * sstep(0.88, 1, t);
+    const bot = YB - 0.4 * sstep(0.3, 0.65, t) + 0.12 * sstep(0.85, 1, t);
     let top = ns.tipTop + (H - ns.tipTop) * Math.pow(Math.max(0, 1 - Math.pow(t, ns.ah)), ns.bh);
     top = Math.max(top, bot + 0.3);
     const cb = ns.can[0] * Math.exp(-(((t - ns.can[1]) / ns.can[2]) ** 2));
@@ -205,10 +205,12 @@ function carGeometry(type, L, nose, panto) {
   }
   // end caps: the gangway end(s) flat, the nose tip closed in a point
   const cap = (iSec, x, dirOut) => {
-    const base = pos.length / 3;
-    const S = secs[iSec].S;
-    pos.push(x, (S.bot + S.top) / 2, 0); C0.set(nose > 0 && iSec > 1 ? band(1.0) : UNDER); col.push(C0.r, C0.g, C0.b);
-    for (let j = 0; j < n - 1; j++) { const a = iSec * n + j; if (dirOut > 0) idx.push(base, a, a + 1); else idx.push(base, a + 1, a); }
+    // own vertices, so the cap has one colour (not blended from the livery round its edge)
+    const S = secs[iSec].S, base = pos.length / 3;
+    C0.set(nose > 0 && iSec > 1 ? band(1.0) : UNDER);
+    pos.push(x, (S.bot + S.top) / 2, 0); col.push(C0.r, C0.g, C0.b);
+    for (let j = 0; j < n; j++) { pos.push(pos[(iSec * n + j) * 3], pos[(iSec * n + j) * 3 + 1], pos[(iSec * n + j) * 3 + 2]); col.push(C0.r, C0.g, C0.b); }
+    for (let j = 0; j < n - 1; j++) { const a = base + 1 + j; if (dirOut > 0) idx.push(base, a, a + 1); else idx.push(base, a + 1, a); }
   };
   cap(0, 0, -1);
   if (nose > 0) cap(secs.length - 1, L + 0.06, 1); else cap(1, L, 1);
@@ -290,7 +292,7 @@ function carGeometry(type, L, nose, panto) {
   const lowC = band(1.2);
   C0.set(lowC).multiplyScalar(0.86);
   const skirtC = C0.getHex();
-  P.box(1.2, (nose > 0 ? bodyEnd + nose * 0.3 : L - 1.2), 0.5, YB + 0.01, -W2 * 0.8, W2 * 0.8, UNDER, DARK);
+  P.box(1.2, (nose > 0 ? bodyEnd + 0.4 : L - 1.2), 0.5, YB + 0.01, -W2 * 0.8, W2 * 0.8, UNDER, DARK);
   const skirtSpans = [[0.6, bog[0] - 1.85], [bog[0] + 1.85, bog[1] - 1.85]];
   if (nose === 0) skirtSpans.push([bog[1] + 1.85, L - 0.6]);
   for (const [a, b] of skirtSpans) {
@@ -316,7 +318,7 @@ function carGeometry(type, L, nose, panto) {
   {
     const rp = [], rc = [], ri = [];
     const S = { w: W2 * 0.95, bot: YB + 0.05, top: H - 0.06, cb: 0 };
-    for (const x of [-0.42, 0.02]) for (const p of ring) { const [z, y] = point(S, p); rp.push(x, y, z); rc.push(0.15, 0.155, 0.16); }
+    for (const x of [-0.42, 0.02]) for (const p of ring) { const [z, y] = point(S, p); rp.push(x, y, z); rc.push(0.4, 0.41, 0.42); }
     for (let j = 0; j < n - 1; j++) { const a = j, b = j + 1, c = j + n, d = c + 1; ri.push(a, b, c, b, d, c); }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));

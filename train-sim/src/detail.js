@@ -4,11 +4,11 @@
 
 export const DETAIL_SPEC = [
   { group: '列車', items: [
-    { key: 'oncoming', label: '対向列車（同じ路線）', min: 0, max: 2, def: 1 },
-    { key: 'traffic', label: '並走する他線の列車', min: 0, max: 2, def: 1 },
+    { key: 'oncoming', label: '対向列車', min: 0, max: 2, def: 1 },
+    { key: 'traffic', label: '並走する他線', min: 0, max: 2, def: 1 },
     { key: 'freight', label: '貨物列車', min: 0, max: 2, def: 1 },
     { key: 'shinkansen', label: '新幹線', min: 0, max: 2, def: 1 },
-    { key: 'parked', label: '駅に止まっている電車', min: 0, max: 1, def: 1 },
+    { key: 'parked', label: '停車中の電車', min: 0, max: 1, def: 1 },
     { key: 'passengers', label: '車内の乗客', min: 0, max: 2, def: 1 },
   ] },
   { group: '沿線', items: [
