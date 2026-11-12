@@ -24,6 +24,16 @@ function isMotor(formation, i) {
   return c === 'P' || (c === 'M' && formation[i - 1] === 'P');
 }
 
+/**
+ * recorded horns: assets/sounds/horn_<key>.wav = the blast up to loopEnd (its end crossfaded into the
+ * audio just before loopStart, so it loops seamlessly), 0.1 s of silence, then the end of the blast
+ * from `tail` (tailLen s). Cut from the recordings by tools in the README.
+ */
+const HORN_SAMPLES = {
+  e231: { loopStart: 0.3, loopEnd: 0.62, tail: 0.72, tailLen: 1.0, gain: 0.5 },
+  211: { loopStart: 1.13, loopEnd: 3.43, tail: 3.53, tailLen: 0.75, gain: 0.5 },
+};
+
 export class SoundEngine {
   constructor() {
     this.ctx = null;
@@ -155,6 +165,15 @@ export class SoundEngine {
     this.atsBus = ctx.createGain();
     this.atsBus.connect(this.master);
 
+    // recorded horns (E231 / E233: horn_e231, 211 / 115: horn_211), see assets/sounds/
+    this.hornBufs = {};
+    for (const k of Object.keys(HORN_SAMPLES)) {
+      fetch(new URL(`../../assets/sounds/horn_${k}.wav`, import.meta.url))
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+        .then((b) => ctx.decodeAudioData(b))
+        .then((buf) => { this.hornBufs[k] = buf; })
+        .catch((e) => console.warn('horn sample unavailable, using the synthesized horn', k, e));
+    }
     // recorded door chime + linear-motor door closing (E231/E233), see assets/sounds/
     this.doorCloseBuf = null;
     fetch(new URL('../../assets/sounds/door_close_e231.mp3', import.meta.url))
@@ -874,6 +893,37 @@ export class SoundEngine {
     if (!this.ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
     const dest = this.own ? this.own.hornVoice.input : this.master;
+    // a recording for this train: the blast, its steady middle looped while the key is held, then
+    // the recorded end of the blast when it is let go
+    const sk = this.veh && this.veh.sound.hornSample;
+    if (on && !this.hornNodes && sk && this.hornBufs && this.hornBufs[sk]) {
+      const hs = HORN_SAMPLES[sk], buf = this.hornBufs[sk];
+      const out = ctx.createGain(); out.gain.value = hs.gain * this.vol.horn;
+      out.connect(dest);
+      const src = ctx.createBufferSource();
+      src.buffer = buf; src.loop = true; src.loopStart = hs.loopStart; src.loopEnd = hs.loopEnd;
+      const g = ctx.createGain();
+      src.connect(g).connect(out);
+      src.start(t, 0);
+      this.hornNodes = { sample: true, src, g, out, hs, buf };
+      return;
+    }
+    if (!on && this.hornNodes && this.hornNodes.sample) {
+      const { src, g, out, hs, buf } = this.hornNodes;
+      this.hornNodes = null;
+      g.gain.setValueAtTime(1, t);
+      g.gain.linearRampToValueAtTime(0, t + 0.06);
+      src.stop(t + 0.1);
+      const tail = ctx.createBufferSource();
+      tail.buffer = buf;
+      const tg = ctx.createGain();
+      tg.gain.setValueAtTime(0, t);
+      tg.gain.linearRampToValueAtTime(1, t + 0.06);
+      tail.connect(tg).connect(out);
+      tail.start(t, hs.tail, hs.tailLen);
+      setTimeout(() => { try { out.disconnect(); } catch { /* gone */ } }, (hs.tailLen + 0.5) * 1000);
+      return;
+    }
     if (on && !this.hornNodes) {
       const f = ((this.veh && this.veh.sound.hornTones) || [440])[0];
       if (!this.hornWave) {
