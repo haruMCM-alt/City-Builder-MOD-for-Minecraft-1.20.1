@@ -1,4 +1,5 @@
 // Streams the scenery around the train in 200 m chunks.
+import { DETAIL, keep } from '../detail.js';
 import * as THREE from 'three';
 import { stationProtos, PERSON_KEYS, SIT_KEYS, departureBoardTexture, clockTexture } from './people.js';
 import { makeTextures } from './textures.js';
@@ -325,7 +326,8 @@ export class World {
   update(s, budget = 1) {
     const r = this.route;
     // build far ahead in the running direction (dir = -1 for up trains), a little behind
-    const ahead = this.dir < 0 ? BEHIND : AHEAD, behind = this.dir < 0 ? AHEAD : BEHIND;
+    const far = AHEAD * DETAIL.viewDist;
+    const ahead = this.dir < 0 ? BEHIND : far, behind = this.dir < 0 ? far : BEHIND;
     const first = Math.floor((s - behind) / CHUNK);
     const last = Math.floor((s + ahead) / CHUNK);
     for (let k = first; k <= last; k++) {
@@ -599,6 +601,10 @@ export class World {
     const inst = { trees: [], cars: [], poles: [], roadsPar: [], crossRoads: [] };
     const R = rng(k * 31 + 7);
     const roads = this.land.build(k, s0, s1, B, inst);
+    // the detail sliders thin out trees, parked cars and utility poles (kept by place, so the same ones stay)
+    if (DETAIL.trees < 1) inst.trees = inst.trees.filter((t) => keep(DETAIL.trees, t.x, t.z));
+    if (DETAIL.cars < 1) inst.cars = inst.cars.filter((c) => keep(DETAIL.cars, c.x, c.z, 1));
+    if (DETAIL.poles < 0.5) inst.poles = [];
     for (const [key, buf] of Object.entries(B)) {
       if (buf.empty) continue;
       const g = buf.build();
@@ -651,13 +657,13 @@ export class World {
     const crossings = [], agents = [];
     for (const rd of inst.crossRoads) {
       if (rd.level) crossings.push(this.buildCrossing(group, disposables, rd));
-      const n = 1 + Math.floor(R() * 3);
+      const n = Math.round((1 + Math.floor(R() * 3)) * DETAIL.cars);
       for (let i = 0; i < n; i++) {
         agents.push({ rd, l: (R() * 2 - 1) * 380, dir: R() < 0.5 ? 1 : -1, v: 9 + R() * 6, color: new THREE.Color(...carColor(R)) });
       }
     }
     for (const rp of inst.roadsPar) {
-      const n = Math.floor(R() * 2);
+      const n = Math.round(Math.floor(R() * 2) * DETAIL.cars);
       for (let i = 0; i < n; i++) agents.push({ par: rp, s: rp.s0 + R() * 200, dir: R() < 0.5 ? 1 : -1, v: 10 + R() * 5, color: new THREE.Color(...carColor(R)) });
     }
     this.crossings.push(...crossings);
@@ -976,7 +982,7 @@ export class World {
   placePeople(st, pfm, a, b, H, batch, benchAt, centre) {
     const r = this.route;
     const R = rng(st.index * 977 + (pfm.side || 0) * 31 + 5);
-    const busy = (st.area === 'city' ? 0.75 : st.area === 'suburb' ? 0.5 : 0.3) * (st.busy ?? 1);
+    const busy = (st.area === 'city' ? 0.75 : st.area === 'suburb' ? 0.5 : 0.3) * (st.busy ?? 1) * DETAIL.people;
     const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
     const p1 = {}, p2 = {};
     const put = (key, s, lat, latFace, scale, dy = 0) => {

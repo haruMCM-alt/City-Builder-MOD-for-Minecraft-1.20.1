@@ -33,6 +33,12 @@
         <h2>車両</h2>
         <canvas id="vehPreview" class="veh-preview" width="640" height="260" aria-label="選択中の車両の3Dプレビュー"></canvas>
         <div id="vehList" class="veh-list"></div>
+        <details id="detailBox" class="detail-box" open>
+          <summary>詳細設定</summary>
+          <p class="note">列車・沿線は次の運転開始から、音量はすぐに反映されます。</p>
+          <div id="detailSliders"></div>
+          <button id="detailReset" class="small-btn">初期値に戻す</button>
+        </details>
       </div>
       <div class="col">
         <h2>運転区間・編成</h2>

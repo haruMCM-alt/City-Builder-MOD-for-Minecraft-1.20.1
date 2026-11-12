@@ -2,6 +2,9 @@
 // and a small traffic manager that sends them past at their real speeds (130 km/h south of 大宮,
 // up to 275 km/h north of it).
 import * as THREE from 'three';
+import { DETAIL } from './detail.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { lodMaterial } from './carlod.js';
 
 // ---------------------------------------------------------------------------
 // liveries (official colour names; hex from the operator's / Wikipedia values)
@@ -31,95 +34,321 @@ export const SETS = [
 /** 東海道新幹線 */
 export const TOKAIDO_SETS = [{ name: 'のぞみ', parts: [['N700', 16]], w: 1 }];
 
-/** cross-section (half, from the bottom edge up to the roof centre), metres: [z, y] for a 3.35 m body */
-const PROFILE = [[1.52, 0.55], [1.63, 0.95], [1.675, 1.6], [1.675, 2.2], [1.6, 2.8], [1.4, 3.3], [1.05, 3.56], [0.5, 3.64], [0, 3.65]];
+// ---------------------------------------------------------------------------
+// shapes
+// ---------------------------------------------------------------------------
+/**
+ * the nose of each type (t = 0 at the nose root .. 1 at the tip):
+ *   half width W·(1 − t^aw)^bw (never below tipW), roof dropping to tipTop as (1 − t^ah)^bh,
+ *   can: the cab canopy bump [height, t, spread], glass: the windscreen [t0, t1, half width as a
+ *   fraction of the section, roundness], lampT: where the head lights sit
+ * win: side windows [bottom y, height, width, pitch]; panto: cars (from the north end) with a pantograph
+ */
+const NOSE = {
+  E5: { aw: 2.2, bw: 0.55, tipW: 0.16, tipTop: 1.05, ah: 0.55, bh: 1.7, can: [0.34, 0.2, 0.11], glass: [0.1, 0.31, 0.42, 0.55], lampT: 0.52, win: [2.3, 0.42, 0.62, 1.04] },
+  E6: { aw: 1.6, bw: 0.7, tipW: 0.1, tipTop: 0.92, ah: 0.75, bh: 1.4, can: [0.5, 0.25, 0.12], glass: [0.13, 0.36, 0.4, 0.5], lampT: 0.56, win: [2.22, 0.4, 0.58, 0.98] },
+  E8: { aw: 1.8, bw: 0.6, tipW: 0.14, tipTop: 1.0, ah: 0.8, bh: 1.3, can: [0.36, 0.3, 0.13], glass: [0.16, 0.42, 0.42, 0.6], lampT: 0.62, win: [2.2, 0.42, 0.6, 0.98] },
+  E2: { aw: 2.6, bw: 0.5, tipW: 0.34, tipTop: 1.25, ah: 1.0, bh: 1.05, can: [0.12, 0.36, 0.15], glass: [0.2, 0.46, 0.5, 0.8], lampT: 0.64, win: [1.98, 0.5, 0.68, 0.98] },
+  E7: { aw: 2.0, bw: 0.55, tipW: 0.3, tipTop: 1.2, ah: 0.9, bh: 1.25, can: [0.26, 0.34, 0.14], glass: [0.18, 0.46, 0.52, 0.8], lampT: 0.64, win: [2.04, 0.52, 0.66, 1.04] },
+  N700: { aw: 3.0, bw: 0.42, tipW: 0.44, tipTop: 1.0, ah: 0.6, bh: 1.6, can: [0.26, 0.3, 0.13], glass: [0.16, 0.42, 0.5, 0.75], lampT: 0.56, win: [2.22, 0.46, 0.62, 1.04] },
+};
+NOSE.H5 = NOSE.E5;
+
+/** body cross-section for a 3.35 m × 3.67 m car (half, z, y above rail): bottom centre, side, roof centre */
+const PROFILE = [[0, 0.95], [1.45, 0.95], [1.5, 0.96], [1.6, 1.04], [1.66, 1.25], [1.675, 1.6], [1.675, 2.35], [1.655, 2.75], [1.6, 3.02], [1.5, 3.26], [1.33, 3.45], [1.1, 3.57], [0.8, 3.635], [0.4, 3.66], [0, 3.67]];
+const YB = 0.95, YT = 3.67;
+const UNDER = 0x2a2c2f;
+
+const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+/** paint: metalness, roughness, emissive (windows glow with the saloon lights) */
+const PAINT = [0.12, 0.3, 0], GLASS = [0.4, 0.06, 1], DARK = [0.2, 0.5, 0], METAL = [0.6, 0.5, 0], RUBBER = [0, 0.85, 0];
+
+/** collects non-indexed triangles with colour and material per vertex, merged into one mesh per car */
+class Parts {
+  constructor() { this.list = []; }
+  /** geometry (any; indexed or not), a colour (or null to keep its colour attribute), [metal, rough, emissive] */
+  add(geo, color, mre) {
+    const g = geo.index ? geo.toNonIndexed() : geo;
+    if (!g.attributes.normal) g.computeVertexNormals();
+    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'color'].includes(k)) g.deleteAttribute(k);
+    const n = g.attributes.position.count;
+    if (color != null || !g.attributes.color) {
+      const c = new THREE.Color(color ?? 0x808080), a = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
+      g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+    }
+    const m = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { m[i * 3] = mre[0]; m[i * 3 + 1] = mre[1]; m[i * 3 + 2] = mre[2]; }
+    g.setAttribute('aMRE', new THREE.BufferAttribute(m, 3));
+    this.list.push(g);
+    if (g !== geo) geo.dispose();
+  }
+  /** a box from a to b (centre line) with thickness th and depth (z) w */
+  bar(a, b, th, w, z, color, mre) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+    const g = new THREE.BoxGeometry(len, th, w);
+    g.rotateZ(Math.atan2(dy, dx));
+    g.translate((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, z);
+    this.add(g, color, mre);
+  }
+  box(x0, x1, y0, y1, z0, z1, color, mre) {
+    const g = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0);
+    g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+    this.add(g, color, mre);
+  }
+  build() {
+    const g = mergeGeometries(this.list, false);
+    for (const x of this.list) x.dispose();
+    g.computeBoundingSphere();
+    return g;
+  }
+}
+
+/** a flat rounded rectangle facing ±z (side = +1 left / -1 right), centred at (x, y), on the plane z */
+function roundRect(x, y, w, h, r, z, side) {
+  const pts = [];
+  const corner = (cx, cy, a0) => { for (let i = 0; i <= 3; i++) { const a = a0 + (i / 3) * Math.PI / 2; pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } };
+  corner(x + w / 2 - r, y + h / 2 - r, 0); corner(x - w / 2 + r, y + h / 2 - r, Math.PI / 2);
+  corner(x - w / 2 + r, y - h / 2 + r, Math.PI); corner(x + w / 2 - r, y - h / 2 + r, Math.PI * 1.5);
+  const pos = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    if (side > 0) pos.push(x, y, z, a[0], a[1], z, b[0], b[1], z); else pos.push(x, y, z, b[0], b[1], z, a[0], a[1], z);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
 
 const _mats = {};
-function bodyMat() {
-  return _mats.body || (_mats.body = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.15, envMapIntensity: 1.1 }));
-}
-function darkMat() {
-  return _mats.dark || (_mats.dark = new THREE.MeshStandardMaterial({ color: 0x15181c, roughness: 0.25, metalness: 0.3 }));
-}
-function underMat() {
-  return _mats.under || (_mats.under = new THREE.MeshStandardMaterial({ color: 0x3a3d40, roughness: 0.8, metalness: 0.2 }));
-}
 function lampMat(tail) {
   const k = tail ? 'tail' : 'head';
   return _mats[k] || (_mats[k] = new THREE.MeshStandardMaterial({ color: tail ? 0x400404 : 0xfff6e0, emissive: tail ? 0xff1a0a : 0xfff2d8, emissiveIntensity: 3, roughness: 0.2 }));
 }
+/** a lamp cluster: a flattened lens set into the nose side */
+const LAMP_GEO = new THREE.SphereGeometry(1, 12, 8).scale(0.34, 0.1, 0.07);
 
 const _geoCache = new Map();
 /**
- * one car: a body swept along x (0 = rear end, L = front end); nose = length of the streamlined
- * nose at the +x end (0 for a middle car). Returns {body, windows, under} geometries.
+ * one car, merged into a single geometry: x from 0 (rear end) to L (front end); nose = length of the
+ * streamlined nose at the +x end (0 for a middle car); panto: carries a pantograph.
+ * Returns { geo, lamps: [{x, y, z, sx}] } (head / tail light positions on the nose).
  */
-function carGeometry(type, L, nose) {
-  const key = `${type}|${L}|${nose}`;
+function carGeometry(type, L, nose, panto) {
+  const key = `${type}|${L}|${nose}|${panto}`;
   if (_geoCache.has(key)) return _geoCache.get(key);
-  const lv = LIVERY[type];
-  const ws = lv.w / 3.35, hs = lv.h / 3.65;
-  const prof = PROFILE.map(([z, y]) => [z * ws, 0.55 + (y - 0.55) * hs]);
-  // full ring, left side then mirrored right side
-  const ring = [...prof.map(([z, y]) => [z, y]), ...prof.slice(0, -1).reverse().map(([z, y]) => [-z, y])];
-  const colorAt = (y) => { for (const [top, c] of lv.bands) if (y <= top) return C(c); return C(lv.bands[lv.bands.length - 1][1]); };
-  // stations along x: dense on the nose
-  const xs = [0];
+  const lv = LIVERY[type], ns = NOSE[type];
+  const W2 = lv.w / 2, H = lv.h, ws = lv.w / 3.35;
   const bodyEnd = L - nose;
-  for (let x = 1.5; x < bodyEnd; x += Math.max(1.5, bodyEnd / 6)) xs.push(x);
-  xs.push(bodyEnd);
-  if (nose > 0) for (let i = 1; i <= 16; i++) xs.push(bodyEnd + nose * (i / 16));
-  const pos = [], col = [], idx = [];
-  const sec = (x) => {
-    if (x <= bodyEnd || nose <= 0) return { w: 1, h: 1, drop: 0 };
-    const t = (x - bodyEnd) / nose;           // 0 at the nose root, 1 at the tip
-    // long, flat "double cusp" nose: width tapers late, the top drops early
-    const w = Math.max(0.06, Math.sqrt(Math.max(0, 1 - t ** 2.3)));
-    const h = Math.max(0.2, 1 - 0.78 * Math.pow(t, 0.75));
-    return { w, h, drop: t };
+  const P = new Parts();
+  const C0 = new THREE.Color();
+  const band = (y) => { for (const [top, c] of lv.bands) if (y <= top) return c; return lv.bands[lv.bands.length - 1][1]; };
+  // --- the ring: half profile (with paired points at each colour boundary so the stripes are sharp) ---
+  const half = [];
+  for (let i = 0; i < PROFILE.length; i++) {
+    const [z, y] = PROFILE[i];
+    const yy = YB + (y - YB) * (H - YB) / (YT - YB);
+    if (i < 2) { half.push({ zn: z / 1.675, yn: (yy - YB) / (H - YB), c: UNDER }); if (i === 1) half.push({ zn: z / 1.675, yn: 0, c: band(yy) }); continue; }
+    const prev = half[half.length - 1];
+    const pY = YB + prev.yn * (H - YB), pZ = prev.zn;
+    for (const [top] of lv.bands) {
+      if (top > pY && top < yy) {
+        const f = (top - pY) / (yy - pY), zz = pZ + (z / 1.675 - pZ) * f;
+        half.push({ zn: zz, yn: (top - 0.004 - YB) / (H - YB), c: band(top - 0.01) });
+        half.push({ zn: zz, yn: (top + 0.004 - YB) / (H - YB), c: band(top + 0.01) });
+      }
+    }
+    half.push({ zn: z / 1.675, yn: (yy - YB) / (H - YB), c: band(yy) });
+  }
+  // full ring: left (+z) half from the bottom centre over the roof, then the right half back down
+  const ring = [...half.map((p) => ({ ...p, side: 1 })), ...half.slice(0, -1).reverse().map((p) => ({ ...p, side: -1 }))];
+  const n = ring.length;
+  // --- sections: [x, half width, bottom, top, t] ---
+  const secs = [];
+  secs.push({ x: 0, t: -1 }, { x: bodyEnd, t: nose > 0 ? 0 : -1 });
+  const NS = 44;
+  if (nose > 0) for (let i = 1; i <= NS; i++) { const t = Math.pow(i / NS, 0.9); secs.push({ x: bodyEnd + nose * t, t }); }
+  const sec = (t) => {
+    if (t < 0) return { w: W2, bot: YB, top: H, cb: 0 };
+    const w = Math.max(ns.tipW, W2 * Math.pow(Math.max(0, 1 - Math.pow(t, ns.aw)), ns.bw));
+    const bot = YB - 0.45 * sstep(0.3, 0.65, t) + 0.1 * sstep(0.88, 1, t);
+    let top = ns.tipTop + (H - ns.tipTop) * Math.pow(Math.max(0, 1 - Math.pow(t, ns.ah)), ns.bh);
+    top = Math.max(top, bot + 0.3);
+    const cb = ns.can[0] * Math.exp(-(((t - ns.can[1]) / ns.can[2]) ** 2));
+    return { w, bot, top, cb };
   };
-  for (const x of xs) {
-    const { w, h, drop } = sec(x);
-    for (const [z, y] of ring) {
-      const yy = 0.55 + (y - 0.55) * h - (drop > 0.92 ? (drop - 0.92) * 2.5 : 0);
-      pos.push(x, yy, z * w);
-      let c = colorAt(y);
-      // cab canopy: dark glass on the upper nose just ahead of the root
-      if (nose > 0 && drop > 0.08 && drop < 0.33 && y > 2.6 * hs) c = C(0x101418);
-      col.push(c.r, c.g, c.b);
+  const point = (S, p) => {
+    const z = p.zn * S.w * p.side;
+    let y = S.bot + p.yn * (S.top - S.bot);
+    if (S.cb) y += S.cb * Math.pow(Math.max(0, 1 - (p.zn / 0.6) ** 2), 1.5) * sstep(0.55, 0.95, p.yn);
+    return [z, y];
+  };
+  const pos = [], col = [], idx = [];
+  for (const sc of secs) {
+    const S = sec(sc.t);
+    sc.S = S;
+    // on the nose the underside curves up into view: paint it like the lower body
+    const under = sc.t > 0 ? C0.set(band(1.0)).multiplyScalar(0.8).getHex() : UNDER;
+    for (const p of ring) {
+      const [z, y] = point(S, p);
+      pos.push(sc.x, y, z);
+      C0.set(p.c === UNDER ? under : p.c); col.push(C0.r, C0.g, C0.b);
     }
   }
-  const n = ring.length;
-  for (let i = 0; i < xs.length - 1; i++) {
+  for (let i = 0; i < secs.length - 1; i++) {
     for (let j = 0; j < n - 1; j++) {
       const a = i * n + j, b = a + 1, c = a + n, d = c + 1;
-      idx.push(a, c, b, b, c, d);
+      idx.push(a, b, c, b, d, c);
     }
   }
-  // end cap at the rear (gangway end)
-  const base = pos.length / 3;
-  pos.push(0, 2.1 * hs, 0); col.push(0.2, 0.2, 0.2);
-  for (let j = 0; j < n - 1; j++) idx.push(base, j + 1, j);
+  // end caps: the gangway end(s) flat, the nose tip closed in a point
+  const cap = (iSec, x, dirOut) => {
+    const base = pos.length / 3;
+    const S = secs[iSec].S;
+    pos.push(x, (S.bot + S.top) / 2, 0); C0.set(nose > 0 && iSec > 1 ? band(1.0) : UNDER); col.push(C0.r, C0.g, C0.b);
+    for (let j = 0; j < n - 1; j++) { const a = iSec * n + j; if (dirOut > 0) idx.push(base, a, a + 1); else idx.push(base, a + 1, a); }
+  };
+  cap(0, 0, -1);
+  if (nose > 0) cap(secs.length - 1, L + 0.06, 1); else cap(1, L, 1);
   const body = new THREE.BufferGeometry();
   body.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   body.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   body.setIndex(idx);
   body.computeVertexNormals();
-  // side windows: a row of dark panes on each side (none on the nose)
-  const wins = [];
-  const zW = lv.w / 2 + 0.012, y0 = (lv.bands[0][0] > 1.7 ? 2.2 : 1.85) * hs, y1 = y0 + 0.62;
-  for (let x = 1.6; x < bodyEnd - 1.2; x += 1.55) {
-    for (const s of [1, -1]) wins.push([x, x + 0.95, y0, y1, s * zW]);
+  P.add(body, null, PAINT);
+  // side z of the body at height y (straight part)
+  const sideZ = (y) => {
+    const yn = (y - YB) / (H - YB);
+    for (let i = 1; i < half.length; i++) if (half[i].yn >= yn && half[i - 1].yn <= yn && half[i].yn > half[i - 1].yn) {
+      const f = (yn - half[i - 1].yn) / (half[i].yn - half[i - 1].yn);
+      return (half[i - 1].zn + (half[i].zn - half[i - 1].zn) * f) * W2;
+    }
+    return W2;
+  };
+  // --- windscreen: a patch over the canopy, sampled on the nose surface ---
+  if (nose > 0) {
+    const [g0, g1, gw, gr] = ns.glass;
+    const NT = 18, NZ = 10, gp = [];
+    const topAt = (t, zf) => {
+      // the canopy surface at (t, fraction of the section half width), lifted a little
+      const S = sec(t);
+      // top part of the ring: search the left half for the point with this z fraction
+      let best = null;
+      for (let i = half.length - 1; i > 0; i--) {
+        const a = half[i], b = half[i - 1];
+        if (b.zn >= zf && a.zn <= zf) { const f = (zf - a.zn) / Math.max(1e-6, b.zn - a.zn); best = { zn: zf, yn: a.yn + (b.yn - a.yn) * f, side: 1 }; break; }
+      }
+      if (!best) best = { zn: zf, yn: 1, side: 1 };
+      const [, y] = point(S, best);
+      return [bodyEnd + nose * t, y + 0.015, zf * S.w];
+    };
+    const shape = (u) => Math.pow(Math.sin(Math.PI * u), gr);   // half width along the windscreen
+    for (let i = 0; i < NT; i++) {
+      for (let j = 0; j < NZ; j++) {
+        const q = [];
+        for (const [di, dj] of [[0, 0], [1, 0], [1, 1], [0, 0], [1, 1], [0, 1]]) {
+          const u = (i + di) / NT, v = ((j + dj) / NZ) * 2 - 1;
+          const t = g0 + (g1 - g0) * u;
+          const zf = gw * shape(Math.min(0.999, Math.max(0.001, u))) * v;
+          const pnt = topAt(t, Math.abs(zf));
+          q.push(pnt[0], pnt[1], Math.sign(zf) * Math.abs(pnt[2]));
+        }
+        gp.push(...q);
+      }
+    }
+    const gg = new THREE.BufferGeometry();
+    gg.setAttribute('position', new THREE.Float32BufferAttribute(gp, 3));
+    gg.computeVertexNormals();
+    // make sure it faces up (outwards)
+    if (gg.attributes.normal.getY(0) < 0) { const a = gg.attributes.position.array; for (let k = 0; k < a.length; k += 9) for (let c = 0; c < 3; c++) { const t = a[k + 3 + c]; a[k + 3 + c] = a[k + 6 + c]; a[k + 6 + c] = t; } gg.computeVertexNormals(); }
+    P.add(gg, 0x0c1014, [0.5, 0.05, 0]);
   }
-  const wp = [];
-  for (const [a, b, c, d, z] of wins) wp.push(a, c, z, b, c, z, b, d, z, a, c, z, b, d, z, a, d, z);
-  const windows = new THREE.BufferGeometry();
-  windows.setAttribute('position', new THREE.Float32BufferAttribute(wp, 3));
-  windows.computeVertexNormals();
-  // bogie / underfloor block
-  const under = new THREE.BoxGeometry(bodyEnd - 1.5 + (nose > 0 ? nose * 0.25 : 0), 0.75, lv.w * 0.8);
-  under.translate((bodyEnd - 1.5 + (nose > 0 ? nose * 0.25 : 0)) / 2 + 0.75, 0.55, 0);
-  const out = { body, windows, under };
+  // --- side windows, doors ---
+  const [wy, wh, wwid, pitch] = ns.win;
+  const doorW = 0.86 * ws + 0.1;
+  const doors = nose > 0 ? [[bodyEnd - 1.9, bodyEnd - 1.9 + doorW]] : [[0.75, 0.75 + doorW], [L - 0.75 - doorW, L - 0.75]];
+  const winEnd = bodyEnd - (nose > 0 ? 2.4 : 1.2);
+  const zw = sideZ(wy + wh / 2) + 0.008;
+  for (let x = 1.9; x + wwid / 2 < winEnd; x += pitch) {
+    if (doors.some(([a, b]) => x + wwid / 2 > a - 0.25 && x - wwid / 2 < b + 0.25)) continue;
+    for (const side of [1, -1]) P.add(roundRect(x, wy + wh / 2, wwid, wh, 0.09, side * zw, side), 0x10161b, GLASS);
+  }
+  const dz = sideZ(2.2) + 0.006;
+  for (const [a, b] of doors) {
+    for (const side of [1, -1]) {
+      const z = side * dz, th = 0.022;
+      for (const [x0, x1, y0, y1] of [[a, a + th, 1.28, 3.0], [b - th, b, 1.28, 3.0], [a, b, 3.0 - th, 3.0], [a, b, 1.28, 1.28 + th]]) {
+        P.add(roundRect((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, 0.004, z, side), 0x3a3f44, DARK);
+      }
+      P.add(roundRect((a + b) / 2, wy + wh / 2, 0.26, wh * 0.9, 0.08, z + side * 0.002, side), 0x10161b, GLASS);
+    }
+  }
+  // --- underframe: equipment box, skirts between the bogies, bogies ---
+  const bog = nose > 0 ? [3.6, bodyEnd + nose * 0.16] : [3.6, L - 3.6];
+  const lowC = band(1.2);
+  C0.set(lowC).multiplyScalar(0.86);
+  const skirtC = C0.getHex();
+  P.box(1.2, (nose > 0 ? bodyEnd + nose * 0.3 : L - 1.2), 0.5, YB + 0.01, -W2 * 0.8, W2 * 0.8, UNDER, DARK);
+  const skirtSpans = [[0.6, bog[0] - 1.85], [bog[0] + 1.85, bog[1] - 1.85]];
+  if (nose === 0) skirtSpans.push([bog[1] + 1.85, L - 0.6]);
+  for (const [a, b] of skirtSpans) {
+    if (b - a < 0.3) continue;
+    for (const side of [1, -1]) P.box(a, b, 0.55, YB + 0.03, side * W2 * 0.965 - 0.02, side * W2 * 0.965 + 0.02, skirtC, PAINT);
+  }
+  const wheel = (x, z) => {
+    const g = new THREE.CylinderGeometry(0.43, 0.43, 0.13, 14, 1);
+    g.rotateX(Math.PI / 2); g.translate(x, 0.43, z);
+    P.add(g, 0x4a4c4f, METAL);
+  };
+  for (const xb of bog) {
+    P.box(xb - 1.55, xb + 1.55, 0.42, 0.68, -1.02, -0.86, 0x2b2d30, DARK);       // side frames
+    P.box(xb - 1.55, xb + 1.55, 0.42, 0.68, 0.86, 1.02, 0x2b2d30, DARK);
+    P.box(xb - 0.35, xb + 0.35, 0.5, 0.72, -0.86, 0.86, 0x2b2d30, DARK);         // bolster
+    for (const dx of [-1.25, 1.25]) {
+      for (const z of [-0.72, 0.72]) wheel(xb + dx, z);
+      for (const z of [-1.0, 1.0]) P.box(xb + dx - 0.18, xb + dx + 0.18, 0.3, 0.58, z - 0.1, z + 0.1, 0x3a3c3f, DARK);   // axle boxes
+    }
+    for (const z of [-1.04, 1.04]) P.box(xb - 0.12, xb + 0.12, 0.6, 0.9, z - 0.07, z + 0.07, 0x151618, RUBBER);       // yaw dampers
+  }
+  // gangway cover (full outer bellows) at the rear end
+  {
+    const rp = [], rc = [], ri = [];
+    const S = { w: W2 * 0.95, bot: YB + 0.05, top: H - 0.06, cb: 0 };
+    for (const x of [-0.42, 0.02]) for (const p of ring) { const [z, y] = point(S, p); rp.push(x, y, z); rc.push(0.15, 0.155, 0.16); }
+    for (let j = 0; j < n - 1; j++) { const a = j, b = j + 1, c = j + n, d = c + 1; ri.push(a, b, c, b, d, c); }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(rc, 3));
+    g.setIndex(ri); g.computeVertexNormals();
+    P.add(g, null, RUBBER);
+  }
+  // pantograph (single arm, raised) with its noise shields
+  if (panto) {
+    const x0 = L * 0.62, y0 = H;
+    for (const [dx, dz2] of [[-0.6, -0.5], [-0.6, 0.5], [0.6, -0.5], [0.6, 0.5]]) {
+      const g = new THREE.CylinderGeometry(0.07, 0.09, 0.32, 8); g.translate(x0 + dx, y0 + 0.16, dz2); P.add(g, 0x7a4a2a, [0.1, 0.4, 0]);
+    }
+    P.box(x0 - 0.8, x0 + 0.8, y0 + 0.32, y0 + 0.42, -0.6, 0.6, 0x3a3d40, METAL);
+    P.bar([x0 - 0.5, y0 + 0.45], [x0 + 0.9, y0 + 1.05], 0.08, 0.5, 0, 0x8a8e92, METAL);   // lower arm
+    P.bar([x0 + 0.9, y0 + 1.05], [x0 - 0.2, y0 + 1.62], 0.06, 0.08, 0, 0x8a8e92, METAL);  // upper arm
+    P.box(x0 - 0.33, x0 - 0.07, y0 + 1.6, y0 + 1.7, -0.95, 0.95, 0x2a2c2e, METAL);         // collector head
+    if (/^(E5|H5|E6|E2|E7|N700)$/.test(type)) {
+      for (const side of [1, -1]) P.box(x0 - 1.6, x0 + 1.9, y0 - 0.15, y0 + 0.55, side * 1.0 - 0.03, side * 1.0 + 0.03, band(H + 1), PAINT);
+    }
+  }
+  // head light positions: low on the nose sides
+  const lamps = [];
+  if (nose > 0) {
+    const t = ns.lampT, S = sec(t);
+    const p = half.reduce((a, b) => (Math.abs(b.yn - 0.3) < Math.abs(a.yn - 0.3) ? b : a));
+    for (const side of [1, -1]) {
+      const [z, y] = point(S, { ...p, side });
+      lamps.push({ x: bodyEnd + nose * t, y, z: z * 0.97 });
+    }
+  }
+  const out = { geo: P.build(), lamps };
   _geoCache.set(key, out);
   return out;
 }
@@ -131,32 +360,33 @@ export class ShinkansenSet {
     this.cars = [];
     this.lamps = [];
     // build from the north end (index 0 = north-most car)
+    // each unit (E6 / E8 + E5 run coupled nose to nose) has a nose car at both of its ends
     const list = [];
-    for (const [type, n] of set.parts) for (let i = 0; i < n; i++) list.push(type);
+    for (const [type, n] of set.parts) for (let i = 0; i < n; i++) list.push({ type, k: i, n });
     let off = 0;
-    list.forEach((type, i) => {
+    list.forEach(({ type, k, n: nUnit }, i) => {
       const lv = LIVERY[type];
-      const northEnd = i === 0, southEnd = i === list.length - 1;
+      const northEnd = k === 0, southEnd = k === nUnit - 1;
+      const outer = (northEnd && i === 0) || (southEnd && i === list.length - 1);   // a lit end of the whole set
       const L = northEnd || southEnd ? lv.head : lv.len;
       const g = new THREE.Group();
       // a nose car is built with its nose at +x; the south end car is turned round
       const nose = northEnd || southEnd ? lv.nose : 0;
-      const geo = carGeometry(type, L, nose);
-      const body = new THREE.Mesh(geo.body, bodyMat());
-      const win = new THREE.Mesh(geo.windows, darkMat());
-      const und = new THREE.Mesh(geo.under, underMat());
+      const panto = !(northEnd || southEnd) && (nUnit <= 4 ? k === 1 : (k % 4 === 2));
+      const geo = carGeometry(type, L, nose, panto);
+      const body = new THREE.Mesh(geo.geo, lodMaterial());
       const inner = new THREE.Group();
-      inner.add(body, win, und);
+      inner.add(body);
       if (southEnd && !northEnd) { inner.rotation.y = Math.PI; inner.position.x = L; }
       // lamps in the nose (head and tail lights share the clusters)
-      if (nose > 0) {
-        for (const s of [1, -1]) {
-          const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), lampMat(false));
-          lamp.position.set(L - nose * 0.55, 1.15, s * lv.w * 0.28);
-          lamp.userData.north = northEnd;
-          this.lamps.push(lamp);
-          inner.add(lamp);
-        }
+      for (const lp of geo.lamps) {
+        const lamp = new THREE.Mesh(LAMP_GEO, lampMat(false));
+        lamp.position.set(lp.x, lp.y, lp.z);
+        lamp.rotation.y = Math.sign(lp.z) * 0.18;
+        lamp.userData.north = northEnd;
+        lamp.visible = outer;
+        this.lamps.push(lamp);
+        inner.add(lamp);
       }
       g.add(inner);
       g.userData = { L, off, type };
@@ -193,7 +423,6 @@ export class ShinkansenSet {
 
   dispose() {
     this.group.removeFromParent();
-    this.group.traverse((o) => { if (o.isMesh && o.geometry.type === 'SphereGeometry') o.geometry.dispose(); });
   }
 }
 
@@ -254,8 +483,8 @@ export class ShinkansenTraffic {
     const r = this.route;
     this.timer -= dt;
     if (this.timer <= 0) {
-      this.timer = 50 + Math.random() * 90;
-      if (this.list.length < 3 && this.near(camS, 2500)) this.spawn(camS);
+      this.timer = (50 + Math.random() * 90) / Math.max(0.05, DETAIL.shinkansen);
+      if (DETAIL.shinkansen > 0.01 && this.list.length < 3 && this.near(camS, 2500)) this.spawn(camS);
     }
     const p = this.p;
     for (const t of this.list) {

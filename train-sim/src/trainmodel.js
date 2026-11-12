@@ -1,3 +1,4 @@
+import { DETAIL } from './detail.js';
 import * as THREE from 'three';
 import { CAR_LEN, BOGIE_C } from './vehicles.js';
 import { makeDestTexture, makeAdTexture, makeTvTexture, InfoDisplay, UI_FONT } from './displays.js';
@@ -439,12 +440,12 @@ export class TrainSet {
           }
         });
         // passengers (not in the double-deck green cars; fewer on passing trains)
-        if (code !== 'G' && opts.passengers !== false) {
+        if (code !== 'G' && opts.passengers !== false && DETAIL.passengers > 0.01) {
           const seats = seatCushions(seatKey, obj);
           const doorX = [];
           for (const l of this.leaves) if (l.car === i && l.dir < 0 && l.side === 'left') doorX.push(l.cx);
           const rnd = mulberry(i * 7919 + (opts.forward === false ? 101 : 1));
-          const pm = passengerMesh(seats, doorX.length ? doorX : [-4.9, 0, 4.9], 1.17, rnd, opts.forward === false ? 0.35 : 0.42);
+          const pm = passengerMesh(seats, doorX.length ? doorX : [-4.9, 0, 4.9], 1.17, rnd, Math.min(0.95, (opts.forward === false ? 0.35 : 0.42) * DETAIL.passengers));
           if (pm) { obj.add(pm); this.disposables.push(pm.geometry); }
         }
         inner.add(obj);

@@ -159,6 +159,7 @@ export class Announcer extends ClipPlayer {
       if (!text) return 0;
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'ja-JP'; u.rate = 0.95; u.pitch = 1.1;
+      u.volume = Math.min(1, (this.sound.vol ? this.sound.vol.ann * this.sound.vol.master : 1));
       const v = speechSynthesis.getVoices().find((x) => x.lang && x.lang.startsWith('ja'));
       if (v) u.voice = v;
       speechSynthesis.speak(u);

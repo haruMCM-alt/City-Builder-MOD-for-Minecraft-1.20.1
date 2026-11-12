@@ -14,7 +14,7 @@ const LEAF = /_door(\d+)_(L|R)_(a|b)$/;
 
 const uniforms = { uLit: { value: 0.3 } };
 let bodyMat = null;
-function lodMaterial() {
+export function lodMaterial() {
   if (bodyMat) return bodyMat;
   bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.3, name: 'lod_body' });
   bodyMat.onBeforeCompile = (sh) => {

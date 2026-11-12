@@ -75,6 +75,7 @@ let preview = null;
 import { Game } from './game.js';
 import { passengerMesh } from './world/people.js';
 import { PlatformAnnouncer } from './audio/platform.js';
+import { DETAIL, DETAIL_SPEC } from './detail.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -126,6 +127,14 @@ const settings = {
   weather: store.get('weather', 'clear'),
 };
 if (!['day', 'evening', 'night'].includes(settings.tod)) settings.tod = 'day';
+// the detail sliders (saved as one object; unknown or out-of-range values fall back to the default)
+{
+  const saved = store.get('detail', {}) || {};
+  for (const g of DETAIL_SPEC) for (const it of g.items) {
+    const v = saved[it.key];
+    if (typeof v === 'number' && v >= it.min && v <= it.max) DETAIL[it.key] = v;
+  }
+}
 if (!['clear', 'rain'].includes(settings.weather)) settings.weather = 'clear';
 if (settings.dir !== 'up') settings.dir = 'down';
 if (!SERVICES[settings.service]) settings.service = DEFAULT_SERVICE;
@@ -304,6 +313,7 @@ function buildMenu() {
   const qualSel = $('qualSel');
   qualSel.value = settings.quality;
   qualSel.addEventListener('change', () => { settings.quality = qualSel.value; store.set('quality', settings.quality); });
+  setupDetailSliders();
   const shadowChk = $('shadowChk');
   shadowChk.checked = settings.shadows;
   shadowChk.addEventListener('change', () => { settings.shadows = shadowChk.checked; store.set('shadows', settings.shadows); });
@@ -417,6 +427,7 @@ async function startGame(resume = null) {
   $('menu').classList.add('hidden');
   $('loading').classList.remove('hidden');
   await sound.init();
+  sound.setVolumes(DETAIL);
   if (sound.ctx && sound.ctx.state !== 'running') { try { await sound.ctx.resume(); } catch { /* resumes on the next gesture */ } }
   paused = false;
   if (announcer.loading) { try { await announcer.loading; } catch { /* falls back below */ } }
@@ -760,8 +771,44 @@ function clearSeatFor(R) {
     s.face = p && Math.abs(s.z) > 0.55 && R.yaw0 !== -Math.PI / 2 ? Math.sign(p.x - s.x) : 0;
   }
   const rnd = (() => { let a = 99 + R.idx; return () => { a = (a * 16807) % 2147483647; return a / 2147483647; }; })();
-  const pm = passengerMesh(seats.filter((s) => Math.abs(s.z) > 0.55), [], 1.17, rnd, 0.45);
+  const pm = DETAIL.passengers > 0.01 ? passengerMesh(seats.filter((s) => Math.abs(s.z) > 0.55), [], 1.17, rnd, Math.min(0.95, 0.45 * DETAIL.passengers)) : null;
   if (pm) inner.add(pm);
+}
+
+/** the 詳細設定 sliders in the menu */
+function setupDetailSliders() {
+  const box = $('detailSliders');
+  if (!box) return;
+  const fmt = (it, v) => (it.step === 1 ? (v >= 0.5 ? 'あり' : 'なし') : v <= 0.001 ? 'なし' : `${Math.round(v * 100)}%`);
+  const save = () => store.set('detail', { ...DETAIL });
+  const rows = [];
+  box.innerHTML = '';
+  for (const g of DETAIL_SPEC) {
+    const h = document.createElement('h3'); h.textContent = g.group; box.appendChild(h);
+    for (const it of g.items) {
+      const row = document.createElement('label'); row.className = 'slider-row';
+      const name = document.createElement('span'); name.textContent = it.label;
+      const inp = document.createElement('input');
+      Object.assign(inp, { type: 'range', min: it.min, max: it.max, step: it.step || 0.05, value: DETAIL[it.key] });
+      inp.setAttribute('aria-label', it.label);
+      const out = document.createElement('output');
+      const show = () => { out.textContent = fmt(it, DETAIL[it.key]); row.classList.toggle('off', DETAIL[it.key] <= 0.001); };
+      inp.addEventListener('input', () => {
+        DETAIL[it.key] = Number(inp.value);
+        show(); save();
+        if (it.key.startsWith('vol') && sound.ctx) sound.setVolumes(DETAIL);
+      });
+      show();
+      row.append(name, inp, out);
+      box.appendChild(row);
+      rows.push({ it, inp, show });
+    }
+  }
+  $('detailReset').addEventListener('click', () => {
+    for (const { it, inp, show } of rows) { DETAIL[it.key] = it.def; inp.value = it.def; show(); }
+    save();
+    if (sound.ctx) sound.setVolumes(DETAIL);
+  });
 }
 
 function modelKey(veh) { return { e231: 'e231', e233: 'e233', s211: '211', s115: '115', e131: 'e131' }[veh.id]; }

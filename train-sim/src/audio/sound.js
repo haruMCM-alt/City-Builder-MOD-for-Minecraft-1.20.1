@@ -38,6 +38,7 @@ export class SoundEngine {
     this.trains = new Set();
     this.bells = new Map();
     this.doorsOpen = false;
+    this.vol = { master: 1, ann: 1, melody: 1, horn: 1 };
   }
 
   async init(ctxOverride) {
@@ -45,7 +46,7 @@ export class SoundEngine {
     const ctx = ctxOverride || new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
     this.ctx = ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.8;
+    this.master.gain.value = 0.8 * this.vol.master;
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -16; comp.ratio.value = 3.5; comp.attack.value = 0.01; comp.release.value = 0.25;
     this.master.connect(comp).connect(ctx.destination);
@@ -119,7 +120,8 @@ export class SoundEngine {
     this.annBus = ctx.createGain();
     this.annLevel = ctx.createGain();
     const annHp = ctx.createBiquadFilter(); annHp.type = 'highpass'; annHp.frequency.value = 180;
-    this.annBus.connect(annHp).connect(this.annLevel).connect(this.master);
+    this.annVol = ctx.createGain();
+    this.annBus.connect(annHp).connect(this.annLevel).connect(this.annVol).connect(this.master);
 
     // departure melody bus: platform speaker heard from the train (echo + muffling inside)
     this.melBus = ctx.createGain();
@@ -128,9 +130,11 @@ export class SoundEngine {
     const melDelay = ctx.createDelay(1.0); melDelay.delayTime.value = 0.19;
     const melFb = ctx.createGain(); melFb.gain.value = 0.28;
     const melWet = ctx.createGain(); melWet.gain.value = 0.35;
+    this.melVol = ctx.createGain();
+    this.melVol.connect(this.master);
     this.melBus.connect(this.melFilter);
-    this.melFilter.connect(this.master);
-    this.melFilter.connect(melDelay); melDelay.connect(melFb).connect(melDelay); melDelay.connect(melWet).connect(this.master);
+    this.melFilter.connect(this.melVol);
+    this.melFilter.connect(melDelay); melDelay.connect(melFb).connect(melDelay); melDelay.connect(melWet).connect(this.melVol);
 
     // ambience: platform crowd murmur (filtered noise with a syllable-rate flutter) and bird calls
     const crowd = this.loopSource(this.pinkBuf);
@@ -676,7 +680,17 @@ export class SoundEngine {
 
   setMuted(m) {
     this.muted = m;
-    if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.8, this.ctx.currentTime, 0.05);
+    if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.8 * this.vol.master, this.ctx.currentTime, 0.05);
+  }
+
+  /** the volume sliders: { volMaster, volAnn, volMelody, volHorn } (1 = normal) */
+  setVolumes(d) {
+    this.vol = { master: d.volMaster ?? 1, ann: d.volAnn ?? 1, melody: d.volMelody ?? 1, horn: d.volHorn ?? 1 };
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    if (!this.muted) this.master.gain.setTargetAtTime(0.8 * this.vol.master, t, 0.05);
+    this.annVol.gain.setTargetAtTime(this.vol.ann, t, 0.05);
+    this.melVol.gain.setTargetAtTime(this.vol.melody, t, 0.05);
   }
 
   /**
@@ -799,48 +813,33 @@ export class SoundEngine {
     return !!(this.doorCloseBuf && this.veh && this.veh.doorSound === 'e231');
   }
 
-  /** door chime before closing; returns seconds until the doors are shut */
+  /**
+   * door chime before closing; returns seconds until the doors are shut (0: no chime). Only the
+   * E231 / E233 / E131 have one (the recording); the 211 / 115 close their doors without a chime.
+   */
   doorChime() {
-    if (!this.ready) return 0;
-    if (this.usesDoorSample()) {
-      const s = this.ctx.createBufferSource();
-      s.buffer = this.doorCloseBuf;
-      const g = this.ctx.createGain(); g.gain.value = 0.95;
-      s.connect(g).connect(this.chimeBus);
-      s.start();
-      return 3.3;   // the bang of the doors meeting is ~3.2 s into the clip
-    }
-    return this.synthChime();
+    if (!this.ready || !this.usesDoorSample()) return 0;
+    const s = this.ctx.createBufferSource();
+    s.buffer = this.doorCloseBuf;
+    const g = this.ctx.createGain(); g.gain.value = 0.95;
+    s.connect(g).connect(this.chimeBus);
+    s.start();
+    return 3.3;   // the bang of the doors meeting is ~3.2 s into the clip
   }
 
   /** door chime as the doors open (JR East trains sound it on opening as well as before closing) */
   doorChimeOpen() {
-    if (!this.ready) return;
-    if (this.usesDoorSample()) {
-      // the chime and the door engine from the start of the recording, faded out as the leaves stop
-      const ctx = this.ctx, t = ctx.currentTime;
-      const s = ctx.createBufferSource();
-      s.buffer = this.doorCloseBuf;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.95, t);
-      g.gain.setValueAtTime(0.95, t + 1.75);
-      g.gain.linearRampToValueAtTime(0, t + 2.15);
-      s.connect(g).connect(this.chimeBus);
-      s.start(t, 0, 2.2);
-      return;
-    }
-    this.synthChime();
-  }
-
-  /** JR East style door chime (3 two-tone pairs), synthesized */
-  synthChime() {
-    if (!this.ready) return 0;
-    const ctx = this.ctx, t0 = ctx.currentTime + 0.05;
-    for (let i = 0; i < 3; i++) {
-      this.tone(1318.5, t0 + i * 0.62, 0.35, 0.09, 'sine', this.chimeBus);
-      this.tone(1046.5, t0 + i * 0.62 + 0.22, 0.45, 0.08, 'sine', this.chimeBus);
-    }
-    return 1.9;
+    if (!this.ready || !this.usesDoorSample()) return;
+    // the chime and the door engine from the start of the recording, faded out as the leaves stop
+    const ctx = this.ctx, t = ctx.currentTime;
+    const s = ctx.createBufferSource();
+    s.buffer = this.doorCloseBuf;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.95, t);
+    g.gain.setValueAtTime(0.95, t + 1.75);
+    g.gain.linearRampToValueAtTime(0, t + 2.15);
+    s.connect(g).connect(this.chimeBus);
+    s.start(t, 0, 2.2);
   }
 
   tone(f, when, dur, gain, type = 'sine', dest = this.master) {
@@ -865,22 +864,93 @@ export class SoundEngine {
     setTimeout(() => this.ready && this.playBuf(this.jointBuf, 0.22 * lvl, 1.7, 0, this.master), open ? 1800 : 2650);   // leaves stop / meet (matches the door animation)
   }
 
+  /**
+   * 警笛: an air horn (タイフォン). A diaphragm horn gives a pulse-like wave rich in harmonics; the
+   * pitch starts low and rises as the pressure builds (with a slight overshoot), the tone brightens
+   * at the same time, a puff of air comes first, and the pitch wavers a little while it sounds. The
+   * bell adds two broad resonances, and buildings / the cutting send back a short echo.
+   */
   horn(on) {
     if (!this.ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
     const dest = this.own ? this.own.hornVoice.input : this.master;
     if (on && !this.hornNodes) {
-      const tones = (this.veh && this.veh.sound.hornTones) || [466, 698];
-      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.32, t + 0.06);
-      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 2800;
-      const oscs = tones.map((fr) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = fr; o.connect(f); o.start(); return o; });
-      f.connect(g).connect(dest);
-      this.hornNodes = { g, oscs };
+      const f = ((this.veh && this.veh.sound.hornTones) || [440])[0];
+      if (!this.hornWave) {
+        // pulse train, duty 0.3 (the diaphragm is open about a third of each cycle)
+        const N = 48, re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+        for (let n = 1; n <= N; n++) re[n] = (2 / (n * Math.PI)) * Math.sin(n * Math.PI * 0.3) * Math.pow(n, 0.15);
+        this.hornWave = ctx.createPeriodicWave(re, im);
+      }
+      const nodes = [];
+      const mk = (node) => { nodes.push(node); return node; };
+      const mix = mk(ctx.createGain()); mix.gain.value = 1;
+      // two reeds of the same note, a few cents apart (slow beating)
+      const oscs = [[1, 0.72], [1.0035, 0.28]].map(([k, gain]) => {
+        const o = mk(ctx.createOscillator());
+        o.setPeriodicWave(this.hornWave);
+        o.frequency.setValueAtTime(f * k * 0.8, t);
+        o.frequency.exponentialRampToValueAtTime(f * k * 1.012, t + 0.10);
+        o.frequency.setTargetAtTime(f * k, t + 0.10, 0.09);
+        const g = mk(ctx.createGain()); g.gain.value = gain;
+        o.connect(g).connect(mix);
+        o.start(t);
+        return { o, k };
+      });
+      // pitch wander: low-passed noise, about ±0.4 %
+      const wob = mk(this.loopSource(this.noiseBuf));
+      const wl1 = mk(ctx.createBiquadFilter()); wl1.type = 'lowpass'; wl1.frequency.value = 9;
+      const wl2 = mk(ctx.createBiquadFilter()); wl2.type = 'lowpass'; wl2.frequency.value = 9;
+      const wg = mk(ctx.createGain()); wg.gain.value = f * 0.35;
+      wob.connect(wl1).connect(wl2).connect(wg);
+      for (const { o } of oscs) wg.connect(o.frequency);
+      // the puff of air at the start, then a little breath under the tone
+      const air = mk(this.loopSource(this.noiseBuf));
+      const ab = mk(ctx.createBiquadFilter()); ab.type = 'bandpass'; ab.frequency.value = 1900; ab.Q.value = 0.8;
+      const ag = mk(ctx.createGain());
+      ag.gain.setValueAtTime(0, t);
+      ag.gain.linearRampToValueAtTime(0.32, t + 0.006);
+      ag.gain.exponentialRampToValueAtTime(0.05, t + 0.09);
+      ag.gain.setTargetAtTime(0.03, t + 0.09, 0.2);
+      air.connect(ab).connect(ag).connect(mix);
+      // the horn itself: soft saturation, bell resonances, brightness rising with the pressure
+      const sh = mk(ctx.createWaveShaper());
+      const curve = new Float32Array(1024);
+      for (let i = 0; i < 1024; i++) { const x = (i / 1023) * 2 - 1; curve[i] = Math.tanh(1.7 * x) / Math.tanh(1.7); }
+      sh.curve = curve; sh.oversample = '2x';
+      const hp = mk(ctx.createBiquadFilter()); hp.type = 'highpass'; hp.frequency.value = Math.max(180, f * 0.55); hp.Q.value = 0.7;
+      const pk1 = mk(ctx.createBiquadFilter()); pk1.type = 'peaking'; pk1.frequency.value = 1150; pk1.Q.value = 1.1; pk1.gain.value = 5;
+      const pk2 = mk(ctx.createBiquadFilter()); pk2.type = 'peaking'; pk2.frequency.value = 2600; pk2.Q.value = 1.6; pk2.gain.value = 2.5;
+      const lp = mk(ctx.createBiquadFilter()); lp.type = 'lowpass'; lp.Q.value = 0.6;
+      lp.frequency.setValueAtTime(800, t);
+      lp.frequency.exponentialRampToValueAtTime(3800, t + 0.14);
+      const env = mk(ctx.createGain());
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.4, t + 0.03);
+      env.gain.linearRampToValueAtTime(1, t + 0.12);
+      const out = mk(ctx.createGain()); out.gain.value = 0.26 * this.vol.horn;
+      mix.connect(sh).connect(hp).connect(pk1).connect(pk2).connect(lp).connect(env).connect(out);
+      out.connect(dest);
+      // echo off the surroundings
+      const dl = mk(ctx.createDelay(1)); dl.delayTime.value = 0.31;
+      const dlp = mk(ctx.createBiquadFilter()); dlp.type = 'lowpass'; dlp.frequency.value = 2200;
+      const fb = mk(ctx.createGain()); fb.gain.value = 0.3;
+      const wet = mk(ctx.createGain()); wet.gain.value = 0.2;
+      out.connect(dl).connect(dlp).connect(fb).connect(dl);
+      dlp.connect(wet).connect(dest);
+      this.hornNodes = { f, oscs, env, lp, ag, nodes };
     } else if (!on && this.hornNodes) {
-      const { g, oscs } = this.hornNodes;
-      g.gain.setTargetAtTime(0, t, 0.05);
-      oscs.forEach((o) => o.stop(t + 0.4));
+      const { f, oscs, env, lp, ag, nodes } = this.hornNodes;
       this.hornNodes = null;
+      // the valve closes: the note sags and dulls as it dies away
+      for (const p of [env.gain, ag.gain, lp.frequency]) { p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); }
+      env.gain.setTargetAtTime(0, t, 0.06);
+      ag.gain.setTargetAtTime(0, t, 0.04);
+      lp.frequency.setTargetAtTime(1000, t, 0.08);
+      for (const { o, k } of oscs) { o.frequency.cancelScheduledValues(t); o.frequency.setValueAtTime(o.frequency.value, t); o.frequency.setTargetAtTime(f * k * 0.93, t, 0.1); }
+      for (const n of nodes) if (n.stop) n.stop(t + 0.6);
+      // let the echo ring out, then free everything
+      setTimeout(() => { for (const n of nodes) { try { n.disconnect(); } catch { /* already gone */ } } }, 2600);
     }
   }
 

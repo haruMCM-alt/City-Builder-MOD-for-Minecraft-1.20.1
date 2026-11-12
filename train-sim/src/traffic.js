@@ -2,6 +2,7 @@
 // where a train is follows from the game clock (accelerating, running, braking and standing at its
 // stations), so they keep to the diagram whatever the player does. Terminals (中央線 and the 新幹線 at
 // 東京) turn trains round. Only the trains near the player are built.
+import { DETAIL } from './detail.js';
 
 /** a run: piecewise constant acceleration phases {t0, dur, s0, v0, a, dir} */
 class Profile {
@@ -103,6 +104,10 @@ export class Traffic {
       const base = { vmax: S.v / 3.6, acc: g.shinkansen ? 0.55 : 0.8, dec: 0.85, len };
       const term0 = g.end0 === 'stop', term1 = g.end1 === 'stop';
       const mk = (dir, points, kind = g.kind, every = S.every) => {
+        // the detail sliders: how many trains of this kind (0 = none)
+        const f = g.shinkansen || /^shin/.test(kind) ? DETAIL.shinkansen : kind === 'freight' ? DETAIL.freight : DETAIL.traffic;
+        if (f <= 0.01) return;
+        every /= f;
         const prof = buildRun(points, base);
         // when it leaves each station (seconds after it set off), for the departure boards
         const deps = [];
@@ -155,7 +160,7 @@ export class Traffic {
     const a = dirM > 0 ? r.sMin + 50 : r.sMax - 50, b = dirM > 0 ? r.sMax - 50 : r.sMin + 50;
     const prof = buildRun([{ s: a }, ...stops.filter((x) => (x.s - a) * dirM > 50 && (b - x.s) * dirM > 50), { s: b }], { vmax: S.v / 3.6, acc: 0.7, dec: 0.8 });
     const deps = prof.ph.filter((ph) => ph.stop && ph.stop.name).map((ph) => ({ name: ph.stop.name, tau: ph.t0 + ph.dur, dir: dirM }));
-    this.runs.push({ g: null, kind: 'main', dir: dirM, prof, deps, every: S.every, phase: 137, track: () => (dirM > 0 ? (() => 0) : (x) => r.upOffset(x)), len: 300 });
+    if (DETAIL.oncoming > 0.01) this.runs.push({ g: null, kind: 'main', dir: dirM, prof, deps, every: S.every / DETAIL.oncoming, phase: 137, track: () => (dirM > 0 ? (() => 0) : (x) => r.upOffset(x)), len: 300 });
   }
 
   /** trains standing on our extra station tracks near s (built / dropped as the player moves) */
@@ -165,7 +170,7 @@ export class Traffic {
     for (const si of L.ourSites) {
       if (!si.extra.length || si.b < here - 1600 || si.a > here + 1600) continue;
       si.extra.forEach((e, j) => {
-        if (hash(Math.round(si.mid), j + 7) > 0.6) return;
+        if (hash(Math.round(si.mid), j + 7) > 0.6 * DETAIL.parked) return;
         const key = `${si.name}|${j}`;
         want.add(key);
         if (this.parked.has(key)) return;

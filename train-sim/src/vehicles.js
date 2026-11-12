@@ -54,7 +54,7 @@ export const VEHICLES = {
         { to: 73, sync: 3, wide: true },
         { onePulse: true },
       ],
-      hornTones: [466, 698],
+      hornTones: [440],
     },
     // original SC59A / SC77 sound (H2I-2, the 「墜落」 carrier drop), still on a few sets
     soundAlt: {
@@ -77,7 +77,7 @@ export const VEHICLES = {
         { to: 73, sync: 3, wide: true },
         { onePulse: true },
       ],
-      hornTones: [466, 698],
+      hornTones: [440],
     },
   },
   e233: {
@@ -120,7 +120,7 @@ export const VEHICLES = {
         { to: 70, sync: 3, wide: true },
         { onePulse: true },
       ],
-      hornTones: [494, 740],
+      hornTones: [466],
     },
   },
   s211: {
@@ -148,7 +148,7 @@ export const VEHICLES = {
       wheelD: 0.86, gearRatio: 83 / 16, pinion: 16, polePairs: 2, armSlots: 33,
       gearGain: 0.75, motorGain: 0.6, fanGain: 0.6, fanBlades: 11,
       cam: false, camClicks: true, camTo: 45,
-      hornTones: [415, 622],
+      hornTones: [415],
     },
   },
   s115: {
@@ -176,7 +176,7 @@ export const VEHICLES = {
       wheelD: 0.86, gearRatio: 82 / 17, pinion: 17, polePairs: 2, armSlots: 33,
       gearGain: 0.9, motorGain: 1.0, fanGain: 0.55, fanBlades: 11,
       cam: true, camTo: 62,
-      hornTones: [350, 520],
+      hornTones: [370],
     },
   },
   e131: {
@@ -220,7 +220,7 @@ export const VEHICLES = {
         { to: 66, sync: 3, wide: true },
         { onePulse: true },
       ],
-      hornTones: [494, 740],
+      hornTones: [466],
     },
   },
 };

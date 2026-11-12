@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { fbm, hash2, rng } from './noise.js';
 import { GeoBuffer, Frame, house, apartment, mansion, office, shopRow, factory, greenhouse, farBlock, pick } from './buildings.js';
 import { GROUND_Y } from './sky.js';
+import { DETAIL, keep } from '../detail.js';
 
 const PLATFORM_LEN_LAND = 320;
 const CELL = 24;          // land cell size (m)
@@ -146,7 +147,10 @@ export class LandBuilder {
     Object.defineProperty(B, 'lod', { value: al < 80 ? 2 : al < 170 ? 1 : 0, writable: true, enumerable: false, configurable: true });
     const yaw = p.yaw + (side > 0 ? 0 : Math.PI);   // buildings face the line
     const jit = () => (R() - 0.5) * 3;
+    // the 建物 slider: leave out this cell's buildings (chosen by place)
+    const noBuild = !keep(DETAIL.buildings, sc * 0.37, lc * 0.91, side);
     const place = (fn, ...args) => {
+      if (noBuild) return null;
       const F = this.frameAt(sc + jit(), lc + jit() * side, (R() - 0.5) * 0.08);
       const res = fn(B, F, R, ...args);
       if (res && res.w) this.footprints.push({ F, w: res.w, d: res.d });
@@ -171,6 +175,7 @@ export class LandBuilder {
     // put the front wall on the cell's inner edge and grow away from the line, and only where
     // the railway boundary, stations and crossing roads stay clear along the whole length
     const placeFactory = () => {
+      if (noBuild) return false;
       const w = 30 + R() * 40, d = 18 + R() * 22;
       for (let ss = s - 2; ss <= s + w + 2; ss += 6) if (this.edge(ss, side) + 4 > l) return false;
       if ((this.roads || []).some((rd) => rd.s > s - rd.w / 2 - 4 && rd.s < s + w + rd.w / 2 + 4)) return false;
@@ -192,7 +197,7 @@ export class LandBuilder {
         const near = Math.abs(lc) < 90;
         const x = R();
         const big = (Math.floor(s / CELL) % 2 === 0) && (Math.floor(l / CELL) % 2 === 0) && R() < 0.55;
-        if (big) {
+        if (big && !noBuild) {
           for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) occupied.add(`${Math.floor(s / CELL) + a},${Math.floor(l / CELL) + b},${side}`);
           const F = this.frameAt(sc + CELL / 2, lc + side * CELL / 2);
           if (x < 0.55) mansion(B, F, R, near ? 15 : 12);
@@ -235,7 +240,7 @@ export class LandBuilder {
           if ((Math.floor(sc / CELL) % 4) === 0 && (Math.floor(Math.abs(lc) / CELL) % 2) === 0) {
             const q = r.pose(sc + CELL, lc, {});
             for (let g = 0; g < 3; g++) {
-              greenhouse(B, this.frameAt(sc + CELL * 0.5, lc + side * (g * 7 - 7)), R, 40);
+              if (!noBuild) greenhouse(B, this.frameAt(sc + CELL * 0.5, lc + side * (g * 7 - 7)), R, 40);
               void q;
             }
           }
@@ -358,7 +363,8 @@ export class LandBuilder {
           const F = new Frame(q.x + (R() - 0.5) * 50, BASE_Y, q.z + (R() - 0.5) * 50, -q.yaw);
           const tall = lu.kind === 'city' ? 8 + R() * 40 : 5 + R() * 4;
           const c = pick([[0.78, 0.76, 0.72], [0.70, 0.70, 0.70], [0.82, 0.80, 0.76], [0.60, 0.62, 0.64]], R());
-          farBlock(B, F, 10 + R() * 18, 8 + R() * 12, tall, c);
+          const fw = 10 + R() * 18, fd = 8 + R() * 12;
+          if (keep(DETAIL.buildings, F.x ?? q.x, i, s)) farBlock(B, F, fw, fd, tall, c);
         }
         if (R() < 0.3) inst.trees.push({ kind: 'broad', x: q.x, z: q.z, s: 1.3, rot: R() * 6 });
       }
