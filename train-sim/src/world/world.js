@@ -9,6 +9,7 @@ import { LandBuilder, MATERIAL_KEYS, carGeometry, carColor } from './land.js';
 import { GeoBuffer, Frame, TILE, boxWalls, flatTop, solid } from './buildings.js';
 import { makeTreeKinds } from './trees.js';
 import { rng, hash2 } from './noise.js';
+import { gantryLayout } from './gantry.js';
 
 const CHUNK = 200;
 const AHEAD = 2400;
@@ -138,6 +139,44 @@ function extractParts(node) {
     parts.push({ geometry: g, material: o.material });
   });
   return parts;
+}
+
+/** procedural gantry parts in the materials of the catenary_gate model: mast, beam (1 m long), hanger */
+function gantryProtos(gateParts) {
+  const mat = (name, fallback) => (gateParts || []).find((p) => p.material.name === name)?.material || fallback;
+  const paint = mat('steel_paint', new THREE.MeshStandardMaterial({ color: 0x8a9096, metalness: 0.5, roughness: 0.5 }));
+  const conc = mat('concrete', new THREE.MeshStandardMaterial({ color: 0x9a9a96, roughness: 0.9 }));
+  const steel = mat('steel', paint), dark = mat('dark_grey', new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.6 }));
+  const box = (w, h, d, x, y, z) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(x, y, z); return g; };
+  const merge = (list) => {
+    let n = 0; for (const g of list) n += g.attributes.position.count;
+    const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), idx = [];
+    let o = 0;
+    for (const g of list) {
+      pos.set(g.attributes.position.array, o * 3); nor.set(g.attributes.normal.array, o * 3);
+      for (const i of g.index.array) idx.push(i + o);
+      o += g.attributes.position.count; g.dispose();
+    }
+    const m = new THREE.BufferGeometry();
+    m.setAttribute('position', new THREE.BufferAttribute(pos, 3)); m.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); m.setIndex(idx);
+    return m;
+  };
+  // mast: an H-section column (two flanges and a web) on a concrete footing
+  const mast = merge([box(0.3, 7.6, 0.03, 0, 3.8, -0.12), box(0.3, 7.6, 0.03, 0, 3.8, 0.12), box(0.03, 7.6, 0.24, 0, 3.8, 0)]);
+  const foot = box(0.7, 0.35, 0.7, 0, 0.1, 0);
+  // beam: a light truss, top and bottom chords with a zigzag web, 1 m long (scaled along z)
+  const web = [];
+  for (let k = 0; k < 2; k++) { const g = new THREE.BoxGeometry(0.04, 0.62, 0.04); g.rotateX(k ? 0.65 : -0.65); g.translate(0, 7.25, -0.25 + 0.5 * k); web.push(g); }
+  const beam = merge([box(0.28, 0.08, 1, 0, 7.0, 0), box(0.28, 0.08, 1, 0, 7.5, 0), ...web]);
+  // hanger over a track: drop pipe, insulator and steady arm towards the zigzagging contact wire
+  const arm = new THREE.BoxGeometry(0.03, 0.03, 0.55); arm.rotateX(-0.5); arm.translate(0, 5.3, 0.22);
+  const hang = merge([box(0.06, 1.55, 0.06, 0, 6.25, 0), box(0.05, 0.05, 0.6, 0, 5.5, 0.25), arm]);
+  const insul = merge([box(0.1, 0.22, 0.1, 0, 6.15, 0), box(0.09, 0.18, 0.09, 0, 5.5, 0.5)]);
+  return {
+    cat_mast: [{ geometry: mast, material: paint }, { geometry: foot, material: conc }],
+    cat_beam: [{ geometry: beam, material: paint }],
+    cat_hanger: [{ geometry: hang, material: steel, noShadow: true }, { geometry: insul, material: dark, noShadow: true }],
+  };
 }
 
 class InstanceBatch {
@@ -300,6 +339,7 @@ export class World {
       const node = gltf.scene.getObjectByName(name);
       if (node) this.P[name] = extractParts(node);
     }
+    Object.assign(this.P, gantryProtos(this.P.catenary_gate));
     for (const p of this.P.signal || []) {
       if (p.material.name === 'SIG_G') { p.material = p.material.clone(); p.material.emissiveIntensity = 4; }
     }
@@ -421,12 +461,39 @@ export class World {
       else runs.push({ s0: s, s1: s + 10, bridge });
     }
 
-    for (const t of tracks) {
+    // where a track runs within a sleeper's length of one listed before it (a turnout, a junction), it
+    // shares that track's sleepers and ballast instead of stacking a second set into it (5 m steps)
+    const shared = tracks.map((t, ti) => {
+      const out = [];
+      for (let s = s0; s <= s1 + 5; s += 5) {
+        let sh = false;
+        if (ti > 0 && s >= t.s0 && s <= t.s1) {
+          const o = t.off(s);
+          for (let u = 0; u < ti && !sh; u++) { const q = tracks[u]; if (s >= q.s0 && s <= q.s1 && Math.abs(q.off(s) - o) < 2.3) sh = true; }
+        }
+        out.push(sh);
+      }
+      return out;
+    });
+    const isShared = (ti, s) => { const a = shared[ti], i = (s - s0) / 5, k = Math.floor(i); return a[Math.max(0, Math.min(a.length - 1, Math.round(i)))] || (a[k] && a[k + 1]); };
+    tracks.forEach((t, ti) => {
+      // ballast a little lower on each further track, so overlapping beds never flicker into each other
+      const by = -Math.min(0.06, 0.006 * ti);
       for (const full of runs) {
         const run = { bridge: full.bridge, s0: Math.max(full.s0, t.s0), s1: Math.min(full.s1, t.s1) };
         if (run.s1 - run.s0 < 1) continue;
         if (!run.bridge) {
-          sw.sweep(run.s0, run.s1, 5, t.off, [{ pts: [[-2.4, -0.62], [-1.5, -0.27], [1.5, -0.27], [2.4, -0.62]], mat: this.M.ballast, uScale: 2.2, vScale: 2.2 }]);
+          // the bed is left out over the shared stretches
+          let a = null;
+          for (let s = run.s0; s <= run.s1; s += 5) {
+            const own = s < run.s1 && !isShared(ti, s + 2.5);
+            if (own && a === null) a = s;
+            if ((!own || s + 5 > run.s1) && a !== null) {
+              const b = own ? run.s1 : s;
+              if (b - a >= 1) sw.sweep(a, b, 5, t.off, [{ pts: [[-2.4, -0.62 + by], [-1.5, -0.27 + by], [1.5, -0.27 + by], [2.4, -0.62 + by]], mat: this.M.ballast, uScale: 2.2, vScale: 2.2 }]);
+              a = null;
+            }
+          }
         }
         for (const g of [-0.5335, 0.5335]) {
           sw.sweep(run.s0, run.s1, 5, t.off, [
@@ -436,6 +503,7 @@ export class World {
           ]);
         }
         for (let s = Math.ceil(run.s0 / 0.6) * 0.6; s < run.s1; s += 0.6) {
+          if (isShared(ti, s)) continue;
           place(run.bridge ? 'sleeperWood' : 'sleeper', s, t.off(s));
           if (!run.bridge && this.quality !== 'low' && t.kind === 'ours') {
             place('fastener', s, t.off(s) + 0.62, -0.13);
@@ -443,7 +511,7 @@ export class World {
           }
         }
       }
-    }
+    });
 
     // buffer stops (車止め) where station tracks end
     for (const t of tracks) {
@@ -493,27 +561,20 @@ export class World {
       }
     }
 
-    // catenary gates every 50 m (not on truss spans) and wires
+    // overhead line gantries every 50 m (not on truss spans): one structure across the tracks that run
+    // together, so tracks merging at a junction never stack masts on top of each other
+    const gantriesAt = (s) => gantryLayout(tracks.filter((t) => s >= t.s0 && s <= t.s1).map((t) => t.off(s)));
     for (let s = Math.ceil(s0 / 50) * 50; s < s1; s += 50) {
       if (r.structureAt(s).type === 'bridge') continue;
-      const up = r.upOffset(s);
-      if (-up < 4.6) place('catenary_gate', s, up / 2);
-      else {
-        place('catenary_gate', s, 0, 0, 0, new THREE.Vector3(1, 1, 0.55));
-        place('catenary_gate', s, up, 0, 0, new THREE.Vector3(1, 1, 0.55));
-      }
-      for (const t of tracks) {
-        if (t.kind === 'ours' || s < t.s0 || s > t.s1 || t.siding) continue;
-        // a pair of a parallel line under one gate; station tracks and the extra island tracks each get their own
-        if (t.kind === 'group' && t.i === 1) continue;
-        if (t.kind === 'group' && t.i === 0) {
-          const o1 = r.parallelOffset(t.group, 1, s), o0 = t.off(s);
-          if (Math.abs(o1 - o0) < 4.6) { place('catenary_gate', s, (o0 + o1) / 2); continue; }
-          place('catenary_gate', s, o0, 0, 0, new THREE.Vector3(1, 1, 0.55));
-          place('catenary_gate', s, o1, 0, 0, new THREE.Vector3(1, 1, 0.55));
-          continue;
+      for (const g of gantriesAt(s)) {
+        for (const m of g.masts) place('cat_mast', s, m);
+        for (let k = 1; k < g.masts.length; k++) {
+          const a = g.masts[k - 1], b = g.masts[k];
+          place('cat_beam', s, (a + b) / 2, 0, 0, new THREE.Vector3(1, 1, Math.abs(b - a) + 0.3));
         }
-        place('catenary_gate', s, t.off(s), 0, 0, new THREE.Vector3(1, 1, 0.55));
+        // the hanger leans towards where the contact wire is pulled at this gantry (zigzag)
+        const flip = Math.floor(s / 50) % 2 === 0 ? 0 : Math.PI;
+        for (const t of g.tracks) place('cat_hanger', s, t, 0, flip);
       }
     }
     const wirePts = [], feederPts = [];
@@ -531,14 +592,18 @@ export class World {
         prev = { c, m };
       }
     }
-    // feeder lines along the gate tops
-    for (const lat of [4.0, -7.6]) {
-      let prev = null;
+    // feeder lines on the outer masts of the gantry over our own tracks (broken where that gantry jumps)
+    {
+      const prev = [null, null];
       for (let s = s0; s <= s1; s += 10) {
-        r.pose(s, lat, p);
-        const v = new THREE.Vector3(p.x, p.y + 7.9 - 0.5 * Math.sin(Math.PI * (s % 50) / 50), p.z);
-        if (prev) feederPts.push(prev, v);
-        prev = v;
+        const g = gantriesAt(s).find((x) => x.tracks[0] <= 0.6 && x.tracks[x.tracks.length - 1] >= -0.6);
+        [g ? g.masts[0] : null, g ? g.masts[g.masts.length - 1] : null].forEach((lat, k) => {
+          if (lat === null || r.structureAt(s).type === 'bridge') { prev[k] = null; return; }
+          r.pose(s, lat, p);
+          const v = new THREE.Vector3(p.x, p.y + 7.9 - 0.5 * Math.sin(Math.PI * (s % 50) / 50), p.z);
+          if (prev[k] && prev[k].lat !== undefined && Math.abs(prev[k].lat - lat) < 3) feederPts.push(prev[k].v, v);
+          prev[k] = { v, lat };
+        });
       }
     }
     const wg = new THREE.BufferGeometry().setFromPoints(wirePts);

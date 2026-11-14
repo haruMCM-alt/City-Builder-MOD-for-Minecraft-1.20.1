@@ -10,7 +10,8 @@
 // real Doppler shifts and arrival times (see spatial.js). The listener follows the camera; when it
 // is inside the train the exterior buses pass through "body insulation" filters.
 
-import { Listener, SpatialVoice, oneShot, makeImpulse } from './spatial.js';
+import { Listener, SpatialVoice, oneShot, makeImpulse, spatialParams } from './spatial.js';
+import { hash01 } from '../detail.js';
 
 const MODE_MIX = {
   //            own-train exterior          world (other trains, bells)     reverb  ann   ats   chime
@@ -318,6 +319,12 @@ export class SoundEngine {
     const durI = [0.003, 0.002, 0.0013][bright];
     burst(0, durI, 1);
     burst(j(0.0045 - bright * 0.0008, 0.25), durI * 0.8, j(0.55, 0.3));
+    // rough contact while the wheel rolls over the gap and the rail end: a few ms of noise,
+    // which gives the impact its gritty, broadband edge instead of a clean tuned 'plink'
+    for (const [t0, a] of [[0, 0.32], [0.0045 - bright * 0.0008, 0.22]]) {
+      const i0 = Math.floor(t0 * sr), n = Math.floor((0.006 + 0.003 * bright) * sr);
+      for (let i = 0; i < n && i0 + i < len; i++) ex[i0 + i] += a * (R() * 2 - 1) * Math.exp(-i / (sr * 0.0018));
+    }
     const sc = [0.7, 1.5, 2.4][bright];
     const modes = [
       // [Hz, decay 1/s, amplitude]  sleeper / ballast thump, body boom
@@ -455,9 +462,13 @@ export class SoundEngine {
       own.split = ctx.createChannelSplitter(units);
       own.worklet.connect(own.split);
     }
+    // every car its own rolling-noise generator: one noise fed to several cars at different distances
+    // would comb-filter into a phasing 'jet' sound as they pass
+    while (this.rollGens.length < formation.length) this.rollGens.push(this.makeRollGen());
+    for (const r of this.rollGens) r.out.disconnect();
     for (let i = 0; i < formation.length; i++) {
       const v = new SpatialVoice(ctx, this.ownBus, { ref: 4, gain: 0.55 });
-      this.rollGens[i % 4].out.connect(v.input);
+      this.rollGens[i].out.connect(v.input);
       const bg = ctx.createGain(); bg.gain.value = 0;
       this.bridgeGen.out.connect(bg).connect(v.input);
       own.cars.push({ voice: v, bridge: bg });
@@ -469,43 +480,80 @@ export class SoundEngine {
     });
     own.hornVoice = new SpatialVoice(ctx, this.ownBus, { ref: 3, gain: 1.0 });
     own.motorIdx = motors;
+    // air pushed aside by the nose and the wake behind the last car (heard from outside)
+    own.aero = this.makeAero();
+    own.aero.nose.connect(own.cars[0].voice.input);
+    own.aero.wake.connect(own.cars[own.cars.length - 1].voice.input);
     this.own = own;
     this.jump = true;
   }
 
+  /** aerodynamic noise of a train: the bow wave at the nose and the turbulent wake behind the tail */
+  makeAero() {
+    const ctx = this.ctx;
+    const src = this.loopSource(this.pinkBuf);
+    const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 320; f.Q.value = 0.45;
+    const nose = ctx.createGain(); nose.gain.value = 0;
+    const wake = ctx.createGain(); wake.gain.value = 0;
+    src.connect(f); f.connect(nose); f.connect(wake);
+    return { src, f, nose, wake };
+  }
+
+  setAero(a, kmh, t, outside = true) {
+    const k = Math.max(0, kmh - 25) / 100;
+    a.nose.gain.setTargetAtTime(outside ? 0.11 * k * k : 0, t, 0.15);
+    a.wake.gain.setTargetAtTime(outside ? 0.08 * k * k : 0, t, 0.15);
+    a.f.frequency.setTargetAtTime(220 + kmh * 2.4, t, 0.3);
+  }
+
   disposeTrain(t) {
     for (const c of t.cars || []) { c.voice.dispose(); if (c.bridge) c.bridge.disconnect(); }
+    if (t.aero) { try { t.aero.src.stop(); } catch { /* */ } }
+    for (const g of t.gens || []) for (const n of g.nodes) { try { n.stop(); } catch { /* */ } }
     for (const c of t.traction || []) c.voice.dispose();
     if (t.hornVoice) t.hornVoice.dispose();
     if (t.worklet) { t.worklet.port.postMessage({ type: 'state', v: 0, torque: 0 }); t.worklet.disconnect(); }
-    if (t.gen) for (const n of t.gen.nodes) { try { n.stop(); } catch { /* */ } }
     for (const v of t.voices || []) v.dispose();
   }
 
-  /** a passing / oncoming train: its own traction worklet and rolling noise at front, middle and rear */
+  /**
+   * a passing / oncoming train: rolling noise from points spread along the whole train (every
+   * two cars or so, each with its own noise), its traction worklet under two motor cars and the
+   * air at the nose and the tail
+   */
   addTrain(veh, nCars) {
     if (!this.ready) return null;
     const ctx = this.ctx;
-    const t = { veh, nCars, voices: [], gen: this.makeRollGen(), worklet: null };
+    const N = Math.max(3, Math.min(8, Math.ceil(nCars / 2)));
+    const fracs = Array.from({ length: N }, (_, k) => (k + 0.5) / N);
+    const t = { veh, nCars, voices: [], gens: [], worklet: null, aero: this.makeAero() };
     if (this.hasWorklet) {
       t.worklet = new AudioWorkletNode(ctx, 'traction', { numberOfInputs: 0, outputChannelCount: [2], processorOptions: { units: 2 } });
       t.worklet.port.postMessage({ type: 'config', sound: veh.sound, seed: 7 + Math.floor(Math.random() * 100) });
       t.split = ctx.createChannelSplitter(2);
       t.worklet.connect(t.split);
     }
-    for (let k = 0; k < 3; k++) {
+    const motorK = [Math.floor(N * 0.25), Math.min(N - 1, Math.floor(N * 0.75))];
+    for (let k = 0; k < N; k++) {
       const v = new SpatialVoice(ctx, this.worldBus, { ref: 6, gain: 1.0, maxDist: 1600 });
-      const rg = ctx.createGain(); rg.gain.value = nCars / 5;      // each voice stands for a third of the train
-      t.gen.out.connect(rg).connect(v.input);
-      if (t.split && k !== 1) { const tg = ctx.createGain(); tg.gain.value = 0.9; t.split.connect(tg, k === 0 ? 0 : 1).connect(v.input); }
+      const gen = this.makeRollGen();
+      const rg = ctx.createGain(); rg.gain.value = Math.sqrt(nCars / N) * 0.62;   // incoherent sources: power adds
+      gen.out.connect(rg).connect(v.input);
+      t.gens.push(gen);
+      const mi = motorK.indexOf(k);
+      if (t.split && mi >= 0) { const tg = ctx.createGain(); tg.gain.value = 0.9; t.split.connect(tg, mi).connect(v.input); }
       t.voices.push(v);
     }
+    t.aero.nose.connect(t.voices[0].input);
+    t.aero.wake.connect(t.voices[N - 1].input);
     this.trains.add(t);
     return {
+      fracs: fracs.map((f, k) => (k === 0 ? 0.03 : k === N - 1 ? 0.97 : f)),
       update: (positions, v, torque, st) => {
         if (!this.ready) return;
         const now = ctx.currentTime;
-        this.setRollGen(t.gen, v, st || { curvature: 0, brake: 0 }, now);
+        for (const g of t.gens) this.setRollGen(g, v, st || { curvature: 0, brake: 0 }, now);
+        this.setAero(t.aero, v, now);
         if (t.worklet) t.worklet.port.postMessage({ type: 'state', v, torque });
         positions.forEach((p, k) => { if (t.voices[k]) { t.voices[k].set(p.x, p.y, p.z); t.voices[k].update(this.L, now, this.jump); } });
       },
@@ -520,7 +568,7 @@ export class SoundEngine {
   addShinkansen(nCars) {
     if (!this.ready) return null;
     const ctx = this.ctx;
-    const t = { voices: [], gen: this.makeRollGen() };
+    const t = { voices: [], gens: [] };
     const aero = this.loopSource(this.pinkBuf);
     const af = ctx.createBiquadFilter(); af.type = 'bandpass'; af.frequency.value = 650; af.Q.value = 0.35;
     const ag = ctx.createGain(); ag.gain.value = 0;
@@ -531,8 +579,10 @@ export class SoundEngine {
     hiss.connect(hf).connect(hg);
     for (let k = 0; k < 3; k++) {
       const v = new SpatialVoice(ctx, this.worldBus, { ref: 9, gain: 1.0, maxDist: 2600 });
-      const rg = ctx.createGain(); rg.gain.value = nCars / 6;
-      t.gen.out.connect(rg).connect(v.input);
+      const rg = ctx.createGain(); rg.gain.value = nCars / 7;
+      const gen = this.makeRollGen();                       // its own noise (no comb filtering between the voices)
+      gen.out.connect(rg).connect(v.input);
+      t.gens.push(gen);
       const a2 = ctx.createGain(); a2.gain.value = k === 0 ? 1.4 : 0.7;
       ag.connect(a2).connect(v.input);
       if (k === 1) hg.connect(v.input);
@@ -542,14 +592,14 @@ export class SoundEngine {
       update: (positions, kmh) => {
         if (!this.ready) return;
         const now = ctx.currentTime;
-        this.setRollGen(t.gen, Math.min(kmh, 160), { curvature: 0, brake: 0 }, now);
+        for (const g of t.gens) this.setRollGen(g, Math.min(kmh, 160), { curvature: 0, brake: 0 }, now);
         ag.gain.setTargetAtTime(0.55 * Math.min(1.3, (kmh / 260) ** 3), now, 0.2);
         af.frequency.setTargetAtTime(380 + kmh * 2.2, now, 0.3);
         hg.gain.setTargetAtTime(0.05 * Math.min(1, kmh / 250), now, 0.3);
         positions.forEach((p, k) => { if (t.voices[k]) { t.voices[k].set(p.x, p.y, p.z); t.voices[k].update(this.L, now, this.jump); } });
       },
       dispose: () => {
-        for (const n of [aero, hiss, ...t.gen.nodes]) { try { n.stop(); } catch { /* */ } }
+        for (const n of [aero, hiss, ...t.gens.flatMap((g) => g.nodes)]) { try { n.stop(); } catch { /* */ } }
         for (const v of t.voices) v.dispose();
       },
     };
@@ -744,6 +794,7 @@ export class SoundEngine {
         }
       }
       if (st.front) { own.hornVoice.set(st.front.x, st.front.y + 1.0, st.front.z); own.hornVoice.update(this.L, t, this.jump); }
+      if (own.aero) this.setAero(own.aero, v, t, this.mode === 'outside');
     }
     const k = Math.min(1.3, v / 120);
     this.windG.gain.setTargetAtTime(this.mode === 'cab' ? 0.06 * k * k : this.mode === 'car' ? 0.025 * k * k : 0, t, 0.1);
@@ -784,17 +835,36 @@ export class SoundEngine {
     }
   }
 
-  /** a wheel crossing a rail joint at world position pos; own = our train (else a passing one) */
-  jointAt(pos, speed, own = true, late = 0) {
+  /**
+   * a wheel crossing a rail joint at world position pos; own = our train (else a passing one).
+   * id: the joint (its place on the line) - each joint has its own character (gap, wear, how well the
+   * sleepers carry it), so every axle crossing it sounds alike and the next joint sounds a little
+   * different. across: {lx, lz} the sideways direction; close by, the joints of the two rails
+   * (1.067 m apart) are heard as two sources.
+   */
+  jointAt(pos, speed, own = true, late = 0, id = null, across = null) {
     if (!this.ready || this.muted) return;
-    const g = 0.2 + Math.min(1.2, speed / 90) * 0.8;
+    const h1 = id === null ? Math.random() : hash01(id, 1.7), h2 = id === null ? Math.random() : hash01(id, 5.3);
+    // most joints are quiet, a few worn ones hit hard
+    const jg = 0.6 + 0.7 * h1 * h1 * h1;
+    const g = (0.2 + Math.min(1.2, speed / 90) * 0.8) * jg;
     // impact strength: a slow wheel only "taps" the rail end, a fast one hits it hard and bright
-    const x = Math.min(1.999, speed / 45 + (Math.random() - 0.5) * 0.4);
+    const x = Math.min(1.999, speed / 45 + (h1 - 0.45) * 0.5);
     const set = this.jointSets[Math.max(0, Math.floor(x))];
-    const buf = set[Math.floor(Math.random() * set.length)];
+    const bi = Math.floor(h2 * set.length);
+    const rate = (0.94 + 0.1 * h2) * (1 + (Math.random() - 0.5) * 0.025);
     // a fixed 40 ms latency lets every axle sound at its exact crossing time instead of on frame ticks
     const when = Math.max(0, 0.04 - late);
-    oneShot(this.ctx, this.L, own ? this.ownBus : this.worldBus, buf, pos, { gain: g * (own ? 0.8 : 1.0), ref: 3, rate: 0.95 + Math.random() * 0.08, when });
+    const bus = own ? this.ownBus : this.worldBus, gain = g * (own ? 0.8 : 1.0);
+    if (across && spatialParams(this.L, pos, 3).d < 30) {
+      // left and right rail (two slightly different impacts): the distances make the near one louder and earlier
+      for (const [k, side] of [[0, 1], [1, -1]]) {
+        const p = { x: pos.x + across.lx * 0.53 * side, y: pos.y, z: pos.z + across.lz * 0.53 * side };
+        oneShot(this.ctx, this.L, bus, set[(bi + k) % set.length], p, { gain: gain * 0.72, ref: 3, rate: rate * (k ? 1.04 : 1), when });
+      }
+      return;
+    }
+    oneShot(this.ctx, this.L, bus, set[bi], pos, { gain, ref: 3, rate, when });
   }
 
   /** legacy non-spatial joint (kept for compatibility) */

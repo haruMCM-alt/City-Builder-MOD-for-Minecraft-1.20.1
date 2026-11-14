@@ -177,7 +177,7 @@ export class Traffic {
         // trains face either way; on terminal tracks they stand at the buffer stops
         const forward = e.stopSouth ? false : hash(j, Math.round(si.mid) + 3) < 0.5;
         const set = this.ctx.make('parked', forward, j, null);
-        const lo = e.stopSouth ? si.pf[0] - 5 : si.a - si.ramp, hi = si.b + si.ramp;
+        const [lo, hi] = L.ourExtraRange(si, e);
         const off = (x) => L.ourExtraLat(si, e, Math.min(hi, Math.max(lo, x)));
         const front = forward ? si.pf[1] - 8 : si.pf[0] + 8;
         set.place(front, off, forward ? 1 : -1);
@@ -259,7 +259,7 @@ export class Traffic {
           if (Math.floor(a / 25) !== Math.floor(b / 25)) {
             const sj = Math.max(Math.floor(a / 25), Math.floor(b / 25)) * 25;
             const p = r.pose(sj, off(sj), this.pose);
-            sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, t.v * 3.6, false, Math.abs(b - sj) / Math.max(t.v, 0.5));
+            sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, t.v * 3.6, false, Math.abs(b - sj) / Math.max(t.v, 0.5), Math.round(sj / 25) * 31 + (run.g ? run.g.id * 7 : 3) + k, p);
           }
         }
       }
@@ -268,7 +268,7 @@ export class Traffic {
       if (!t.voice && d < 700) t.voice = t.set.makeVoice ? t.set.makeVoice() : null;
       else if (t.voice && d > 950) { t.voice.dispose(); t.voice = null; }
       if (t.voice) {
-        const pos = [0.08, 0.5, 0.92].map((f) => {
+        const pos = (t.voice.fracs || [0.08, 0.5, 0.92]).map((f) => {
           const sv = t.s - t.dir * t.set.length * f;
           const p = r.pose(sv, off(sv), {});
           return { x: p.x, y: p.y + 0.8, z: p.z };

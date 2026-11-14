@@ -1089,6 +1089,7 @@ function setCamMode(m) {
       const d = new THREE.Vector3(); camera.getWorldDirection(d);
       free.yaw = Math.atan2(-d.x, -d.z); free.pitch = Math.asin(Math.max(-1, Math.min(1, d.y)));
       free.last = null;
+      freeRouteS = null;
     }
     scene.add(camera);
     camera.fov = m === 'free' ? 60 : 50;
@@ -1284,9 +1285,24 @@ function axleOffsets(n) {
 }
 let AXLES = axleOffsets(4);
 const _jp = {};
+/** the point of the line nearest the free camera (view coordinates): Newton steps from the last answer */
+let freeRouteS = null;
+const _fcp = {};
+function freeCamS() {
+  let s = freeRouteS ?? view.toRoute(physics.s);
+  for (let k = 0; k < 8; k++) {
+    const p = route.pose(s, 0, _fcp);
+    const step = (free.pos.x - p.x) * p.dx + (free.pos.z - p.z) * p.dz;
+    s = Math.max(route.sMin ?? route.S_MIN, Math.min(route.sMax, s + Math.max(-500, Math.min(500, step))));
+    if (Math.abs(step) < 0.3) break;
+  }
+  freeRouteS = s;
+  return view.fromRoute(s);
+}
 /** where along the line the listener is (for culling far-away joint clicks) */
 function listenerS() {
   if (camMode === 'trackside' && tracksideCam) return tracksideCam.s;
+  if (camMode === 'free' && physics) return freeCamS();
   return physics ? physics.s - (isRide(camMode) ? (rides[camMode].idx + 0.5) * CAR_LEN : 0) : 0;
 }
 let atsWasBraking = false;
@@ -1354,7 +1370,9 @@ function simStep(dt) {
         if (Math.abs(b - ls) < 600) {
           const sj = joint ? Math.floor(b / 25) * 25 : b;
           const p = view.pose(sj, 0, _jp);
-          sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, physics.kmh, true, (b - sj) / Math.max(physics.v, 0.5));
+          // the joint's place on the line is its identity: every axle crossing it sounds alike
+          const id = joint ? Math.round(view.toRoute(sj) / 25) * 2 + (view.up ? 1 : 0) : 1e6 + Math.round(view.toRoute(sj));
+          sound.jointAt({ x: p.x, y: p.y + 0.3, z: p.z }, physics.kmh, true, (b - sj) / Math.max(physics.v, 0.5), id, p);
         }
         if ((camMode === 'cab' || isRide(camMode)) && off > bobLo && off < bobHi) bob.v -= 0.012 * Math.min(1, physics.kmh / 80);
       }
@@ -1500,8 +1518,11 @@ function updateView(dt) {
 function turnoutBetween(a, b) {
   let lo = view.toRoute(a), hi = view.toRoute(b);
   if (lo > hi) [lo, hi] = [hi, lo];
-  for (const st of route.stations) {
-    for (const t of [st.s - 345, st.s - 338, st.s - 331, st.s + 42, st.s + 49, st.s + 56]) if (lo < t && hi >= t) return true;
+  // the turnouts where the station tracks branch off our track: switch, closure and frog joints
+  const side = view.up ? -1 : 1;
+  for (const x of route.layout.ourTurnouts()) {
+    if (x.side !== side || x.s > hi + 1 || x.s + 15 < lo) continue;
+    for (const t of [x.s, x.s + 7, x.s + 14]) if (lo < t && hi >= t) return true;
   }
   return false;
 }

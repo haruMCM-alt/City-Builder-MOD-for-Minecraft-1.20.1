@@ -9,6 +9,7 @@ export const PAR_RAMP = 500;              // a parallel line curving away / join
 const PAR_OUT = 45;                       // ... this far out
 const GROUP_GAP = 4.6;                    // between two pairs of tracks
 const OUR_RAMP = 220;                     // platform tracks spreading apart before a platform
+const LADDER_STEP = 30;                   // between two turnouts of a station's ladder track
 
 /** weight 1 over [a, b], easing to 0 over `ramp` outside */
 function win(s, a, b, ramp) { return smooth((s - (a - ramp)) / ramp) * (1 - smooth((s - b) / ramp)); }
@@ -110,7 +111,24 @@ export class TrackLayout {
         if (B.side > 0) cp = end; else cm = end;
       }
       si.wPlus = cp; si.wMinus = cm;
-      si.ramp = Math.min(520, Math.max(OUR_RAMP, 150 + 9 * Math.max(cp, cm)));
+      // a ladder of turnouts: on each side the tracks branch off one after another, each from the track
+      // inside it (the outermost last, nearest the platforms), instead of all splitting at one point
+      let lead = 0;
+      for (const side of [1, -1]) {
+        const list = si.extra.filter((e) => e.side === side).sort((a, b) => a.d - b.d);
+        list.forEach((e, j) => {
+          e.parent = j ? list[j - 1] : null;
+          e.dd = e.d - (j ? list[j - 1].d : 0);
+          e.R = 40 + 12 * e.dd;                                   // length of its S-curve
+        });
+        // where each branches off before si.a: every track after the one it branches from
+        for (let j = list.length - 1; j >= 0; j--) {
+          const e = list[j];
+          e.lead = Math.max(e.R, j < list.length - 1 ? list[j + 1].lead + LADDER_STEP : 0);
+          lead = Math.max(lead, e.lead);
+        }
+      }
+      si.ramp = Math.min(520, Math.max(OUR_RAMP, 150 + 9 * Math.max(cp, cm), lead + 10));
     }
     this.ourSites = this.sites.filter((x) => x.ours);
     this._cache = new Map();
@@ -131,15 +149,36 @@ export class TrackLayout {
   // --- our side of the corridor -----------------------------------------------------------
   /** lateral offset of extra track e of site si at s */
   ourExtraLat(si, e, s) {
-    const w = e.stopSouth && s < si.b ? 1 : this.siteWeight(si, s);
-    return e.side > 0 ? e.d * w : this.route.upOffset(s) - e.d * w;
+    let d = 0;
+    for (let x = e; x; x = x.parent) {
+      const w = x.stopSouth && s < si.b ? 1 : win(s, si.a - x.lead + x.R, si.b + x.lead - x.R, x.R);
+      d += x.dd * w;
+    }
+    return e.side > 0 ? d : this.route.upOffset(s) - d;
   }
+
+  /** the turnouts on our own running tracks (where the first track of each ladder branches off): [{s, side}] */
+  ourTurnouts() {
+    if (!this._turnouts) {
+      this._turnouts = [];
+      for (const si of this.ourSites) for (const e of si.extra) {
+        if (e.parent) continue;
+        if (!e.stopSouth) this._turnouts.push({ s: si.a - e.lead, side: e.side });
+        this._turnouts.push({ s: si.b + e.lead, side: e.side });
+      }
+      this._turnouts.sort((a, b) => a.s - b.s);
+    }
+    return this._turnouts;
+  }
+
+  /** the stretch an extra track of a site exists over (from its turnout to the one at the far end) */
+  ourExtraRange(si, e) { return [e.stopSouth ? si.pf[0] - 5 : si.a - e.lead, si.b + e.lead]; }
 
   /** lateral offsets of our extra station tracks at s */
   ourExtraTracks(s) {
     const si = this.ourSiteAt(s);
     if (!si) return [];
-    return si.extra.filter((e) => !(e.stopSouth && s < si.pf[0] - 5)).map((e) => this.ourExtraLat(si, e, s));
+    return si.extra.filter((e) => { const [lo, hi] = this.ourExtraRange(si, e); return s >= lo && s <= hi; }).map((e) => this.ourExtraLat(si, e, s));
   }
 
   /** outermost lateral of our side of the corridor (tracks and platforms), + side and - side */
@@ -149,6 +188,13 @@ export class TrackLayout {
     if (!si) return { plus: 0, minus: up };
     const w = this.siteWeight(si, s);
     let plus = si.wPlus * w, minus = up - si.wMinus * w;
+    // the ladder tracks can be out further than the smooth spread (the inner ones branch off first)
+    for (const e of si.extra) {
+      const [lo, hi] = this.ourExtraRange(si, e);
+      if (s < lo || s > hi) continue;
+      const x = this.ourExtraLat(si, e, s);
+      if (e.side > 0) plus = Math.max(plus, x); else minus = Math.min(minus, x);
+    }
     // terminal tracks stay at full width south of the platforms' far end
     for (const e of si.extra) if (e.stopSouth && s < si.b && s >= si.pf[0] - 5) { if (e.side > 0) plus = Math.max(plus, e.d + 1); else minus = Math.min(minus, up - e.d - 1); }
     return { plus, minus };
@@ -256,7 +302,7 @@ export class TrackLayout {
     for (const si of this.ourSites) {
       if (si.b + si.ramp < a || si.a - si.ramp > b) continue;
       for (const e of si.extra) {
-        const lo = e.stopSouth ? si.pf[0] - 5 : si.a - si.ramp, hi = si.b + si.ramp;
+        const [lo, hi] = this.ourExtraRange(si, e);
         list.push({ off: (x) => this.ourExtraLat(si, e, Math.min(hi, Math.max(lo, x))), s0: lo, s1: hi, kind: 'station', site: si, siding: e.siding, stopAt: e.stopSouth ? 's0' : null });
       }
     }
