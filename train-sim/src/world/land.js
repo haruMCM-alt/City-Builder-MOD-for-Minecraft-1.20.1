@@ -17,7 +17,7 @@ export const MATERIAL_KEYS = ['house', 'apt', 'mansion', 'office', 'shop', 'fact
 export function crossingRoadsNear(route, s0, s1) {
   const out = [];
   for (let k = Math.floor(s0 / 100); k <= Math.floor(s1 / 100); k++) {
-    const s = k * 100 + 50;
+    const s = k * 100 + 25;                     // midway between two overhead line gantries (every 50 m)
     if (s < s0 || s >= s1) continue;
     const dens = route.density(s);
     const p = dens > 0.68 ? 0.22 : dens > 0.35 ? 0.16 : 0.10;

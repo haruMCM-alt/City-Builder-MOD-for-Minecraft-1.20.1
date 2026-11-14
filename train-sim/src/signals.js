@@ -10,6 +10,7 @@
 
 import * as THREE from 'three';
 import { PLATFORM_LEN } from './route.js';
+import { clearSide } from './world/gantry.js';
 
 export const ASPECT_SPEED = { R: 0, YY: 25, Y: 45, YG: 75, G: 999 };
 const BLOCK = 1200;          // m, nominal automatic block length
@@ -20,13 +21,23 @@ const LAT = 2.9;             // signals stand left of the track (left-hand runni
 export function layoutSignals(view) {
   const out = [];
   const st = view.stations;
+  // the turnouts on the track we run on (view coordinates)
+  const side = view.up ? -1 : 1;
+  const turnouts = view.route.layout ? view.route.layout.ourTurnouts().filter((t) => t.side === side).map((t) => view.fromRoute(t.s)) : [];
+  // a home signal stands before the platform - and before the first turnout of the station throat
+  const homeX = (i) => {
+    const stop = st[i].s;
+    let x = stop - PLATFORM_LEN - 140;
+    for (const t of turnouts) if (t > stop - 1300 && t < stop - PLATFORM_LEN && t - 45 < x) x = t - 45;
+    return x;
+  };
   for (let i = 0; i < st.length; i++) {
     const stop = st[i].s;
-    if (i > 0) out.push({ x: stop - PLATFORM_LEN - 140, kind: 'home', station: st[i].name });
+    if (i > 0) out.push({ x: homeX(i), kind: 'home', station: st[i].name });
     if (i < st.length - 1) {
       const start = stop + 90;
       out.push({ x: start, kind: 'start', station: st[i].name });
-      const nextHome = st[i + 1].s - PLATFORM_LEN - 140;
+      const nextHome = homeX(i + 1);
       const gap = nextHome - start;
       const n = Math.max(0, Math.round(gap / BLOCK) - 1);
       for (let k = 1; k <= n; k++) out.push({ x: start + (gap * k) / (n + 1), kind: 'block' });
@@ -147,7 +158,12 @@ export class SignalSystem {
       let g = this.meshes.get(i);
       if (!g) {
         g = buildSignal();
-        v.pose(L[i].x, LAT, p);
+        // left of our track, clear of any station track running beside it
+        const rs = v.toRoute(L[i].x), base = v.trackOffset(rs);
+        const lay = v.route.layout;
+        const offs = lay ? lay.tracksIn(rs, rs).filter((t) => rs >= t.s0 && rs <= t.s1).map((t) => t.off(rs)) : [];
+        const lat = (clearSide(offs, base, v.sign, LAT) - base) * v.sign;
+        v.pose(L[i].x, lat, p);
         g.position.set(p.x, p.y, p.z);
         g.rotation.y = p.yaw;          // local +X along the running direction; lamps face back
         this.group.add(g);

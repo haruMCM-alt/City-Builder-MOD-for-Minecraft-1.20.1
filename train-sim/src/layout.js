@@ -76,7 +76,16 @@ export class TrackLayout {
         const mid = at(name);
         const len = g.cars * (g.shinkansen ? 25 : 20) + 10;
         const pf = [mid - len / 2, mid + len / 2];
-        return { name, islands, mid, pf, a: pf[0] - 40, b: pf[1] + 40, ramp: islands > 1 ? 380 : OUR_RAMP };
+        const stop = { name, islands, mid, pf, a: pf[0] - 40, b: pf[1] + 40, ramp: islands > 1 ? 380 : OUR_RAMP };
+        // the tracks of the further islands (2, 3, ...) branch off one after another, each from the
+        // track inside it: how far each moves out (dd), its S-curve (R) and where it starts (lead)
+        stop.dd = [0, 0]; stop.R = [0, 0]; stop.lead = [0, 0];
+        for (let j = 2; j < 2 * islands; j++) {
+          stop.dd[j] = j % 2 === 0 ? STATION_TRACK : 2 * PF_EDGE + ISLAND_W;
+          stop.R[j] = 40 + 12 * stop.dd[j];
+        }
+        for (let j = 2 * islands - 1; j >= 2; j--) stop.lead[j] = Math.max(stop.R[j], j < 2 * islands - 1 ? stop.lead[j + 1] + LADDER_STEP : 0);
+        return stop;
       }).filter((x) => Number.isFinite(x.mid) && x.pf[0] > g.s0 - 1 && x.pf[1] < g.s1 + 1);
       for (const x of g.stops) { const si = site(x.name); si.groups.push({ g, stop: x }); x.site = si; }
     }
@@ -183,6 +192,16 @@ export class TrackLayout {
 
   /** outermost lateral of our side of the corridor (tracks and platforms), + side and - side */
   ourExtent(s) {
+    // asked again and again for the same place (once per track of every parallel line): remembered
+    const hit = this._cache.get(s);
+    if (hit) return hit;
+    const e = this.ourExtentAt(s);
+    if (this._cache.size > 30000) this._cache.clear();
+    this._cache.set(s, e);
+    return e;
+  }
+
+  ourExtentAt(s) {
     const up = this.route.upOffset(s);
     const si = this.ourSiteAt(s);
     if (!si) return { plus: 0, minus: up };
@@ -217,9 +236,9 @@ export class TrackLayout {
     const { w, stop } = this.groupStop(g, s);
     const d = [0, TRACK_SPACING + w * (ISLAND_W + 2 * PF_EDGE - TRACK_SPACING)];
     const n = stop ? stop.islands : 1;
-    for (let k = 1; k < n; k++) {
-      const a = d[1] + STATION_TRACK + (k - 1) * (2 * PF_EDGE + ISLAND_W + STATION_TRACK);
-      d.push(d[1] + (a - d[1]) * w, d[1] + (a + 2 * PF_EDGE + ISLAND_W - d[1]) * w);
+    for (let j = 2; j < 2 * n; j++) {
+      const R = stop.R[j], L = stop.lead[j];
+      d.push(d[j - 1] + stop.dd[j] * win(s, stop.a - L + R, stop.b + L - R, R));
     }
     return d;
   }
@@ -272,7 +291,7 @@ export class TrackLayout {
     // the extra island tracks only exist around the stops that have them
     const k = Math.floor(i / 2);
     const st = g.stops.filter((x) => x.islands > k);
-    return st.length ? [Math.max(lo, Math.min(...st.map((x) => x.a - x.ramp))), Math.min(hi, Math.max(...st.map((x) => x.b + x.ramp)))] : [0, -1];
+    return st.length ? [Math.max(lo, Math.min(...st.map((x) => x.a - x.lead[i]))), Math.min(hi, Math.max(...st.map((x) => x.b + x.lead[i])))] : [0, -1];
   }
 
   /** extra tracks of a group around one stop: [{i, s0, s1}] */
@@ -284,7 +303,7 @@ export class TrackLayout {
       const k = Math.floor(i / 2);
       for (const x of g.stops) {
         if (x.islands <= k) continue;
-        const lo = x.a - x.ramp, hi = x.b + x.ramp;
+        const lo = x.a - x.lead[i], hi = x.b + x.lead[i];
         if (hi >= a && lo <= b) out.push({ i, s0: lo, s1: hi });
       }
     }

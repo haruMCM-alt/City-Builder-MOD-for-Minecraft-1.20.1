@@ -34,3 +34,20 @@ export function gantryLayout(offsets) {
     return { tracks: tr, masts };
   });
 }
+
+/**
+ * where a trackside post (signal, sign) can stand beside the track at `base`, on the side `sign`
+ * (+1 / -1): the lateral offset nearest to `want` metres out that keeps `clear` metres from the
+ * centre of every track there (so it never stands in a neighbouring station track).
+ */
+export function clearSide(offsets, base, sign, want = 2.9, clear = 2.1) {
+  let best = null, bd = Infinity;
+  for (let d = clear; d <= 90; d += 0.05) {
+    if (Math.abs(d - want) >= bd) { if (d > want) break; continue; }
+    const pos = base + sign * d;
+    let ok = true;
+    for (const o of offsets) if (Math.abs(o - pos) < clear - 1e-6) { ok = false; break; }
+    if (ok) { best = pos; bd = Math.abs(d - want); }
+  }
+  return best ?? base + sign * want;
+}

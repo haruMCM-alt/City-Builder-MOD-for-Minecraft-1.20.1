@@ -5,11 +5,11 @@ import { stationProtos, PERSON_KEYS, SIT_KEYS, departureBoardTexture, clockTextu
 import { makeTextures } from './textures.js';
 import { atmosphere, addWindowLights } from './atmosphere.js';
 import { Environment, GROUND_Y } from './sky.js';
-import { LandBuilder, MATERIAL_KEYS, carGeometry, carColor } from './land.js';
+import { LandBuilder, MATERIAL_KEYS, carGeometry, carColor, crossingRoadsNear } from './land.js';
 import { GeoBuffer, Frame, TILE, boxWalls, flatTop, solid } from './buildings.js';
 import { makeTreeKinds } from './trees.js';
 import { rng, hash2 } from './noise.js';
-import { gantryLayout } from './gantry.js';
+import { gantryLayout, clearSide } from './gantry.js';
 
 const CHUNK = 200;
 const AHEAD = 2400;
@@ -612,17 +612,28 @@ export class World {
     disposables.push(wg, fg);
 
     // trackside: speed signs, fences / sound walls (block signals with live aspects: src/signals.js)
+    // (a limit starts at its far end for an up train; the sign stands on that train's left, facing it)
     for (const L of r.limits) {
-      if (L.s0 >= s0 && L.s0 < s1 && L.v < 120) this.speedSign(group, disposables, L.s0 - 30, L.v);
+      const at = this.dir < 0 ? L.s1 + 30 : L.s0 - 30;
+      if (at >= s0 && at < s1 && L.v < 120) this.speedSign(group, disposables, at, L.v);
     }
     const dens = r.density(s0 + 100);
     if (r.elev(s0 + 100) < 0.3 && !r.stationNear(s0 + 100, 40)) {
+      // the walls and fences open where a road crosses the line
+      const gaps = crossingRoadsNear(r, s0 - 20, s1 + 20).filter((rd) => rd.level).map((rd) => [rd.s - rd.w / 2 - 1.5, rd.s + rd.w / 2 + 1.5]);
+      const spans = [];
+      let a = s0;
+      for (const [g0, g1] of gaps) { if (g0 > a) spans.push([a, Math.min(g0, s1)]); a = Math.max(a, g1); }
+      if (a < s1) spans.push([a, s1]);
       for (const side of [1, -1]) {
         const off = (ss) => side > 0 ? this.land.edge(ss, 1) - 1.0 : -(this.land.edge(ss, -1) - 1.0);
-        if (dens > 0.78) {
-          sw.sweep(s0, s1, 10, off, [{ pts: [[0, -0.62], [0, 2.0]], mat: this.M.concrete, uScale: 4, vScale: 4 }]);
-        } else if (dens > 0.3) {
-          sw.sweep(s0, s1, 10, off, [{ pts: [[0, -0.62], [0, 1.1]], mat: this.M.fence, uScale: 1.7, vScale: 1.7 }]);
+        for (const [a0, a1] of spans) {
+          if (a1 - a0 < 1) continue;
+          if (dens > 0.78) {
+            sw.sweep(a0, a1, 10, off, [{ pts: [[0, -0.62], [0, 2.0]], mat: this.M.concrete, uScale: 4, vScale: 4 }]);
+          } else if (dens > 0.3) {
+            sw.sweep(a0, a1, 10, off, [{ pts: [[0, -0.62], [0, 1.1]], mat: this.M.fence, uScale: 1.7, vScale: 1.7 }]);
+          }
         }
       }
     }
@@ -746,9 +757,12 @@ export class World {
     const tex = textBoardTexture(String(v), '#f2f2ec', '#111', 128, 128, 70);
     const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.12 });
     const board = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.6), mat);
-    r.pose(s, 2.9, p);
+    // on the left of the track we run on, clear of any station track beside it
+    const up = this.dir < 0, base = up ? r.upOffset(s) : 0;
+    const offs = this.tracksIn(s, s).filter((t) => s >= t.s0 && s <= t.s1).map((t) => t.off(s));
+    r.pose(s, clearSide(offs, base, up ? -1 : 1, 2.9), p);
     board.position.set(p.x, p.y + 2.6, p.z);
-    board.rotation.y = p.yaw - Math.PI / 2;
+    board.rotation.y = p.yaw + (up ? Math.PI / 2 : -Math.PI / 2);
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6), this.M.post);
     pole.position.set(p.x, p.y + 1.0, p.z);
     group.add(board, pole);

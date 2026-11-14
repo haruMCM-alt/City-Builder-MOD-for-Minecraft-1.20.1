@@ -1,6 +1,8 @@
 import { fmtTime } from './timetable.js';
 import { CUES } from './audio/announce-cues.js';
 
+const MIN_DWELL = 10;   // s the doors stay open at least, however late the train is
+
 /**
  * Station-to-station game flow: doors, departure, stopping, scoring and
  * triggering the in-car announcements.
@@ -104,7 +106,9 @@ export class Game {
         if (this.fromIdx === 0 && ann.has('intro') && ((local && !this.up) || ann.mode !== 'file')) ann.play('intro', {});
       }
       const ml = row.dep != null ? this.melodyLength() : 0;
-      if (row.dep != null && this.clock >= row.dep - 12 - (ml ? ml + 1.5 : 0)) {
+      // a late train still keeps its doors open long enough for people to get on and off
+      const boarded = this.ti === 1 || this.stateT > MIN_DWELL;
+      if (row.dep != null && boarded && this.clock >= row.dep - 12 - (ml ? ml + 1.5 : 0)) {
         if (ml) {
           // platform departure melody first, then the door chime
           this.melDur = Math.min(this.melody.playFor(row.station.name) || ml, ml);

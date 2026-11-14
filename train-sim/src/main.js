@@ -474,7 +474,9 @@ async function startGame(resume = null) {
   if (carLights) carLights.removeFromParent();
   carLights = new THREE.Group();
   for (const x of [-6.5, -2.2, 2.2, 6.5]) {
-    const l = new THREE.PointLight(0xfff6ea, 1.5, 7.5, 1.6);
+    // after dark the glowing interior surfaces (trainNight) and the higher exposure already carry the
+    // saloon: the fill lights are turned right down, or walls and ceiling burn out to plain white
+    const l = new THREE.PointLight(0xfff6ea, 1.5 * (1 - 0.9 * (atmo ? atmo.night : 0)), 7.5, 1.6);
     l.position.set(x, 3.25, 0);
     carLights.add(l);
   }
@@ -568,7 +570,8 @@ function trainNight(set) {
       // taking the sky's blue cast; after dark it carries the whole interior
       if (m.emissiveMap !== (m.map || null)) { m.emissiveMap = m.map || null; m.needsUpdate = true; }
       m.emissive.copy(m.color).multiply(_warm);
-      m.emissiveIntensity = 0.1 + 0.7 * k;
+      // (kept below white after the night exposure, so walls and ceiling keep their shading)
+      m.emissiveIntensity = 0.1 + 0.36 * k;
       void d;
     }
   });
@@ -659,9 +662,13 @@ function updateWeather(dt, cp) {
     pfLamps.forEach((l, i) => {
       if (!st) { l.intensity = 0; return; }
       const s = Math.min(st.s, Math.max(st.s - PLATFORM_LEN, fr + (i - 1.5) * 38 - view.sign * 60));
-      const p = route.pose(s, 0, {});
+      // over the platform on the door side, not over the track: point lights cast no shadows, so a lamp
+      // above the train would shine straight through its roof and bleach the saloon
+      const lat = view.trackOffset(s) + view.sign * (st.door === 'left' ? 4.6 : -4.6);
+      const p = route.pose(s, lat, {});
       l.position.set(p.x, p.y + 5.6, p.z);
-      l.intensity = 38 * atmo.night;
+      // seen from inside the train they are turned down (the car body would shade most of their light)
+      l.intensity = (camMode === 'cab' || isRide(camMode) ? 12 : 38) * atmo.night;
     });
   }
 }
