@@ -1,442 +1,556 @@
 /* =========================================================================
- * desktop.js : デスクトップ — ウィンドウ管理 / スタート メニュー / 付属アプリ
- * アイコンは実機(1024x768)のスクリーンショットから切り出した画像を使う。
+ * desktop.js : デスクトップの土台
+ *   ウィンドウ管理 / メニュー（メニュー バー・右クリック・カスケード）/
+ *   ファイル ダイアログ / デスクトップ アイコン / スタート メニュー /
+ *   タスク バーとトレイ / 終了処理
+ * 個々のアプリは apps.js が APPS に登録する。
  * ========================================================================= */
 (function () {
   'use strict';
   var W = window.__WinMe;
-  var h = W.h, add = W.add, esc = W.esc, frag = W.frag, wait = W.wait, pic = W.pic;
+  var h = W.h, add = W.add, esc = W.esc, wait = W.wait, pic = W.pic;
   var Btn = W.Btn, Field = W.Field, Radio = W.Radio, Check = W.Check;
   var dialog = W.dialog, setScreen = W.setScreen, snd = W.snd, pad = W.pad;
-  var S = window.__setupState;
+  var S = window.__setupState, Save = window.__Save, VFS = window.__VFS;
 
-  var D = null;       /* 現在のデスクトップ参照 */
-  var clockIV = null;
-  var zTop = 100;
+  var APPS = {};
+  var D = null, clockIV = null, zTop = 100, unwatchIcons = null;
+  var DESK_H = 452;                                   /* 480 - タスク バー 28 */
 
-  /* ------------------------------------------------------ ウィンドウ管理 */
+  function info(title, body, icon) { return dialog({ title: title, icon: icon || 'info', width: 356, body: body }); }
+  function fail(title, body) { return dialog({ title: title, icon: 'error', width: 360, body: esc(body).replace(/\n/g, '<br>') }); }
+  function lab(t) { return esc(t).replace(/&amp;(.)/, '<u>$1</u>'); }
+  function accOf(t) { var m = /&(.)/.exec(t); return m ? m[1].toUpperCase() : ''; }
+  function scale() { var b = W.refs().screenWrap.getBoundingClientRect(); return { b: b, s: b.width / 640 }; }
+  function rel(cx, cy) { var k = scale(); return { x: (cx - k.b.left) / k.s, y: (cy - k.b.top) / k.s }; }
+  function relRect(el) {
+    var r = el.getBoundingClientRect(), k = scale();
+    return { x: (r.left - k.b.left) / k.s, y: (r.top - k.b.top) / k.s, w: r.width / k.s, h: r.height / k.s };
+  }
+  function na(name) {
+    return function () {
+      info(name, 'この再現版には、このプログラムは含まれていません。<br><br>[スタート] → [プログラム] → [アクセサリ] にあるプログラムは実際に動きます。');
+    };
+  }
+
+  /* =================================================================
+   *  ウィンドウ管理
+   * ================================================================= */
+  function tbBtn(kind, label) { return h('button', { class: 'tb ' + kind, type: 'button', 'aria-label': label }); }
+
   function openWindow(o) {
     if (!D) return null;
-    var win = h('div', { class: 'win app', style: { width: o.w + 'px', height: o.h ? o.h + 'px' : 'auto' } });
+    var w = o.w || 360, hh = o.h || 0;
+    var win = h('div', { class: 'win app' + (o.cls ? ' ' + o.cls : ''), style: { width: w + 'px', height: hh ? hh + 'px' : 'auto' } });
     var ttl = h('span', { class: 'ttl', text: o.title });
-    var bMin = h('button', { class: 'tb min', type: 'button', 'aria-label': '最小化' });
-    var bMax = h('button', { class: 'tb max', type: 'button', 'aria-label': '最大化', disabled: true });
-    var bX = h('button', { class: 'tb x', type: 'button', 'aria-label': '閉じる' });
-    var bar = h('div', { class: 'tbar' }, o.icon ? h('span', { class: 'ti' }, pic(o.icon, 16, 16)) : null, ttl, bMin, bMax, bX);
+    var bMin = tbBtn('min', '最小化'), bMax = tbBtn('max', '最大化'), bX = tbBtn('x', '閉じる');
+    if (o.max === false) bMax.disabled = true;
+    var bar = h('div', { class: 'tbar' }, o.icon ? h('span', { class: 'ti' }, pic(o.icon, 16, 16)) : null, ttl, bMin, bMax, h('i', { class: 'tbgap' }), bX);
     var cli = h('div', { class: 'cli' });
-    add(win, bar); add(win, cli);
+    add(win, [bar, cli]);
+    if (o.resizable) add(win, h('div', { class: 'rgrip' }));
 
-    var x = o.x != null ? o.x : 40 + (D.wins.length % 5) * 18;
-    var y = o.y != null ? o.y : 30 + (D.wins.length % 5) * 18;
-    win.style.left = x + 'px';
-    win.style.top = y + 'px';
+    var n = D.wins.length % 6;
+    var x = o.x != null ? o.x : 30 + n * 22, y = o.y != null ? o.y : 18 + n * 22;
     D.winlayer.appendChild(win);
+    var ww = win.offsetWidth, wh = win.offsetHeight;
+    x = Math.max(0, Math.min(640 - ww, x)); y = Math.max(0, Math.min(DESK_H - Math.min(wh, DESK_H), y));
+    win.style.left = x + 'px'; win.style.top = y + 'px';
 
-    var rec = { win: win, min: false, title: o.title };
+    var tl = h('span', { class: 'tl', text: o.title });
+    var tb = h('button', { class: 'btn taskbtn', type: 'button' }, o.icon ? h('span', { class: 'ti' }, pic(o.icon, 16, 16)) : null, tl);
+    var rec = { win: win, cli: cli, bar: bar, tb: tb, title: o.title, min: false, maxed: false, app: o.app || '', onClose: o.onClose, onKey: o.onKey };
     D.wins.push(rec);
-
-    var tb = h('button', { class: 'btn taskbtn', type: 'button' },
-      o.icon ? h('span', { class: 'ti' }, pic(o.icon, 16, 16)) : null,
-      h('span', { class: 'tl', text: o.title }));
-    tb.addEventListener('click', function () {
-            if (rec.min) { restore(rec); } else if (D.active === rec) { minimize(rec); } else { focusWin(rec); }
-    });
-    rec.tb = tb;
     D.tasks.appendChild(tb);
 
-    bX.addEventListener('click', function () { closeWin(rec); });
+    rec.setTitle = function (t) { rec.title = t; ttl.textContent = t; tl.textContent = t; };
+    rec.close = function (force) { closeWin(rec, force); };
+    rec.focus = function () { focusWin(rec); };
+    rec.toggleMax = function () {
+      if (o.max === false) return;
+      if (!rec.maxed) {
+        rec.prev = { l: win.style.left, t: win.style.top, w: win.style.width, h: win.style.height };
+        win.style.left = '-2px'; win.style.top = '-2px'; win.style.width = '644px'; win.style.height = (DESK_H + 4) + 'px';
+      } else {
+        win.style.left = rec.prev.l; win.style.top = rec.prev.t; win.style.width = rec.prev.w; win.style.height = rec.prev.h;
+      }
+      rec.maxed = !rec.maxed;
+      win.classList.toggle('maxed', rec.maxed);
+      bMax.classList.toggle('restore', rec.maxed);
+      if (o.onResize) o.onResize(rec);
+    };
+
+    tb.addEventListener('click', function () {
+      if (rec.min) focusWin(rec); else if (D.active === rec) minimize(rec); else focusWin(rec);
+    });
+    bX.addEventListener('click', function () { rec.close(); });
     bMin.addEventListener('click', function () { minimize(rec); });
+    bMax.addEventListener('click', function () { rec.toggleMax(); });
+    bar.addEventListener('dblclick', function (e) { if (!e.target.classList.contains('tb')) rec.toggleMax(); });
     win.addEventListener('pointerdown', function () { focusWin(rec); }, true);
     W.dragify(win, bar);
 
-    rec.close = function () { closeWin(rec); };
+    var grip = win.querySelector('.rgrip');
+    if (grip) grip.addEventListener('pointerdown', function (e) {
+      if (rec.maxed) return;
+      e.preventDefault(); e.stopPropagation();
+      var sc = scale().s, sx = e.clientX, sy = e.clientY, w0 = win.offsetWidth, h0 = win.offsetHeight;
+      grip.setPointerCapture(e.pointerId);
+      function mv(ev) {
+        win.style.width = Math.max(o.minW || 200, Math.min(640, w0 + (ev.clientX - sx) / sc)) + 'px';
+        win.style.height = Math.max(o.minH || 120, Math.min(DESK_H + 4, h0 + (ev.clientY - sy) / sc)) + 'px';
+        if (o.onResize) o.onResize(rec);
+      }
+      function up() { grip.removeEventListener('pointermove', mv); grip.removeEventListener('pointerup', up); }
+      grip.addEventListener('pointermove', mv);
+      grip.addEventListener('pointerup', up);
+    });
+
     if (o.build) o.build(cli, rec);
+    if (o.maximized) rec.toggleMax();
     focusWin(rec);
     return rec;
   }
   function focusWin(rec) {
-    if (!D) return;
+    if (!D || !rec) return;
     rec.min = false;
     rec.win.hidden = false;
-    rec.win.style.zIndex = ++zTop;
+    if (D.active !== rec) rec.win.style.zIndex = ++zTop;
     D.active = rec;
     D.wins.forEach(function (r) {
       r.win.classList.toggle('inactive', r !== rec);
-      r.tb.classList.toggle('is-down', r === rec && !r.min);
+      r.tb.classList.toggle('is-down', r === rec);
     });
+  }
+  function topWin() {
+    var best = null;
+    D.wins.forEach(function (r) { if (!r.min && (!best || +r.win.style.zIndex > +best.win.style.zIndex)) best = r; });
+    return best;
   }
   function minimize(rec) {
     rec.min = true;
     rec.win.hidden = true;
     rec.tb.classList.remove('is-down');
-    if (D.active === rec) D.active = null;
+    if (D.active === rec) { D.active = null; var t = topWin(); if (t) focusWin(t); }
   }
-  function restore(rec) { focusWin(rec); }
-  function closeWin(rec) {
+  function closeWin(rec, force) {
+    if (!force && rec.onClose) {
+      Promise.resolve(rec.onClose(rec)).then(function (ok) { if (ok !== false) closeWin(rec, true); });
+      return;
+    }
+    if (rec.onDestroy) try { rec.onDestroy(); } catch (e) {}
     rec.win.remove();
     rec.tb.remove();
     var i = D.wins.indexOf(rec);
     if (i >= 0) D.wins.splice(i, 1);
-    if (D.active === rec) D.active = null;
+    if (D.active === rec) { D.active = null; var t = topWin(); if (t) focusWin(t); }
+  }
+  function findWin(app, key) {
+    if (!D) return null;
+    for (var i = 0; i < D.wins.length; i++) if (D.wins[i].app === app && (key == null || D.wins[i].key === key)) return D.wins[i];
+    return null;
   }
 
-  /* ------------------------------------------------------ アイコン ビュー */
-  function iconView(items, onOpen) {
-    var view = h('div', { class: 'iview', tabindex: '0' });
-    items.forEach(function (it) {
-      var el = h('div', { class: 'iv' }, h('div', {}, pic(it.icon, 32, 32)), h('div', { class: 'lab', text: it.name }));
-      el.setAttribute('aria-selected', 'false');
-      el.addEventListener('click', function () {
-        view.querySelectorAll('.iv').forEach(function (n) { n.setAttribute('aria-selected', 'false'); });
-        el.setAttribute('aria-selected', 'true');
-      });
-      el.addEventListener('dblclick', function () { onOpen(it); });
-      add(view, el);
+  /* アクティブなウィンドウだけにキー操作を渡す */
+  window.__activeScope = function () { return D && D.active && !D.active.min && D.root.isConnected ? D.active.win : null; };
+  document.addEventListener('keydown', function (e) {
+    if (!D || !D.root.isConnected || W.modals.length) return;
+    var a = D.active;
+    if (a && !a.min && a.onKey) a.onKey(e);
+  });
+
+  /* =================================================================
+   *  メニュー
+   * ================================================================= */
+  var menuStack = [], menuClose = null;
+  function closeMenus(level) {
+    level = level || 0;
+    while (menuStack.length > level) menuStack.pop().remove();
+    if (level === 0 && menuClose) { var f = menuClose; menuClose = null; f(); }
+  }
+  function closeAllMenus() { closeMenus(0); closeStart(); closePopup(); }
+  function itemsOf(x) { return typeof x === 'function' ? x() : x; }
+  function openMenuAt(items, x, y, level, onClose, altX) {
+    closeMenus(level);
+    if (level === 0) menuClose = onClose || null;
+    var m = h('div', { class: 'cmenu' });
+    itemsOf(items).forEach(function (c) { if (c) add(m, menuRow(c, level)); });
+    D.root.appendChild(m);
+    var mw = m.offsetWidth, mh = m.offsetHeight;
+    if (x + mw > 640) x = altX != null ? Math.max(0, altX - mw + 3) : Math.max(0, 640 - mw);
+    if (y + mh > 480) y = Math.max(0, 480 - mh);
+    m.style.left = x + 'px'; m.style.top = y + 'px';
+    menuStack.push(m);
+    return m;
+  }
+  function menuRow(c, level) {
+    if (c.sep) return h('div', { class: 'msep' });
+    var dis = typeof c.dis === 'function' ? c.dis() : !!c.dis;
+    var chk = typeof c.checked === 'function' ? c.checked() : c.checked;
+    var it = h('div', { class: 'cmi' + (dis ? ' dis' : '') + (c.bold ? ' bold' : '') },
+      h('span', { class: 'ci' }, c.icon ? pic(c.icon, 16, 16) : (chk ? h('i', { class: c.radio ? 'mk-dot' : 'mk-chk' }) : null)),
+      h('span', { class: 'cl', html: lab(c.label) }),
+      c.key ? h('span', { class: 'ck', text: c.key }) : null,
+      c.sub ? h('span', { class: 'ar' }) : null);
+    it.addEventListener('mouseenter', function () {
+      Array.prototype.forEach.call(it.parentNode.children, function (n) { n.classList.remove('hot'); });
+      it.classList.add('hot');
+      if (c.sub && !dis) { var r = relRect(it); openMenuAt(c.sub, r.x + r.w - 3, r.y - 3, level + 1, null, r.x); }
+      else closeMenus(level + 1);
     });
-    return view;
+    it.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (dis || c.sub) return;
+      closeAllMenus();
+      if (c.act) c.act();
+    });
+    return it;
   }
-  function explorerChrome(cli, title, items, onOpen, status) {
-    cli.classList.add('explorer');
-    snd.nav();
-    add(cli, h('div', { class: 'mbar' },
-      h('span', { html: 'ファイル(<u>F</u>)' }), h('span', { html: '編集(<u>E</u>)' }),
-      h('span', { html: '表示(<u>V</u>)' }), h('span', { html: 'ヘルプ(<u>H</u>)' })));
-    add(cli, h('div', { class: 'tstrip' },
-      h('button', { class: 'btn tbtn', type: 'button', disabled: true }, h('i', { class: 'arw l' })),
-      h('button', { class: 'btn tbtn', type: 'button', disabled: true }, h('i', { class: 'arw r' })),
-      h('button', { class: 'btn tbtn', type: 'button', disabled: true }, h('i', { class: 'arw u' })),
-      h('span', { style: { marginLeft: '8px' }, text: title })));
-    add(cli, iconView(items, onOpen));
-    add(cli, h('div', { class: 'sbar' },
-      h('div', { text: status || (items.length + ' 個のオブジェクト') }),
-      h('div', { text: '' })));
-  }
-
-  /* ---------------------------------------------------------- 付属アプリ */
-  var APPS = {};
-
-  APPS.mycomputer = function () {
-    openWindow({
-      title: 'マイ コンピュータ', w: 386, h: 262, icon: 'mycomputer16',
-      build: function (cli) {
-        var items = [
-          { name: '3.5 インチ FD (A:)', icon: 'drv-floppy', kind: 'fd' },
-          { name: 'ローカル ディスク (C:)', icon: 'drv-hdd', kind: 'hd' },
-          { name: 'CD-ROM (D:)', icon: 'drv-cd', kind: 'cd' },
-          { name: 'コントロール パネル', icon: 'ico-cpl', kind: 'cpl' }
-        ];
-        explorerChrome(cli, 'マイ コンピュータ', items, function (it) {
-          if (it.kind === 'cpl') return APPS.control();
-          if (it.kind === 'fd') {
-            return dialog({
-              title: 'ドライブ A: にアクセスできません', icon: 'error', width: 352,
-              body: 'デバイスの準備ができていません。<br><br>ドライブ A: にディスクが挿入されていることを確認してください。',
-              buttons: [{ id: 'r', label: '再試行(&R)', def: true }, { id: 'c', label: 'キャンセル', esc: true }]
-            });
-          }
-          driveProps(it);
-        }, '4 個のオブジェクト');
+  function MenuBar(defs) {
+    var bar = h('div', { class: 'mbar' }), cur = null;
+    defs.forEach(function (d) {
+      var sp = h('span', { html: lab(d.label) });
+      sp.dataset.acc = accOf(d.label);
+      function show() {
+        closeAllMenus();
+        var r = relRect(sp);
+        sp.classList.add('on'); cur = sp;
+        openMenuAt(d.items, r.x, r.y + r.h, 0, function () { sp.classList.remove('on'); if (cur === sp) cur = null; });
       }
+      sp.addEventListener('pointerdown', function (e) { e.stopPropagation(); if (cur === sp) closeAllMenus(); else show(); });
+      sp.addEventListener('click', function (e) { e.stopPropagation(); if (e.detail === 0) show(); });
+      sp.addEventListener('mouseenter', function () { if (cur && cur !== sp) show(); });
+      add(bar, sp);
     });
-  };
+    return bar;
+  }
+  function ctxMenu(e, items) {
+    e.preventDefault(); e.stopPropagation();
+    closeAllMenus();
+    var p = rel(e.clientX, e.clientY);
+    openMenuAt(items, p.x, p.y, 0);
+  }
+  document.addEventListener('pointerdown', function (e) {
+    if (!D || !D.root.isConnected) return;
+    var t = e.target;
+    if (t.closest && t.closest('.cmenu,.startmenu,.mbar span,#startbtn,.popup')) return;
+    closeAllMenus();
+  }, true);
 
-  function driveProps(it) {
-    var cap = it.kind === 'cd' ? 650 : 2048;
-    var used = it.kind === 'cd' ? 512 : 731;
-    var free = cap - used;
-    var pie = '<svg width="86" height="86" viewBox="0 0 42 42">' +
-      '<circle r="15.9" cx="21" cy="21" fill="#2f7fbf"/>' +
-      '<circle r="15.9" cx="21" cy="21" fill="transparent" stroke="#d13a2c" stroke-width="31.8" ' +
-      'stroke-dasharray="' + (used / cap * 100) + ' ' + (100 - used / cap * 100) + '" transform="rotate(-90 21 21)"/>' +
-      '</svg>';
-    dialog({
-      title: it.name + ' のプロパティ', width: 340, sound: false, btnAlign: 'right',
-      body: h('div', {},
-        h('div', { style: { display: 'flex', gap: '14px', alignItems: 'center' } },
-          frag(pie),
-          h('div', { style: { lineHeight: '1.9' } },
-            h('div', { html: '<span style="display:inline-block;width:10px;height:10px;background:#d13a2c;margin-right:6px"></span>使用領域: ' + used.toLocaleString() + ' MB' }),
-            h('div', { html: '<span style="display:inline-block;width:10px;height:10px;background:#2f7fbf;margin-right:6px"></span>空き領域: ' + free.toLocaleString() + ' MB' }),
-            h('div', { style: { borderTop: '1px solid #808080', paddingTop: '4px', marginTop: '4px' }, text: '容量: ' + cap.toLocaleString() + ' MB' }))),
-        h('p', { class: 't dim', style: { marginTop: '12px' }, text: 'ファイル システム: ' + (it.kind === 'cd' ? 'CDFS' : 'FAT32') })),
-      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true }]
-    });
+  /* 小さな浮き窓（音量など） */
+  var popupEl = null;
+  function closePopup() { if (popupEl) { popupEl.remove(); popupEl = null; } }
+  function popup(el, x, y) { closeAllMenus(); popupEl = el; el.classList.add('popup'); el.style.left = x + 'px'; el.style.top = y + 'px'; D.root.appendChild(el); }
+
+  /* =================================================================
+   *  ファイルの種類
+   * ================================================================= */
+  var SPECIAL = { 'C:\\My Documents': 'mydocs', 'C:\\WINDOWS\\Desktop': 'desk' };
+  function kindOf(name, node) {
+    if (node && node.t === 'd') return 'dir';
+    var x = VFS.ext(name);
+    if (/^(txt|ini|log|bat|sys|inf|cfg|nfo)$/.test(x)) return x === 'txt' || x === 'log' ? 'txt' : 'ini';
+    if (x === 'bmp') return 'bmp';
+    if (x === 'exe' || x === 'com') return 'exe';
+    if (x === 'wav') return 'wav';
+    if (/^(htm|html|url)$/.test(x)) return 'htm';
+    return 'doc';
+  }
+  var ICON32 = { dir: 'folder32', txt: 'file-txt', ini: 'file-ini', bmp: 'file-bmp', exe: 'file-exe', wav: 'file-wav', htm: 'file-htm', doc: 'file-doc' };
+  var ICON16 = { dir: 'folder16', txt: 'txt16', ini: 'ini16', bmp: 'bmp16', exe: 'exe16', wav: 'wav16', htm: 'htm16', doc: 'doc16' };
+  var EXE_ICON = {
+    'app:notepad': ['file-txt', 'notepad16'], 'app:paint': ['file-bmp', 'paint16'], 'app:calc': ['ico-calc', 'calc16'],
+    'app:mines': ['ico-mines', 'mine16b'], 'app:ie': ['ico-ie32', 'ie16'], 'app:wmp': ['ico-mplayer', 'wmp16'],
+    'app:oe': ['ico-oe32', 'oe16'], 'app:explorer': ['ico-mycomputer', 'explorer16'], 'app:prompt': ['file-exe', 'msdos16'],
+    'app:help': ['ico-help', 'help16'], 'app:restore': ['ico-restore', 'restore16']
+  };
+  function iconOf(path, node, small) {
+    var r = VFS.real(path) || path;
+    if (VFS.isRoot(r)) return small ? (r === 'D:' ? 'cd16' : 'hdd16') : (r === 'D:' ? 'drv-cd' : 'drv-hdd');
+    if (SPECIAL[r] === 'mydocs') return small ? 'mydocs16' : 'ico-mydocs32';
+    var k = kindOf(path, node);
+    if (k === 'exe' && node && EXE_ICON[node.d]) return EXE_ICON[node.d][small ? 1 : 0];
+    return (small ? ICON16 : ICON32)[k];
+  }
+  function fmtSize(n) {
+    if (n < 1024) return n + ' バイト';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  function fmtDate(t) { var d = new Date(t); return d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + d.getHours() + ':' + pad(d.getMinutes()); }
+
+  /* ファイルを開く（拡張子で関連付け） */
+  function openPath(path) {
+    var n = VFS.get(path);
+    if (!n) return fail('Windows', "'" + path + "' が見つかりません。\n名前を正しく入力したかどうかを確認してから、やり直してください。");
+    path = VFS.real(path) || path;
+    if (n.t === 'd') return APPS.explorer(path);
+    var k = kindOf(path, n);
+    if (k !== 'exe') Save.recent.add(path);
+    if (k === 'txt' || k === 'ini') return APPS.notepad(path);
+    if (k === 'bmp') return APPS.paint(path);
+    if (k === 'wav') return APPS.wmp(path);
+    if (k === 'htm') return APPS.ie(n.d && /^https?:/.test(n.d) ? n.d : 'about:home');
+    if (k === 'exe') return runApp(String(n.d || '').replace(/^app:/, ''), n.n);
+    return fail('ファイルを開く', "'" + n.n + "' を開くプログラムが登録されていません。");
+  }
+  function runApp(id, name) {
+    if (id === 'setup') return info('Windows Millennium Edition セットアップ', 'Windows Millennium Edition は既にこのコンピュータにインストールされています。<br><br>セットアップをやり直すには、画面上端のメニューから [セーブを消去] を選んでください。');
+    if (id === 'wordpad') return na('ワードパッド')();
+    if (APPS[id]) return APPS[id]();
+    return fail(name || 'Windows', 'このプログラムは、この再現版には含まれていません。');
   }
 
-  APPS.recycle = function () {
-    openWindow({
-      title: 'ごみ箱', w: 340, h: 230, icon: 'recycle16',
-      build: function (cli) { explorerChrome(cli, 'ごみ箱', [], function () {}, '0 個のオブジェクト'); }
-    });
-  };
-
-  APPS.control = function () {
-    openWindow({
-      title: 'コントロール パネル', w: 386, h: 250, icon: 'cpl16',
-      build: function (cli) {
-        var items = [
-          { name: '画面', icon: 'cpl-display', kind: 'disp' },
-          { name: '日付と時刻', icon: 'cpl-datetime', kind: 'tz' },
-          { name: 'システム', icon: 'cpl-system', kind: 'sys' },
-          { name: 'サウンド', icon: 'cpl-sound', kind: 'snd' }
-        ];
-        explorerChrome(cli, 'コントロール パネル', items, function (it) {
-          if (it.kind === 'tz') return tzDialog();
-          if (it.kind === 'disp') return displayProps();
-          if (it.kind === 'sys') return sysProps();
-          dialog({
-            title: 'サウンドのプロパティ', icon: 'info', width: 340,
-            body: 'この再現では、サウンドの詳細設定は用意されていません。<br><br>画面の下にある [音] ボタンで、効果音の有無を切り替えられます。'
+  /* =================================================================
+   *  ファイル ダイアログ（開く / 名前を付けて保存）
+   * ================================================================= */
+  function fileDialog(o) {
+    return new Promise(function (resolve) {
+      var dir = o.dir || 'C:\\My Documents', chosen = null;
+      var place = h('div', { class: 'well fd-place' });
+      var up = h('button', { class: 'btn tbtn', type: 'button', title: '1 つ上のフォルダへ' }, h('i', { class: 'arw u' }));
+      var list = h('div', { class: 'well fd-list', tabindex: '0' });
+      var name = Field({ value: o.name || '', w: '100%' });
+      name.dataset.autofocus = '1';
+      function draw() {
+        place.replaceChildren(pic(iconOf(dir, VFS.get(dir), true), 16, 16), h('span', { text: VFS.disp(dir) }));
+        list.replaceChildren();
+        up.disabled = VFS.isRoot(dir);
+        (VFS.list(dir) || []).forEach(function (n) {
+          if (n.t !== 'd' && o.exts && o.exts.indexOf(VFS.ext(n.n)) < 0) return;
+          var p = VFS.join(dir, n.n);
+          var it = h('div', { class: 'fd-it' }, pic(iconOf(p, n, true), 16, 16), h('span', { text: n.n }));
+          it.addEventListener('click', function () {
+            list.querySelectorAll('.fd-it').forEach(function (x) { x.classList.remove('on'); });
+            it.classList.add('on');
+            if (n.t !== 'd') name.value = n.n;
           });
-        }, '4 個のオブジェクト');
+          it.addEventListener('dblclick', function () {
+            if (n.t === 'd') { dir = p; draw(); } else { name.value = n.n; accept(); }
+          });
+          add(list, it);
+        });
       }
+      up.addEventListener('click', function () { if (!VFS.isRoot(dir)) { dir = VFS.parent(dir); draw(); } });
+      var closeFn = null;
+      function accept() {
+        var v = name.value.trim();
+        if (!v) return;
+        if (/^[a-z]:/i.test(v) || v.indexOf('\\') >= 0) {
+          var t = VFS.get(v);
+          if (t && t.t === 'd') { dir = VFS.real(v); name.value = ''; draw(); return; }
+        }
+        if (o.mode === 'save' && o.defExt && !/\.[^.]+$/.test(v)) v += '.' + o.defExt;
+        var p = /^[a-z]:/i.test(v) ? v : VFS.join(dir, v);
+        var ex = VFS.get(p);
+        if (ex && ex.t === 'd') { dir = VFS.real(p); name.value = ''; draw(); return; }
+        if (o.mode === 'open') {
+          if (!ex) return fail(o.title, VFS.base(p) + '\nファイルが見つかりません。\nファイル名を確認してください。');
+          chosen = VFS.real(p); closeFn('ok'); return;
+        }
+        if (!VFS.validName(VFS.base(p))) return fail(o.title, 'ファイル名に次の文字は使えません:\n\\ / : * ? " < > |');
+        if (VFS.readonly(p)) return fail(o.title, 'ディスクは書き込み禁止になっています。');
+        if (ex) {
+          dialog({
+            title: o.title, icon: 'warn', width: 360, body: esc(VFS.disp(p)) + ' は既に存在します。<br>上書きしますか?',
+            buttons: [{ id: 'y', label: 'はい(&Y)' }, { id: 'n', label: 'いいえ(&N)', def: true, esc: true }]
+          }).then(function (r) { if (r === 'y') { chosen = VFS.real(p) || p; closeFn('ok'); } });
+          return;
+        }
+        chosen = p; closeFn('ok');
+      }
+      draw();
+      dialog({
+        title: o.title, width: 420, sound: false, cls: 'filedlg',
+        body: h('div', {},
+          h('div', { class: 'fd-row' }, h('label', { html: (o.mode === 'save' ? '保存する場所' : 'ファイルの場所') + '(<u>I</u>):' }), place, up),
+          list,
+          h('div', { class: 'fd-grid' },
+            h('label', { html: 'ファイル名(<u>N</u>):' }), name,
+            h('label', { html: 'ファイルの種類(<u>T</u>):' }), h('div', { class: 'well fd-type', text: o.typeLabel || 'すべてのファイル (*.*)' }))),
+        buttons: [{ id: 'ok', label: o.mode === 'save' ? '保存(&S)' : '開く(&O)', def: true }, { id: 'cancel', label: 'キャンセル', esc: true }],
+        btnAlign: 'right',
+        onOpen: function (win, done) { closeFn = done; },
+        onButton: function (id) { if (id === 'ok') { accept(); return false; } }
+      }).then(function (r) { resolve(r === 'ok' ? chosen : null); });
     });
+  }
+
+  /* 名前の入力（新しいフォルダ・名前の変更） */
+  function askName(title, prompt, value) {
+    var f = Field({ value: value || '', w: '100%' });
+    f.dataset.autofocus = '1';
+    return dialog({
+      title: title, width: 330, sound: false, btnAlign: 'right',
+      body: h('div', {}, h('div', { text: prompt, style: { marginBottom: '8px' } }), f),
+      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true }],
+      onOpen: function () { setTimeout(function () { f.select(); }, 30); }
+    }).then(function (r) { return r === 'ok' ? f.value.trim() : null; });
+  }
+
+  /* ファイル操作のまとまり（エクスプローラとデスクトップで共通） */
+  var Ops = {
+    newFolder: function (dir) {
+      try { VFS.mkdir(VFS.join(dir, VFS.unique(dir, '新しいフォルダ'))); } catch (e) { fail('フォルダの作成', e.message); }
+    },
+    newFile: function (dir, kind) {
+      var base = kind === 'bmp' ? '新規 ビットマップ イメージ' : '新規 テキスト文書';
+      try { VFS.write(VFS.join(dir, VFS.unique(dir, base, kind === 'bmp' ? 'bmp' : 'txt')), ''); } catch (e) { fail('新規作成', e.message); }
+    },
+    rename: function (path) {
+      var n = VFS.get(path); if (!n) return;
+      askName('名前の変更', '新しい名前を入力してください。', n.n).then(function (v) {
+        if (!v || v === n.n) return;
+        try { VFS.rename(path, v); } catch (e) { fail('名前の変更', e.message); }
+      });
+    },
+    del: function (paths) {
+      paths = [].concat(paths).filter(function (p) { return VFS.get(p); });
+      if (!paths.length) return;
+      if (VFS.readonly(paths[0])) return fail('ファイルの削除', 'ディスクは書き込み禁止になっています。');
+      var n = VFS.get(paths[0]);
+      var msg = paths.length > 1 ? 'これらの ' + paths.length + ' 個の項目をごみ箱に移しますか?' :
+        "'" + n.n + "' " + (n.t === 'd' ? 'とその内容をすべて' : 'を') + 'ごみ箱に移しますか?';
+      dialog({
+        title: paths.length > 1 ? '複数ファイルの削除の確認' : (n.t === 'd' ? 'フォルダの削除の確認' : 'ファイルの削除の確認'),
+        icon: 'ico-recycle-full', width: 370, body: esc(msg),
+        buttons: [{ id: 'y', label: 'はい(&Y)', def: true }, { id: 'n', label: 'いいえ(&N)', esc: true }]
+      }).then(function (r) {
+        if (r !== 'y') return;
+        try { paths.forEach(function (p) { VFS.remove(p); }); } catch (e) { fail('ファイルの削除', e.message); }
+      });
+    },
+    props: function (path) {
+      var n = VFS.get(path); if (!n) return;
+      var k = kindOf(path, n);
+      var TYPE = { dir: 'ファイル フォルダ', txt: 'テキスト文書', ini: '構成設定', bmp: 'ビットマップ イメージ', exe: 'アプリケーション', wav: 'Wave サウンド', htm: 'HTML 文書', doc: 'ファイル' };
+      var count = n.t === 'd' ? (function c(x) { return x.c.reduce(function (s, y) { return s + (y.t === 'd' ? 1 + c(y) : 1); }, 0); })(n) : 0;
+      dialog({
+        title: n.n + 'のプロパティ', width: 340, sound: false, btnAlign: 'right',
+        body: h('div', { class: 'props' },
+          h('div', { class: 'props-head' }, pic(iconOf(path, n, false), 32, 32), h('span', { text: n.n })),
+          h('div', { class: 'props-grid' },
+            h('span', { text: '種類:' }), h('span', { text: TYPE[k] }),
+            h('span', { text: '場所:' }), h('span', { text: VFS.disp(VFS.parent(path) || path) }),
+            h('span', { text: 'サイズ:' }), h('span', { text: fmtSize(VFS.size(n)) + ' (' + VFS.size(n).toLocaleString() + ' バイト)' }),
+            n.t === 'd' ? h('span', { text: '内容:' }) : null, n.t === 'd' ? h('span', { text: count + ' 個の項目' }) : null,
+            h('span', { text: '更新日時:' }), h('span', { text: fmtDate(n.m || Date.now()) }))),
+        buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true }]
+      });
+    }
   };
 
+  /* =================================================================
+   *  壁紙・表示設定
+   * ================================================================= */
   var WALLS = [
     ['(なし)', '#3a6ea5'],
     ['ティール', '#008080'],
     ['夕暮れ', 'linear-gradient(180deg,#e0855b 0%,#b3554a 52%,#5c2b45 100%)'],
     ['深い青', 'linear-gradient(180deg,#26324a 0%,#161d2c 60%,#0b0f18 100%)'],
     ['森', '#2f5f3f'],
-    ['Windows 標準 (グレー)', '#808080']
+    ['Windows 標準 (グレー)', '#808080'],
+    ['ブルーの石畳', 'repeating-conic-gradient(#3a6ea5 0 25%,#336497 0 50%) 0 0/16px 16px'],
+    ['砂', 'radial-gradient(circle at 30% 30%,#d8c7a0,#b49a6a 70%,#8a744c)']
   ];
-  function displayProps() {
-    var cur = D.wallIdx;
-    var list = h('div', { class: 'well lst', style: { height: '100px' }, tabindex: '0' });
-    var screen = h('div', { class: 'mon-screen' });
-    var prev = h('div', { class: 'mon' }, pic('sys-monitor', 122, 120), screen);
-    function paint(i) { screen.style.background = WALLS[i][1]; }
-    WALLS.forEach(function (w2, i) {
-      var it = h('div', { class: 'it', text: w2[0] });
-      it.setAttribute('aria-selected', i === cur ? 'true' : 'false');
-      it.addEventListener('click', function () {
-        cur = i; paint(i);
-        list.querySelectorAll('.it').forEach(function (n, j) { n.setAttribute('aria-selected', j === i ? 'true' : 'false'); });
-      });
-      add(list, it);
-    });
-    paint(cur);
-    dialog({
-      title: '画面のプロパティ', width: 388, sound: false, btnAlign: 'right',
-      body: h('div', {},
-        h('div', { style: { display: 'flex', justifyContent: 'center', marginBottom: '8px' } }, prev),
-        h('label', { html: '背景の色またはデザインを選んでください(<u>S</u>):', style: { display: 'block', marginBottom: '4px' } }), list),
-      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true }, { id: 'ap', label: '適用(&A)' }],
-      onButton: function (id) {
-        if (id === 'ap' || id === 'ok') { D.wallIdx = cur; D.root.style.background = WALLS[cur][1]; }
-        if (id === 'ap') return false;
-      }
-    });
-  }
-
-  function tzDialog() {
-    var clock = h('div', { class: 'bigclock' });
-    function upd() {
-      var d = new Date();
-      clock.textContent = d.getFullYear() + '年 ' + (d.getMonth() + 1) + '月 ' + d.getDate() + '日   ' +
-        pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  function wallCSS() {
+    var d = Save.state.desk;
+    if (d.wall === -1 && d.wallImg) {
+      return d.wallMode === 'tile' ? '#3a6ea5 url("' + d.wallImg + '") 0 0 repeat' : '#3a6ea5 url("' + d.wallImg + '") center/auto no-repeat';
     }
-    upd();
-    var iv = setInterval(upd, 1000);
+    return (WALLS[d.wall] || WALLS[0])[1];
+  }
+  function applyWall() { if (D) D.root.style.background = wallCSS(); }
+
+  /* =================================================================
+   *  デスクトップ アイコン
+   * ================================================================= */
+  var DESKDIR = 'C:\\WINDOWS\\Desktop';
+  function sysIcons() {
+    var full = VFS.recycle.list().length > 0;
+    return [
+      { name: 'マイ ドキュメント', icon: 'ico-mydocs', act: function () { APPS.explorer('C:\\My Documents'); }, menu: 'folder', path: 'C:\\My Documents' },
+      { name: 'マイ コンピュータ', icon: 'ico-mycomputer', act: function () { APPS.explorer('::mycomputer'); }, menu: 'mycomputer' },
+      { name: 'マイ ネットワーク', icon: 'ico-network', act: function () { info('マイ ネットワーク', 'ワークグループ ' + esc(S.pc.wg) + ' には、ほかのコンピュータは見つかりませんでした。'); } },
+      { name: 'ごみ箱', icon: full ? 'ico-recycle-full' : 'ico-recycle', act: function () { APPS.explorer('::recycle'); }, menu: 'recycle' },
+      { name: 'Internet Explorer', icon: 'ico-ie', act: function () { APPS.ie(); } },
+      { name: 'Outlook Express', icon: 'ico-oe', act: function () { APPS.oe(); } }
+    ];
+  }
+  function drawIcons() {
+    if (!D) return;
+    var list = sysIcons();
+    (VFS.list(DESKDIR) || []).forEach(function (n) {
+      var p = VFS.join(DESKDIR, n.n);
+      list.push({ name: n.n, icon: iconOf(p, n, false), act: function () { openPath(p); }, menu: 'file', path: p });
+    });
+    D.icons.replaceChildren();
+    list.forEach(function (d, i) {
+      var el = h('div', { class: 'dicon' }, pic(d.icon, 32, 32), h('div', {}, h('span', { class: 'lab', text: d.name })));
+      el.style.left = (Math.floor(i / 6) * 75) + 'px';
+      el.style.top = ((i % 6) * 75) + 'px';
+      el.setAttribute('aria-selected', 'false');
+      el.tabIndex = 0;
+      function sel() {
+        D.icons.querySelectorAll('.dicon').forEach(function (n) { n.setAttribute('aria-selected', 'false'); });
+        el.setAttribute('aria-selected', 'true');
+      }
+      el.addEventListener('click', function (e) { e.stopPropagation(); closeAllMenus(); sel(); });
+      el.addEventListener('dblclick', function () { d.act(); });
+      el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') d.act();
+        if (e.key === 'Delete' && d.menu === 'file') Ops.del(d.path);
+        if (e.key === 'F2' && d.menu === 'file') Ops.rename(d.path);
+      });
+      el.addEventListener('contextmenu', function (e) {
+        sel();
+        var items = [{ label: '開く(&O)', bold: true, act: d.act }];
+        if (d.menu === 'file') items.push({ sep: true }, { label: '削除(&D)', act: function () { Ops.del(d.path); } }, { label: '名前の変更(&M)', act: function () { Ops.rename(d.path); } }, { sep: true }, { label: 'プロパティ(&R)', act: function () { Ops.props(d.path); } });
+        if (d.menu === 'folder') items.push({ label: 'エクスプローラ(&X)', act: d.act }, { sep: true }, { label: 'プロパティ(&R)', act: function () { Ops.props(d.path); } });
+        if (d.menu === 'recycle') items.push({ label: 'ごみ箱を空にする(&B)', dis: !VFS.recycle.list().length, act: emptyRecycle });
+        if (d.menu === 'mycomputer') items.push({ label: 'エクスプローラ(&X)', act: d.act }, { sep: true }, { label: 'プロパティ(&R)', act: function () { APPS.sysprops(); } });
+        ctxMenu(e, items);
+      });
+      add(D.icons, el);
+    });
+  }
+  function emptyRecycle() {
+    var n = VFS.recycle.list().length;
+    if (!n) return;
     dialog({
-      title: '日付と時刻のプロパティ', width: 380, sound: false, btnAlign: 'right',
-      body: h('div', {}, clock,
-        h('div', { style: { marginTop: '10px' }, text: '現在のタイム ゾーン: ' + S.tz })),
-      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true }]
-    }).then(function () { clearInterval(iv); });
+      title: '複数ファイルの削除の確認', icon: 'ico-recycle-full', width: 370,
+      body: 'これらの ' + n + ' 個の項目を削除しますか?',
+      buttons: [{ id: 'y', label: 'はい(&Y)', def: true }, { id: 'n', label: 'いいえ(&N)', esc: true }]
+    }).then(function (r) { if (r === 'y') { VFS.recycle.empty(); snd.recycle(); } });
   }
 
-  function sysProps() {
-    var k = S.key.join('').replace(/(.{5})(?=.)/g, '$1-') || '-----';
-    dialog({
-      title: 'システムのプロパティ', width: 440, sound: false, btnAlign: 'right',
-      body: h('div', { style: { display: 'flex', gap: '16px' } },
-        h('div', {}, pic('sys-monitor', 122, 120)),
-        h('div', { style: { lineHeight: '1.85', flex: '1' } },
-          h('div', { style: { fontWeight: '700' }, text: 'システム:' }),
-          h('div', { text: 'Microsoft Windows Millennium Edition' }),
-          h('div', { text: '4.90.3000' }),
-          h('div', { style: { fontWeight: '700', marginTop: '8px' }, text: '使用者:' }),
-          h('div', { text: S.user.name }),
-          h('div', { text: S.user.company || '(会社名なし)' }),
-          h('div', { text: k }),
-          h('div', { style: { fontWeight: '700', marginTop: '8px' }, text: 'コンピュータ:' }),
-          h('div', { text: 'Pentium(R) III プロセッサ' }),
-          h('div', { text: '128.0 MB RAM' }))),
-      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true }]
-    });
-  }
-
-  APPS.notepad = function () {
-    openWindow({
-      title: '無題 - メモ帳', w: 340, h: 230,
-      build: function (cli) {
-        add(cli, h('div', { class: 'mbar' },
-          h('span', { html: 'ファイル(<u>F</u>)' }), h('span', { html: '編集(<u>E</u>)' }),
-          h('span', { html: '検索(<u>S</u>)' }), h('span', { html: 'ヘルプ(<u>H</u>)' })));
-        var ta = h('textarea', { class: 'np' });
-        ta.value = '';
-        add(cli, ta);
-        setTimeout(function () { ta.focus(); }, 30);
-      }
-    });
-  };
-
-  APPS.paint = function () {
-    var colors = ['#000000', '#808080', '#ffffff', '#d13a2c', '#f2c31c', '#3fa34d', '#2f7fbf', '#7b4ea8'];
-    openWindow({
-      title: '無題 - ペイント', w: 376, h: 276,
-      build: function (cli) {
-        add(cli, h('div', { class: 'mbar' },
-          h('span', { html: 'ファイル(<u>F</u>)' }), h('span', { html: '編集(<u>E</u>)' }), h('span', { html: 'ヘルプ(<u>H</u>)' })));
-        var cv = h('canvas', { class: 'pcanvas', width: '330', height: '176' });
-        var ctx = cv.getContext('2d');
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, 330, 176);
-        var col = '#000000', size = 3, drawing = false;
-        var sw = h('div', { class: 'swatches' });
-        colors.forEach(function (c) {
-          var b = h('button', { class: 'sw', type: 'button', style: { background: c }, 'aria-label': c });
-          b.addEventListener('click', function () {
-            col = c;
-            sw.querySelectorAll('.sw').forEach(function (n) { n.classList.remove('on'); });
-            b.classList.add('on');
-          });
-          add(sw, b);
-        });
-        sw.firstElementChild.classList.add('on');
-        add(sw, h('span', { style: { flex: '1' } }));
-        add(sw, Btn('消去', { onClick: function () { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 330, 176); } }));
-        var sizes = h('div', { class: 'swatches' });
-        [1, 3, 7].forEach(function (s2) {
-          var b = h('button', { class: 'sw dot', type: 'button' }, h('i', { style: { width: (s2 + 2) + 'px', height: (s2 + 2) + 'px' } }));
-          b.addEventListener('click', function () {
-            size = s2;
-            sizes.querySelectorAll('.sw').forEach(function (n) { n.classList.remove('on'); });
-            b.classList.add('on');
-          });
-          add(sizes, b);
-        });
-        sizes.children[1].classList.add('on');
-        add(cli, h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', padding: '3px 2px' } }, sizes, sw));
-        var holder = h('div', { class: 'pwrap' }, cv);
-        add(cli, holder);
-        function pos(e) {
-          var r = cv.getBoundingClientRect();
-          return { x: (e.clientX - r.left) * (330 / r.width), y: (e.clientY - r.top) * (176 / r.height) };
-        }
-        cv.addEventListener('pointerdown', function (e) {
-          drawing = true;
-          cv.setPointerCapture(e.pointerId);
-          var p = pos(e);
-          ctx.strokeStyle = col; ctx.lineWidth = size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-          ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 0.1, p.y); ctx.stroke();
-        });
-        cv.addEventListener('pointermove', function (e) {
-          if (!drawing) return;
-          var p = pos(e);
-          ctx.lineTo(p.x, p.y); ctx.stroke();
-        });
-        cv.addEventListener('pointerup', function () { drawing = false; });
-        cv.addEventListener('pointerleave', function () { drawing = false; });
-      }
-    });
-  };
-
-  /* ------------------------------------------------------ MS-DOS 風端末 */
-  function makeTerminal(opts) {
-    opts = opts || {};
-    var out = h('div', { class: 'termout' });
-    var inp = h('input', { class: 'termin', spellcheck: 'false', autocomplete: 'off' });
-    var line = h('div', { class: 'termline' }, h('span', { text: 'C:\\WINDOWS>' }), inp);
-    var el = h('div', { class: 'term' }, out, line);
-    function say(t) { add(out, h('div', { text: t })); el.scrollTop = el.scrollHeight; }
-    (opts.banner || []).forEach(say);
-    inp.addEventListener('keydown', function (e) {
-      if (e.key !== 'Enter') return;
-      var raw = inp.value;
-      var cmd = raw.trim().toLowerCase();
-      say('C:\\WINDOWS>' + raw);
-      inp.value = '';
-      if (!cmd) return;
-      if (cmd === 'cls') { out.replaceChildren(); return; }
-      if (cmd === 'ver') { say(''); say('Windows Millennium [Version 4.90.3000]'); say(''); return; }
-      if (cmd === 'date') { say('現在の日付: ' + new Date().toLocaleDateString('ja-JP')); return; }
-      if (cmd === 'time') { say('現在の時刻: ' + new Date().toLocaleTimeString('ja-JP')); return; }
-      if (cmd === 'dir') {
-        say('');
-        say(' ドライブ C のボリューム ラベルは WIN_ME です');
-        say(' ディレクトリは C:\\WINDOWS');
-        say('');
-        [['.', '<DIR>', '10-14-00  9:18a'], ['..', '<DIR>', '10-14-00  9:18a'],
-         ['WIN      COM', '25,473', '06-08-00  5:00p'], ['EXPLORER EXE', '191,536', '06-08-00  5:00p'],
-         ['NOTEPAD  EXE', '53,248', '06-08-00  5:00p'], ['SYSTEM   DAT', '1,703,936', '10-14-00  9:20a'],
-         ['SYSTEM        ', '<DIR>', '10-14-00  9:18a'], ['DESKTOP       ', '<DIR>', '10-14-00  9:19a']]
-          .forEach(function (r) { say(r[0].padEnd(16) + r[1].padStart(11) + '  ' + r[2]); });
-        say('        8 個のファイル       1,974,193 バイト');
-        say('                         1,341,652,992 バイトの空き');
-        say('');
-        return;
-      }
-      if (cmd === 'help') {
-        say(''); say('使用できるコマンド: VER, DIR, CLS, DATE, TIME, ' + (opts.winCmd ? 'WIN, ' : '') + 'EXIT');
-        say(''); return;
-      }
-      if (cmd === 'win' && opts.winCmd) { opts.onWin(); return; }
-      if (cmd === 'exit') { opts.onExit && opts.onExit(); return; }
-      say("'" + raw.trim().split(/\s+/)[0] + "' は、内部コマンドまたは外部コマンド、");
-      say('操作可能なプログラムまたはバッチ ファイルとして認識されていません。');
-      say('');
-    });
-    el.addEventListener('click', function () { inp.focus(); });
-    el.focusInput = function () { setTimeout(function () { inp.focus(); }, 40); };
-    return el;
-  }
-
-  APPS.prompt = function () {
-    openWindow({
-      title: 'MS-DOS プロンプト', w: 392, h: 250,
-      build: function (cli, rec) {
-        var t = makeTerminal({
-          banner: ['Microsoft(R) Windows Millennium', '   (C) Copyright Microsoft Corp 1981-1999.', ''],
-          onExit: function () { rec.close(); }
-        });
-        cli.style.padding = '2px';
-        add(cli, t);
-        t.focusInput();
-      }
-    });
-  };
-
-  /* ------------------------------------------------------ スタート メニュー */
-  function info(title, body) { return dialog({ title: title, icon: 'info', width: 356, body: body }); }
-  function na(name) {
-    return function () { info(name, 'この再現版には、このプログラムは含まれていません。<br><br>メモ帳・ペイント・MS-DOS プロンプト・コントロール パネルは実際に動きます。'); };
-  }
-  function ie() {
-    info('インターネット接続ウィザード', 'インターネット接続はまだ設定されていません。<br><br>この再現版では、インターネットには接続しません。');
-  }
-  function lab(t) { return esc(t).replace(/&amp;(.)/, '<u>$1</u>'); }
-  function relRect(el) {
-    var r = el.getBoundingClientRect(), b = W.refs().screenWrap.getBoundingClientRect(), sc = b.width / 640;
-    return { x: (r.left - b.left) / sc, y: (r.top - b.top) / sc, w: r.width / sc, h: r.height / sc };
-  }
-
+  /* =================================================================
+   *  スタート メニュー
+   * ================================================================= */
   function menuDefs() {
     var EMPTY = [{ label: '(なし)', dis: true }];
     var ACC = [
-      { label: 'エンターテイメント', icon: 'group', sub: [{ label: 'Windows Media Player', icon: 'wmp16', act: na('Windows Media Player') }, { label: 'サウンド レコーダー', act: na('サウンド レコーダー') }, { label: 'ボリューム コントロール', act: na('ボリューム コントロール') }] },
-      { label: 'ゲーム', icon: 'group', sub: [{ label: 'スパイダ ソリティア', act: na('スパイダ ソリティア') }, { label: 'ソリティア', act: na('ソリティア') }, { label: 'ピンボール', act: na('ピンボール') }, { label: 'マインスイーパ', act: na('マインスイーパ') }] },
-      { label: 'システム ツール', icon: 'group', sub: [{ label: 'システムの復元', act: na('システムの復元') }, { label: 'スキャンディスク', act: na('スキャンディスク') }, { label: 'デフラグ', act: na('デフラグ') }] },
+      { label: 'エンターテイメント', icon: 'group', sub: [
+        { label: 'Windows Media Player', icon: 'wmp16', act: function () { APPS.wmp(); } },
+        { label: 'ボリューム コントロール', icon: 'wav16', act: volumePopup },
+        { label: 'サウンド レコーダー', act: na('サウンド レコーダー') }] },
+      { label: 'ゲーム', icon: 'group', sub: [
+        { label: 'マインスイーパ', icon: 'mine16b', act: function () { APPS.mines(); } },
+        { label: 'スパイダ ソリティア', act: na('スパイダ ソリティア') }, { label: 'ソリティア', act: na('ソリティア') },
+        { label: 'ピンボール', act: na('ピンボール') }] },
+      { label: 'システム ツール', icon: 'group', sub: [
+        { label: 'システムの復元', icon: 'restore16', act: function () { APPS.restore(); } },
+        { label: 'システム情報', icon: 'settings16', act: function () { APPS.sysprops(); } },
+        { label: 'スキャンディスク', act: function () { APPS.scandisk(); } },
+        { label: 'デフラグ', act: na('デフラグ') }] },
       { label: '通信', icon: 'group', sub: [{ label: 'ホーム ネットワーク ウィザード', act: na('ホーム ネットワーク ウィザード') }, { label: 'ダイヤルアップ ネットワーク', act: na('ダイヤルアップ ネットワーク') }] },
       { label: 'アドレス帳', icon: 'addressbook16', act: na('アドレス帳') },
-      { label: '電卓', icon: 'calc16', act: na('電卓') },
+      { label: '電卓', icon: 'calc16', act: function () { APPS.calc(); } },
       { label: 'イメージング', icon: 'imaging16', act: na('イメージング') },
-      { label: 'MS-DOS プロンプト', icon: 'msdos16', act: APPS.prompt },
-      { label: 'メモ帳', icon: 'notepad16', act: APPS.notepad },
-      { label: 'ペイント', icon: 'paint16', act: APPS.paint },
-      { label: 'エクスプローラ', icon: 'explorer16', act: APPS.mycomputer },
+      { label: 'MS-DOS プロンプト', icon: 'msdos16', act: function () { APPS.prompt(); } },
+      { label: 'メモ帳', icon: 'notepad16', act: function () { APPS.notepad(); } },
+      { label: 'ペイント', icon: 'paint16', act: function () { APPS.paint(); } },
+      { label: 'エクスプローラ', icon: 'explorer16', act: function () { APPS.explorer('C:'); } },
       { label: 'Windows ムービー メーカー', icon: 'moviemaker16', act: na('Windows ムービー メーカー') },
       { label: 'ワードパッド', icon: 'wordpad16', act: na('ワードパッド') }
     ];
@@ -444,96 +558,103 @@
       { label: 'アクセサリ', icon: 'group', sub: ACC },
       { label: 'オンライン サービス', icon: 'group', sub: EMPTY },
       { label: 'スタートアップ', icon: 'group', sub: EMPTY },
-      { label: 'Internet Explorer', icon: 'ie16', act: ie },
-      { label: 'Outlook Express', icon: 'oe16', act: na('Outlook Express') },
-      { label: 'Windows Media Player', icon: 'wmp16', act: na('Windows Media Player') }
+      { label: 'Internet Explorer', icon: 'ie16', act: function () { APPS.ie(); } },
+      { label: 'Outlook Express', icon: 'oe16', act: function () { APPS.oe(); } },
+      { label: 'Windows Media Player', icon: 'wmp16', act: function () { APPS.wmp(); } }
     ];
+    var docs = [{ label: 'マイ ドキュメント', icon: 'mydocs16', act: function () { APPS.explorer('C:\\My Documents'); } }];
+    var rec = Save.recent.list();
+    if (rec.length) docs.push({ sep: true });
+    rec.forEach(function (p) {
+      var n = VFS.get(p);
+      docs.push({ label: n.n, icon: iconOf(p, n, true), act: function () { openPath(p); } });
+    });
     return [
-      { label: 'Windows Update', icon: 'sm-update', act: function () { info('Windows Update', 'インターネットに接続して、Windows Me の最新の更新を確認します。<br><br>この再現版では、インターネットには接続しません。'); } },
+      { label: 'Windows Update', icon: 'sm-update', act: function () { APPS.ie('https://www.google.com/search?igu=1&hl=ja&q=Windows+Update'); } },
       { sep: true },
       { label: 'プログラム(&P)', icon: 'sm-programs', sub: PROGRAMS },
-      { label: '最近使ったファイル(&D)', icon: 'sm-documents', sub: [{ label: 'マイ ドキュメント', icon: 'folder16', act: function () { info('マイ ドキュメント', 'このフォルダは空です。'); } }, { label: 'マイ ピクチャ', icon: 'folder16', act: function () { info('マイ ピクチャ', 'このフォルダは空です。'); } }] },
-      { label: '設定(&S)', icon: 'sm-settings', sub: [{ label: 'コントロール パネル(&C)', icon: 'cpl16', act: APPS.control }, { label: 'ダイヤルアップ ネットワーク(&N)', icon: 'folder16', act: na('ダイヤルアップ ネットワーク') }, { label: 'プリンタ(&P)', icon: 'folder16', act: na('プリンタ') }, { label: 'タスク バーと [スタート] メニュー(&T)', icon: 'display16', act: displayProps }] },
-      { label: '検索(&C)', icon: 'sm-search', sub: [{ label: 'ファイルやフォルダ(&F)...', icon: 'explorer16', act: function () { info('検索結果', '検索条件に一致するファイルは見つかりませんでした。'); } }, { label: 'インターネット上(&I)...', icon: 'ie16', act: ie }] },
-      { label: 'ヘルプ(&H)', icon: 'sm-help', act: function () { info('ヘルプとサポート', 'Windows Me のヘルプとサポートでは、キーワードから説明やトラブルシューティング ツールを探せます。<br><br>この再現版には、目次は含まれていません。'); } },
+      { label: '最近使ったファイル(&D)', icon: 'sm-documents', sub: docs },
+      { label: '設定(&S)', icon: 'sm-settings', sub: [
+        { label: 'コントロール パネル(&C)', icon: 'cpl16', act: function () { APPS.explorer('::control'); } },
+        { label: 'ダイヤルアップ ネットワーク(&N)', icon: 'folder16', act: na('ダイヤルアップ ネットワーク') },
+        { label: 'プリンタ(&P)', icon: 'folder16', act: na('プリンタ') },
+        { label: 'タスク バーと [スタート] メニュー(&T)', icon: 'settings16', act: taskbarProps }] },
+      { label: '検索(&C)', icon: 'sm-search', sub: [
+        { label: 'ファイルやフォルダ(&F)...', icon: 'search16', act: function () { APPS.find(); } },
+        { label: 'インターネット上(&I)...', icon: 'ie16', act: function () { APPS.ie('about:home'); } }] },
+      { label: 'ヘルプ(&H)', icon: 'sm-help', act: function () { APPS.help(); } },
       { label: 'ファイル名を指定して実行(&R)...', icon: 'sm-run', act: runDialog },
       { sep: true },
-      { label: (S.user.name || 'ユーザー') + ' のログオフ(&L)...', icon: 'sm-logoff', act: function () {
-        dialog({
-          title: 'Windows のログオフ', icon: 'sm-logoff', width: 330, sound: false,
-          body: 'ログオフしますか?',
-          buttons: [{ id: 'y', label: 'はい(&Y)', def: true }, { id: 'n', label: 'いいえ(&N)', esc: true }]
-        }).then(function (r) { if (r === 'y') { stopClock(); window.__logon(); } });
-      } },
+      { label: (S.user.name || 'ユーザー') + ' のログオフ(&L)...', icon: 'sm-logoff', act: logoff },
       { label: 'Windows の終了(&U)...', icon: 'sm-shutdown', act: shutdownDialog }
     ];
   }
-
-  var menuStack = [];             /* 開いているカスケード メニュー（階層順） */
-  function closeFrom(level) {
-    while (menuStack.length > level) menuStack.pop().remove();
+  var startMenuEl = null;
+  function closeStart() {
+    if (startMenuEl) { startMenuEl.remove(); startMenuEl = null; }
+    if (D) D.startBtn.classList.remove('is-down');
   }
-  function openCascade(row, items, level) {
-    closeFrom(level);
-    var m = h('div', { class: 'cmenu' });
-    items.forEach(function (c) { add(m, cascadeRow(c, level + 1)); });
-    D.root.appendChild(m);
-    var r = relRect(row);
-    var x = r.x + r.w - 3, y = r.y - 3;
-    if (x + m.offsetWidth > 638) x = Math.max(0, r.x - m.offsetWidth + 3);
-    if (y + m.offsetHeight > 452) y = Math.max(0, 452 - m.offsetHeight);
-    m.style.left = x + 'px'; m.style.top = y + 'px';
-    menuStack.push(m);
-  }
-  function cascadeRow(c, level) {
-    var it = h('div', { class: 'cmi' + (c.dis ? ' dis' : '') },
-      h('span', { class: 'ci' }, c.icon ? pic(c.icon, 16, 16) : null),
-      h('span', { class: 'cl', html: lab(c.label) }),
-      c.sub ? h('span', { class: 'ar' }) : null);
-    function hot() {
-      Array.prototype.forEach.call(it.parentNode.children, function (n) { n.classList.remove('hot'); });
-      it.classList.add('hot');
-    }
-    it.addEventListener('mouseenter', function () {
-      hot();
-      if (c.sub) openCascade(it, c.sub, level); else closeFrom(level);
-    });
-    it.addEventListener('click', function (e) {
-      e.stopPropagation();
-      if (c.dis) return;
-      if (c.sub) { hot(); openCascade(it, c.sub, level); return; }
-      closeStart();
-      if (c.act) c.act();
-    });
-    return it;
-  }
-
-  function buildStartMenu() {
+  function toggleStart() {
+    if (startMenuEl) { closeAllMenus(); return; }
+    closeAllMenus();
     var items = h('div', { class: 'smitems' });
     var menu = h('div', { class: 'startmenu' }, h('div', { class: 'banner' }, pic('sm-banner', 21, 304)), items);
     menuDefs().forEach(function (o) {
       if (o.sep) { add(items, h('div', { class: 'smsep' })); return; }
       var it = h('div', { class: 'smi' }, pic(o.icon, 32, 32), h('span', { class: 'sl', html: lab(o.label) }), o.sub ? h('span', { class: 'ar' }) : null);
-      function hot() {
+      it.dataset.acc = accOf(o.label);
+      it.addEventListener('mouseenter', function () {
         items.querySelectorAll('.smi').forEach(function (n) { n.classList.remove('hot'); });
         it.classList.add('hot');
-      }
-      it.addEventListener('mouseenter', function () {
-        hot();
-        if (o.sub) openCascade(it, o.sub, 0); else closeFrom(0);
+        if (o.sub) { var r = relRect(it); openMenuAt(o.sub, r.x + r.w - 3, r.y - 3, 0, null, r.x); } else closeMenus(0);
       });
       it.addEventListener('click', function (e) {
         e.stopPropagation();
-        if (o.sub) { hot(); openCascade(it, o.sub, 0); return; }
-        closeStart();
+        if (o.sub) { var r = relRect(it); openMenuAt(o.sub, r.x + r.w - 3, r.y - 3, 0, null, r.x); return; }
+        closeAllMenus();
         if (o.act) o.act();
       });
       add(items, it);
     });
-    menu.addEventListener('click', function (e) { e.stopPropagation(); });
-    return menu;
+    D.root.appendChild(menu);
+    startMenuEl = menu;
+    D.startBtn.classList.add('is-down');
   }
 
+  /* =================================================================
+   *  タスク バーのダイアログ類
+   * ================================================================= */
+  function taskbarProps() {
+    var c = Check({ label: '時計を表示する(&C)', checked: Save.state.desk.clock !== false });
+    dialog({
+      title: 'タスク バーと [スタート] メニューのプロパティ', width: 360, sound: false, btnAlign: 'right',
+      body: h('div', {},
+        Check({ label: '常に手前に表示(&T)', checked: true, disabled: true }),
+        Check({ label: '自動的に隠す(&U)', disabled: true }),
+        Check({ label: '[スタート] メニューに小さいアイコンを表示する(&S)', disabled: true }),
+        c),
+      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true }]
+    }).then(function (r) {
+      if (r !== 'ok') return;
+      Save.state.desk.clock = c.input.checked; Save.schedule();
+      if (D) D.clock.hidden = !c.input.checked;
+    });
+  }
+  function volumePopup() {
+    var desk = Save.state.desk;
+    var rng = h('input', { type: 'range', min: '0', max: '100', class: 'vol-range', 'aria-label': '音量' });
+    rng.value = String(Math.round(desk.vol * 100));
+    var mute = Check({ label: 'ミュート(&M)', checked: !!desk.mute });
+    function apply() {
+      desk.vol = +rng.value / 100; desk.mute = mute.input.checked;
+      W.setVolume(desk.mute ? 0 : desk.vol); Save.schedule();
+    }
+    rng.addEventListener('input', apply);
+    rng.addEventListener('change', function () { apply(); snd.ding(); });
+    mute.input.addEventListener('change', apply);
+    var el = h('div', { class: 'volpop' }, h('div', { text: '音量' }), rng, mute);
+    popup(el, 532, DESK_H - 160);
+  }
   function runDialog() {
     var f = Field({ w: '100%' });
     f.dataset.autofocus = '1';
@@ -541,217 +662,202 @@
       title: 'ファイル名を指定して実行', width: 356, sound: false, btnAlign: 'right',
       body: h('div', {},
         h('div', { class: 'dlg-row' }, h('div', {}, pic('sm-run', 32, 32)),
-          h('div', { class: 'msg' }, '実行するプログラム名、または開くフォルダやドキュメント名を入力してください。')),
+          h('div', { class: 'msg' }, '実行するプログラム名、または開くフォルダやドキュメント名、インターネット リソース名を入力してください。')),
         h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '14px' } },
           h('label', { html: '名前(<u>O</u>):' }), h('div', { style: { flex: '1' } }, f))),
-      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true },
-        { id: 'b', label: '参照(&B)...' }],
+      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true }, { id: 'b', label: '参照(&B)...' }],
       onButton: function (id) {
-        if (id === 'b') { info('参照', 'この再現では、ファイルの参照はできません。'); return false; }
+        if (id === 'b') {
+          fileDialog({ mode: 'open', title: '参照', dir: 'C:\\WINDOWS' }).then(function (p) { if (p) f.value = p; });
+          return false;
+        }
       }
     }).then(function (r) {
       if (r !== 'ok') return;
-      var v = f.value.trim().toLowerCase().replace(/\.exe$/, '');
-      var map = {
-        notepad: APPS.notepad, 'メモ帳': APPS.notepad,
-        mspaint: APPS.paint, paint: APPS.paint, 'ペイント': APPS.paint,
-        command: APPS.prompt, cmd: APPS.prompt, 'ms-dos': APPS.prompt,
-        explorer: APPS.mycomputer, control: APPS.control,
-        winver: function () { sysProps(); },
-        sysedit: function () { info('SYSEDIT', 'システム構成エディタは、この再現には含まれていません。'); }
-      };
-      if (map[v]) { map[v](); return; }
+      var v = f.value.trim();
       if (!v) return;
-      dialog({
-        title: 'ファイル名を指定して実行', icon: 'error', width: 372,
-        body: "'" + esc(f.value.trim()) + "' が見つかりません。名前を正しく入力したかどうかを確認してから、やり直してください。"
-      }).then(runDialog);
+      if (!APPS.run(v)) {
+        fail('ファイル名を指定して実行', "'" + v + "' が見つかりません。名前を正しく入力したかどうかを確認してから、やり直してください。").then(runDialog);
+      }
     });
   }
+  function logoff() {
+    dialog({
+      title: 'Windows のログオフ', icon: 'sm-logoff', width: 330, sound: false,
+      body: 'ログオフしますか?',
+      buttons: [{ id: 'y', label: 'はい(&Y)', def: true }, { id: 'n', label: 'いいえ(&N)', esc: true }]
+    }).then(function (r) { if (r === 'y') { teardown(); snd.logoff(); window.__logon(); } });
+  }
 
-  /* -------------------------------------------------------- 終了オプション */
+  /* =================================================================
+   *  終了
+   * ================================================================= */
   function shutdownDialog() {
     var mode = 'off';
-    function r(v, label) {
-      return Radio({ name: 'sd', label: label, checked: mode === v, onChange: function () { mode = v; } });
-    }
+    function r(v, label) { return Radio({ name: 'sd', label: label, checked: mode === v, onChange: function () { mode = v; } }); }
     dialog({
       title: 'Windows の終了', width: 356, sound: false, btnAlign: 'right',
       body: h('div', {},
-        h('div', { class: 'dlg-row' }, h('div', {}, pic('sm-shutdown', 32, 32)),
-          h('div', { class: 'msg' }, '次の中から選んでください。')),
+        h('div', { class: 'dlg-row' }, h('div', {}, pic('sm-shutdown', 32, 32)), h('div', { class: 'msg' }, '次の中から選んでください。')),
         h('div', { style: { marginTop: '14px' } },
-          r('off', '電源を切れる状態にする(&S)'),
-          r('restart', '再起動する(&R)'),
-          r('dos', 'MS-DOS モードで再起動する(&M)'),
-          r('standby', 'スタンバイ(&T)'))),
-      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true },
-        { id: 'h', label: 'ヘルプ(&H)' }],
-      onButton: function (id) {
-        if (id === 'h') { info('Windows の終了', 'コンピュータの電源を切る前に、必ずこの画面から終了してください。'); return false; }
-      }
+          r('off', '電源を切れる状態にする(&S)'), r('restart', '再起動する(&R)'),
+          r('dos', 'MS-DOS モードで再起動する(&M)'), r('standby', 'スタンバイ(&T)'))),
+      buttons: [{ id: 'ok', label: 'OK', def: true }, { id: 'c', label: 'キャンセル', esc: true }, { id: 'h', label: 'ヘルプ(&H)' }],
+      onButton: function (id) { if (id === 'h') { APPS.help('shutdown'); return false; } }
     }).then(function (res) {
       if (res !== 'ok') return;
-      stopClock();
-      if (mode === 'standby') return standby();
-      if (mode === 'restart') { snd.logoff(); return fadeOut(function () { window.__bootLogo(window.__desktop, 3000); }); }
-      if (mode === 'dos') { snd.logoff(); return fadeOut(dosMode); }
-      snd.logoff();
-      fadeOut(powerOff);
+      shutdown(mode);
     });
   }
-
+  function shutdown(mode, after) {
+    var unsaved = D ? D.wins.filter(function (w) { return w.dirty && w.dirty(); }) : [];
+    if (unsaved.length && mode !== 'standby') {
+      unsaved[0].focus();
+      unsaved[0].close();       /* 保存確認のダイアログが出る */
+      return;
+    }
+    Save.commit();
+    teardown();
+    if (mode === 'standby') return standby();
+    snd.logoff();
+    fadeOut(function () {
+      if (mode === 'restart') return window.__bootLogo(after || window.__desktop, 3200);
+      if (mode === 'dos') return APPS.dosMode();
+      powerOff();
+    });
+  }
+  function teardown() { stopClock(); closeAllMenus(); }
   function fadeOut(next) {
-    var root = h('div', { class: 'screen desk', style: { background: WALLS[D ? D.wallIdx : 0][1] } });
+    var root = h('div', { class: 'screen desk', style: { background: wallCSS() } });
     add(root, h('div', { class: 'center-abs' },
       h('div', { class: 'win dlg dsk', style: { position: 'static', width: '300px' } },
         h('div', { class: 'tbar' }, h('span', { class: 'ttl', text: 'Windows の終了' })),
         h('div', { class: 'cli' }, h('p', { class: 't', text: 'しばらくお待ちください。Windows を終了しています...' })))));
+    D = null;
     setScreen(root);
     wait(2400).then(next);
   }
-
   function powerOff() {
     document.body.dataset.power = 'off';
     var root = h('div', { class: 'screen offscr' });
-    var b = Btn('電源を入れる', { def: true, onClick: function () { document.body.dataset.power = 'on'; window.__bootDOS(); } });
+    var b = Btn('電源を入れる', {
+      def: true, onClick: function () {
+        document.body.dataset.power = 'on';
+        if (Save.installed()) window.__bootLogo(window.__desktop, 4000); else window.__bootDOS();
+      }
+    });
     b.style.marginTop = '26px';
     add(root, h('div', { class: 'msg' }, 'コンピュータの電源を', h('br'), '切る準備ができました。', h('div', {}, b)));
     setScreen(root);
   }
-
   function standby() {
     document.body.dataset.power = 'standby';
     var root = h('div', { class: 'screen black' });
-    add(root, h('div', {
-      style: {
-        position: 'absolute', inset: '0', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: '#2b3a44', font: '12px var(--ui)'
-      }, text: 'スタンバイ中 — 画面をクリックすると再開します'
-    }));
-    root.addEventListener('click', function () {
-      document.body.dataset.power = 'on';
-      window.__desktop();
-    });
+    add(root, h('div', { class: 'standby-msg', text: 'スタンバイ中 — 画面をクリックすると再開します' }));
+    root.addEventListener('click', function () { document.body.dataset.power = 'on'; window.__desktop(); });
+    D = null;
     setScreen(root);
   }
 
-  function dosMode() {
-    document.body.dataset.power = 'on';
-    var root = h('div', { class: 'screen', style: { background: '#000' } });
-    var t = makeTerminal({
-      banner: ['Microsoft(R) Windows Millennium', '   (C) Copyright Microsoft Corp 1981-1999.', '',
-        'WIN と入力すると Windows に戻ります。', ''],
-      winCmd: true,
-      onWin: function () { window.__bootLogo(window.__desktop, 2600); },
-      onExit: function () { window.__bootLogo(window.__desktop, 2600); }
-    });
-    t.classList.add('full');
-    add(root, t);
-    setScreen(root);
-    t.focusInput();
-  }
-
-  /* -------------------------------------------------------------- 本体 */
+  /* =================================================================
+   *  デスクトップ本体
+   * ================================================================= */
   function stopClock() { if (clockIV) { clearInterval(clockIV); clockIV = null; } }
-
-  var startMenuEl = null;
-  function closeStart() {
-    closeFrom(0);
-    if (startMenuEl) { startMenuEl.remove(); startMenuEl = null; }
-    if (D) D.startBtn.classList.remove('is-down');
-  }
-  function toggleStart() {
-    if (startMenuEl) { closeStart(); return; }
-    startMenuEl = buildStartMenu();
-    D.root.appendChild(startMenuEl);
-    D.startBtn.classList.add('is-down');
-  }
 
   window.__desktop = function () {
     W.setTheme('desk');
     stopClock();
-    menuStack.length = 0;
+    menuStack.length = 0; menuClose = null; startMenuEl = null; popupEl = null;
+    var firstRun = !Save.installed();
+    if (firstRun) Save.markInstalled(S); else Save.applyTo(S);
+    Save.state.boots = (Save.state.boots || 0) + 1;
+    var desk = Save.state.desk;
+    W.setVolume(desk.mute ? 0 : desk.vol);
+
     var root = h('div', { class: 'screen desk' });
     var icons = h('div', { class: 'icons' });
     var winlayer = h('div', { class: 'winlayer' });
     var tasks = h('div', { class: 'tasks' });
     var clock = h('div', { id: 'clock' });
-    var startBtn = h('button', { class: 'btn', id: 'startbtn', type: 'button' },
-      pic('start-flag', 20, 16), h('span', { text: 'スタート' }));
-
+    var startBtn = h('button', { class: 'btn', id: 'startbtn', type: 'button' }, pic('start-flag', 20, 16), h('span', { text: 'スタート' }));
     function qlBtn(icon, title, act) {
       var b = h('button', { class: 'qlb', type: 'button', title: title }, pic(icon, 16, 16));
-      b.addEventListener('click', function (e) { e.stopPropagation(); closeStart(); act(); });
+      b.addEventListener('click', function (e) { e.stopPropagation(); closeAllMenus(); act(); });
       return b;
     }
     var ql = h('div', { class: 'ql' }, h('i', { class: 'grip' }),
       qlBtn('ql-desktop', 'デスクトップの表示', function () { D.wins.slice().forEach(function (r) { if (!r.min) minimize(r); }); }),
-      qlBtn('ql-ie', 'Internet Explorer ブラウザの起動', ie),
-      qlBtn('ql-oe', 'Outlook Express の起動', na('Outlook Express')),
-      qlBtn('ql-wmp', 'Windows Media Player', na('Windows Media Player')),
+      qlBtn('ql-ie', 'Internet Explorer ブラウザの起動', function () { APPS.ie(); }),
+      qlBtn('ql-oe', 'Outlook Express の起動', function () { APPS.oe(); }),
+      qlBtn('ql-wmp', 'Windows Media Player', function () { APPS.wmp(); }),
       h('i', { class: 'grip' }));
-    var tray = h('div', { class: 'tray' }, pic('tray-net', 16, 16), pic('tray-vol', 16, 16), clock);
+    var volBtn = h('button', { class: 'trayb', type: 'button', title: '音量' }, pic('tray-vol', 16, 16));
+    volBtn.addEventListener('click', function (e) { e.stopPropagation(); volumePopup(); });
+    clock.addEventListener('dblclick', function () { APPS.datetime(); });
+    var tray = h('div', { class: 'tray' }, pic('tray-net', 16, 16), volBtn, clock);
     var taskbar = h('div', { class: 'taskbar' }, startBtn, ql, tasks, tray);
     add(root, [icons, winlayer, taskbar]);
 
-    D = { root: root, winlayer: winlayer, tasks: tasks, startBtn: startBtn, wins: [], active: null, wallIdx: 0 };
-
-    var DESKICONS = [
-      { name: 'マイ ドキュメント', icon: 'ico-mydocs', act: function () { info('マイ ドキュメント', 'このフォルダは空です。'); } },
-      { name: 'マイ コンピュータ', icon: 'ico-mycomputer', act: APPS.mycomputer },
-      { name: 'マイ ネットワーク', icon: 'ico-network', act: function () { info('マイ ネットワーク', 'ワークグループ ' + S.pc.wg + ' には、ほかのコンピュータは見つかりませんでした。'); } },
-      { name: 'ごみ箱', icon: 'ico-recycle', act: APPS.recycle },
-      { name: 'Internet Explorer', icon: 'ico-ie', act: ie },
-      { name: 'Outlook Express', icon: 'ico-oe', act: na('Outlook Express') }
-    ];
-    DESKICONS.forEach(function (d) {
-      var el = h('div', { class: 'dicon' }, pic(d.icon, 32, 32), h('div', {}, h('span', { class: 'lab', text: d.name })));
-      el.setAttribute('aria-selected', 'false');
-      el.tabIndex = 0;
-      el.addEventListener('click', function (e) {
-        e.stopPropagation();
-        closeStart();
-        icons.querySelectorAll('.dicon').forEach(function (n) { n.setAttribute('aria-selected', 'false'); });
-        el.setAttribute('aria-selected', 'true');
-      });
-      el.addEventListener('dblclick', function () { d.act(); });
-      el.addEventListener('keydown', function (e) { if (e.key === 'Enter') { d.act(); } });
-      add(icons, el);
-    });
+    D = { root: root, icons: icons, winlayer: winlayer, tasks: tasks, startBtn: startBtn, clock: clock, wins: [], active: null };
+    applyWall();
+    clock.hidden = desk.clock === false;
+    drawIcons();
+    if (unwatchIcons) unwatchIcons();
+    unwatchIcons = VFS.on(function () { if (D && D.root === root && root.isConnected) drawIcons(); });
 
     startBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleStart(); });
     root.addEventListener('click', function () {
-      closeStart();
+      closeAllMenus();
       icons.querySelectorAll('.dicon').forEach(function (n) { n.setAttribute('aria-selected', 'false'); });
     });
+    root.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    icons.addEventListener('contextmenu', deskMenu);
+    winlayer.addEventListener('contextmenu', function (e) { if (e.target === winlayer) deskMenu(e); });
+    root.addEventListener('contextmenu', function (e) { if (e.target === root) deskMenu(e); });
+    function deskMenu(e) {
+      if (e.target.closest && e.target.closest('.dicon')) return;
+      ctxMenu(e, [
+        { label: 'アイコンの整列(&I)', act: drawIcons },
+        { label: '最新の情報に更新(&E)', act: drawIcons },
+        { sep: true },
+        { label: '新規作成(&W)', sub: [
+          { label: 'フォルダ(&F)', icon: 'folder16', act: function () { Ops.newFolder(DESKDIR); } },
+          { sep: true },
+          { label: 'テキスト文書', icon: 'txt16', act: function () { Ops.newFile(DESKDIR, 'txt'); } },
+          { label: 'ビットマップ イメージ', icon: 'bmp16', act: function () { Ops.newFile(DESKDIR, 'bmp'); } }] },
+        { sep: true },
+        { label: 'プロパティ(&R)', act: function () { APPS.display(); } }
+      ]);
+    }
 
     function tickClock() {
       var d = new Date();
       clock.textContent = d.getHours() + ':' + pad(d.getMinutes());
+      clock.title = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 (' + '日月火水木金土'[d.getDay()] + ')';
     }
     tickClock();
-    clockIV = setInterval(tickClock, 15000);
+    clockIV = setInterval(tickClock, 10000);
 
     setScreen(root);
-    startMenuEl = null;
     snd.startup();
+    Save.commit();
 
-    wait(1400).then(function () {
-      if (!D || D.root !== root) return;
-      openWindow({
-        title: 'Windows Me へようこそ', w: 356, y: 128, x: 142,
-        build: function (cli, rec) {
-          cli.classList.add('welcome');
-          add(cli, h('div', { class: 'dlg-row' },
-            h('div', {}, pic('ico-mycomputer', 32, 32)),
-            h('div', { class: 'msg' },
-              h('div', { style: { fontWeight: '700', marginBottom: '6px' }, text: 'ようこそ、' + (S.user.name || 'ユーザー') + ' さん' }),
-              h('div', { text: 'セットアップが完了しました。デスクトップのアイコンはダブルクリックで開けます。[スタート] ボタンからプログラムやコントロール パネルを試してみてください。' }))));
-          add(cli, h('div', { class: 'dlg-btns right' },
-            Btn('閉じる', { def: true, onClick: function () { rec.close(); } })));
-        }
+    var lr = Save.state.lastRestore;
+    if (lr) {
+      delete Save.state.lastRestore; Save.schedule();
+      wait(1600).then(function () {
+        if (D && D.root === root) info('システムの復元', '復元は完了しました。<br><br>コンピュータは次の時点の状態に復元されました:<br>' + esc(fmtDate(lr.at)) + '  ' + esc(lr.name), 'ico-restore');
       });
-    });
+    } else if (firstRun) {
+      wait(1400).then(function () { if (D && D.root === root) APPS.welcome(); });
+    }
+  };
+
+  window.__Desk = {
+    APPS: APPS, openWindow: openWindow, findWin: findWin, MenuBar: MenuBar, ctxMenu: ctxMenu, openMenuAt: openMenuAt,
+    closeAllMenus: closeAllMenus, fileDialog: fileDialog, askName: askName, Ops: Ops, openPath: openPath, runApp: runApp,
+    iconOf: iconOf, kindOf: kindOf, fmtSize: fmtSize, fmtDate: fmtDate, info: info, fail: fail, na: na, lab: lab,
+    WALLS: WALLS, applyWall: applyWall, wallCSS: wallCSS, taskbarProps: taskbarProps, emptyRecycle: emptyRecycle, shutdown: shutdown, runDialog: runDialog,
+    volumePopup: volumePopup, relRect: relRect, rel: rel, D: function () { return D; }, DESK_H: DESK_H
   };
 })();

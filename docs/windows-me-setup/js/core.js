@@ -67,9 +67,9 @@
   /* Windows のサウンドは実機の WAV (assets/sounds/) を鳴らす。
      セットアップ中は Windows のサウンドが使えないので、PC スピーカーのビープ音だけを矩形波で出す。 */
   var SOUNDS = window.WINME_SOUNDS || null;
-  var sndOn = true, unlocked = false, AC = null;
+  var sndOn = true, unlocked = false, AC = null, vol = 0.8;
   var clips = {};
-  ['startup', 'logoff', 'chord', 'ding', 'start'].forEach(function (n) {
+  ['startup', 'logoff', 'chord', 'ding', 'start', 'recycle', 'tada'].forEach(function (n) {
     try {
       var a = new Audio();
       a.preload = 'auto';
@@ -77,12 +77,14 @@
       clips[n] = a;
     } catch (e) {}
   });
+  function soundURL(n) { return SOUNDS && SOUNDS[n] ? SOUNDS[n] : 'assets/sounds/' + n + '.wav'; }
   function play(n) {
-    if (!sndOn) return;
+    if (!sndOn || vol <= 0) return;
     var a = clips[n];
     if (!a) return;
     try {
       a.muted = false;
+      a.volume = vol;
       a.currentTime = 0;
       var p = a.play();
       if (p && p.catch) p.catch(function () {});
@@ -123,8 +125,9 @@
     var t0 = c.currentTime, o = c.createOscillator(), g = c.createGain();
     o.type = 'square';
     o.frequency.setValueAtTime(800, t0);
-    g.gain.setValueAtTime(0.04, t0);
-    g.gain.setValueAtTime(0.04, t0 + 0.16);
+    if (vol <= 0) return;
+    g.gain.setValueAtTime(0.04 * vol, t0);
+    g.gain.setValueAtTime(0.04 * vol, t0 + 0.16);
     g.gain.linearRampToValueAtTime(0.0001, t0 + 0.18);
     o.connect(g); g.connect(c.destination);
     o.start(t0); o.stop(t0 + 0.2);
@@ -135,6 +138,9 @@
     chord: function () { play('chord'); },        /* メッセージ ボックス */
     ding: function () { play('ding'); },          /* 一般の警告音 */
     nav: function () { play('start'); },          /* ナビゲーション開始 (START.WAV) */
+    recycle: function () { play('recycle'); },    /* ごみ箱を空にする (RECYCLE.WAV) */
+    tada: function () { play('tada'); },
+    play: play,
     speaker: speaker,
     stop: stopAll
   };
@@ -142,7 +148,7 @@
   /* ---------------------------------------------------------------- 素材 */
   /* 単一ファイル版では build.py が window.WINME_ASSETS に data URI を埋め込む */
   var ASSETS = window.WINME_ASSETS || null;
-  function src(name) { return ASSETS && ASSETS[name] ? ASSETS[name] : 'assets/' + name + '.png'; }
+  function src(name) { return ASSETS && ASSETS[name] ? ASSETS[name] : 'assets/' + (name.indexOf('.') >= 0 ? name : name + '.png'); }
   function pic(name, w, hh, cls) {
     var i = h('img', { src: src(name), alt: '', draggable: 'false', class: 'px' + (cls ? ' ' + cls : '') });
     if (w) { i.width = w; i.height = hh || w; }
@@ -291,8 +297,9 @@
           if (++n < 6) setTimeout(blink, 70); else win.classList.remove('inactive');
         })();
       });
+      /* 開いた瞬間に入力先を移す（直後の Enter が背後のボタンに届かないように） */
       var f = win.querySelector('[data-autofocus]') || win.querySelector('.btn.def') || win.querySelector('.btn');
-      if (f) setTimeout(function () { try { f.focus(); } catch (e) {} }, 20);
+      if (f) { try { f.focus(); } catch (e) {} }
       if (o.onOpen) o.onOpen(win, done);
     });
   }
@@ -301,6 +308,7 @@
   function dragify(win, bar) {
     bar.addEventListener('pointerdown', function (e) {
       if (e.target.classList.contains('tb')) return;
+      if (win.classList.contains('maxed')) return;
       var scale = parseFloat(getComputedStyle(crt).getPropertyValue('--s')) || 1;
       var sx = e.clientX, sy = e.clientY;
       var ox = parseFloat(win.style.left) || 0, oy = parseFloat(win.style.top) || 0;
@@ -328,6 +336,8 @@
     get RUN() { return RUN; },
     setSpeed: function (v) { SPEED = v; }, getSpeed: function () { return SPEED; },
     setSound: function (v) { sndOn = v; if (!v) stopAll(); }, getSound: function () { return sndOn; },
+    setVolume: function (v) { vol = Math.max(0, Math.min(1, v)); }, getVolume: function () { return vol; },
+    soundURL: soundURL, actx: function () { return actx(); },
     refs: function () { return { screenWrap: screenWrap, stage: stage, crt: crt }; },
     bindRefs: function (sw, st, c) { screenWrap = sw; stage = st; crt = c; }
   };

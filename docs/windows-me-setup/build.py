@@ -15,6 +15,9 @@ assets = {}
 for p in sorted(glob.glob(os.path.join(here, 'assets', '*.png'))):
     with open(p, 'rb') as f:
         assets[os.path.basename(p)[:-4]] = 'data:image/png;base64,' + base64.b64encode(f.read()).decode('ascii')
+for p in sorted(glob.glob(os.path.join(here, 'assets', '*.jpg'))):
+    with open(p, 'rb') as f:
+        assets[os.path.basename(p)] = 'data:image/jpeg;base64,' + base64.b64encode(f.read()).decode('ascii')
 
 def inline_fonts(css):
     """style.css の url("assets/fonts/xxx.woff2") を data URI に置き換える"""
@@ -33,7 +36,7 @@ for p in sorted(glob.glob(os.path.join(here, 'assets', 'sounds', '*.wav'))):
         sounds[os.path.basename(p)[:-4]] = 'data:audio/wav;base64,' + base64.b64encode(f.read()).decode('ascii')
 
 body = ('<script>window.WINME_ASSETS=' + json.dumps(assets) + ';window.WINME_SOUNDS=' + json.dumps(sounds) + ';</script>\n' +
-        ''.join('<script>\n' + read('js/' + n) + '\n</script>\n' for n in ('core.js', 'setup.js', 'desktop.js', 'main.js')))
+        ''.join('<script>\n' + read('js/' + n) + '\n</script>\n' for n in ('core.js', 'save.js', 'setup.js', 'desktop.js', 'apps.js', 'main.js')))
 
 if '--fragment' in sys.argv:
     sys.stdout.write(head + body)
