@@ -5,7 +5,7 @@ Windows Millennium Edition のセットアップを、**実機の画面を実測
 
 ## 開き方
 
-`index.html` をブラウザで開くだけで動きます（ビルド不要、外部依存はフォントのみ）。
+`index.html` をブラウザで開くだけで動きます（ビルド不要、外部への通信なし）。
 
 単一の HTML ファイルに書き出す場合:
 
@@ -48,7 +48,14 @@ python3 docs/windows-me-setup/build.py > windows-me-setup.html
   （表示倍率は 0.25 刻みに丸めています）。
 - **音**: 起動音・終了音・メッセージ ボックスの音などは、Windows Me に収録されている WAV をそのまま鳴らします
   （下の表を参照）。ボタンのクリック音のように実機に無い音は鳴らしません。
-- **フォント**: `MS UI Gothic` を優先し、無い環境では Google Fonts の `DotGothic16` で表示します。
+- **フォント**: 字形そのものがドットでできているフォントを同梱しています。
+  OS の `MS UI Gothic` などは小さいサイズでだけドット絵の字形を使い、拡大すると滑らかな輪郭に
+  切り替わるため、全画面にしてもドット調が崩れないようにしています。
+  - 12px の UI 文字: **PixelMplus12**（M+ FONT LICENSE）。太字の W M w m は 6 ドット幅だと
+    つぶれるため、細字の字形に差し替えています
+  - 16px の文字（MS-DOS 画面、コピー中のビルボード本文、ようこそ画面の見出し）: **DotGothic16**（SIL OFL 1.1）。
+    画面で使う文字だけに絞って同梱しています
+  - 画面内の文字は 12px / 16px とその整数倍だけを使い、ドットが格子にそろうようにしています
 - **文言**: 画面内の文章は日本語版の言い回しに合わせて書き起こしたものです。
   使用許諾契約書の本文は、実際の契約書ではなくこの作品用の文章です。
 
@@ -80,6 +87,7 @@ python3 docs/windows-me-setup/build.py > windows-me-setup.html
 | `js/main.js` | 画面の組み立て、拡大縮小、キーボード操作 |
 | `assets/*.png` | 画面で使う画像（81 点） |
 | `assets/sounds/*.wav` | Windows Me のシステム サウンド（5 点） |
+| `assets/fonts/*.woff2` | 同梱のドット絵フォントとライセンス文 |
 | `build.py` | すべてを 1 つの HTML にまとめるスクリプト |
 
 ## 画像・音の出典と権利について
@@ -92,6 +100,11 @@ python3 docs/windows-me-setup/build.py > windows-me-setup.html
 - [winhistory.de — Windows Me](https://www.winhistory.de/more/winme.htm)（トレイ アイコン、システムのプロパティの図）
 - [Windows 98 Icon Viewer](https://win98icons.alexmeub.com/)（メッセージ ボックス、ドライブ、コントロール パネルのアイコン）
 - [Internet Archive — Microsoft: Windows Me system sounds (2000)](https://archive.org/details/Microsoft_Windows-ME-System-Sounds)（`assets/sounds/` の WAV）
+
+フォントは Microsoft の著作物ではなく、それぞれ再配布が許可されたフリー フォントです。
+
+- PixelMplus12 — itouhiro / M+ FONTS PROJECT、M+ FONT LICENSE（`assets/fonts/LICENSE-PixelMplus.txt`）
+- DotGothic16 — Fontworks、SIL Open Font License 1.1（`assets/fonts/OFL-DotGothic16.txt`）
 
 Windows、Windows Me のロゴ、各アイコン、およびシステム サウンドは Microsoft Corporation の著作物・商標です。
 本作品は Microsoft とは一切関係がなく、同社の許諾や承認を受けたものではありません。

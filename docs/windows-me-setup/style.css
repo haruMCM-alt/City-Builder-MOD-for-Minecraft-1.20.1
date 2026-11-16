@@ -4,6 +4,14 @@
    画面内の色は当時の UI の再現なので、light/dark の切り替えは行わない。
    ========================================================================= */
 
+/* ドット絵フォント（同梱）
+   拡大すると OS のフォントは滑らかな輪郭に切り替わるため、字形そのものがドットの
+   フォントを使う。PixelMplus12 は 12px、DotGothic16 は 16px（またはその整数倍）で
+   使うとドットが格子にそろう。 */
+@font-face{font-family:"WinMePix12";font-weight:400;font-style:normal;font-display:block;src:url("assets/fonts/PixelMplus12-Regular.woff2") format("woff2")}
+@font-face{font-family:"WinMePix12";font-weight:700;font-style:normal;font-display:block;src:url("assets/fonts/PixelMplus12-Bold.woff2") format("woff2")}
+@font-face{font-family:"WinMeDot16";font-weight:400;font-style:normal;font-display:block;src:url("assets/fonts/DotGothic16-Regular.woff2") format("woff2")}
+
 :root{
   /* 3D オブジェクト(Windows Me 既定 "Windows スタンダード") */
   --face:#d4d0c8;
@@ -24,8 +32,10 @@
   --shell-fg:#b9c6cd;
   --shell-accent:#39c0dd;
 
-  --ui:"MS UI Gothic","ＭＳ Ｐゴシック","MS PGothic","DotGothic16","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
-  --mono:"MS Gothic","ＭＳ ゴシック","Osaka-Mono","DotGothic16",monospace;
+  --ui:"WinMePix12","MS UI Gothic","ＭＳ Ｐゴシック","MS PGothic",sans-serif;
+  --dot16:"WinMeDot16","MS Gothic","ＭＳ ゴシック",monospace;
+  --shell:"Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --mono:"WinMePix12","MS Gothic","ＭＳ ゴシック",monospace;
   --logo:"Franklin Gothic Medium","Arial Narrow","Helvetica Neue",Arial,sans-serif;
 }
 
@@ -44,7 +54,7 @@ body{
   background:#14171b;
   background-image:radial-gradient(130% 95% at 50% -10%,#1f2d36 0%,#161a1f 52%,#0d0f12 100%);
   color:var(--shell-fg);
-  font-family:var(--ui);
+  font-family:var(--shell);
   font-size:13px;
   -webkit-text-size-adjust:100%;
 }
@@ -111,7 +121,7 @@ body.scanlines #scan{opacity:1}
 }
 #dock .grp{display:flex;gap:4px;align-items:center;padding:3px;border:1px solid #2b333a;border-radius:8px;background:rgba(255,255,255,.03)}
 #dock button{
-  font:600 11px/1 var(--ui);
+  font:600 11px/1 var(--shell);
   color:var(--shell-fg);
   background:#1e242a;
   border:1px solid #303941;
@@ -132,11 +142,12 @@ body.scanlines #scan{opacity:1}
 /* =========================================================================
    画面共通
    ========================================================================= */
-.screen{position:absolute;inset:0;overflow:hidden;font-family:var(--ui);font-size:11px;color:#000}
+.screen{position:absolute;inset:0;overflow:hidden;font-family:var(--ui);font-size:12px;color:#000}
+#screenwrap{font-synthesis:none;-webkit-font-smoothing:none;font-smooth:never;text-rendering:optimizeSpeed;font-kerning:none}
 .screen.black{background:#000}
 
 /* ---------- MS-DOS テキストモード ---------- */
-.dos{background:#0000a8;color:#a8a8a8;font-family:var(--mono);font-size:15px;line-height:19px;padding:0}
+.dos{background:#0000a8;color:#a8a8a8;font-family:var(--dot16);font-size:16px;line-height:19px;padding:0}
 .dos .topbar{
   position:absolute;top:0;left:0;right:0;height:19px;
   background:#a8a8a8;color:#0000a8;font-weight:700;
@@ -163,7 +174,7 @@ body.scanlines #scan{opacity:1}
    Windows 9x コントロール
    ========================================================================= */
 .btn{
-  font-family:var(--ui);font-size:11px;line-height:1;
+  font-family:var(--ui);font-size:12px;line-height:1;
   min-width:76px;height:23px;padding:0 10px;
   background:var(--face);color:#000;
   border:1px solid;border-color:var(--face-hi) var(--face-dk) var(--face-dk) var(--face-hi);
@@ -185,7 +196,7 @@ body.scanlines #scan{opacity:1}
 body.noaccel .btn u{text-decoration:none}
 
 .tf{
-  font-family:var(--ui);font-size:11px;
+  font-family:var(--ui);font-size:12px;
   height:20px;padding:1px 3px;color:#000;background:#fff;
   border:1px solid;border-color:var(--face-sh) var(--face-hi) var(--face-hi) var(--face-sh);
   box-shadow:inset 1px 1px 0 #000,inset -1px -1px 0 var(--face-lt);
@@ -234,7 +245,7 @@ input[type=checkbox].c9:disabled{background-color:var(--face)}
   box-shadow:1px 1px 0 var(--face-hi),inset -1px -1px 0 var(--face-hi);
   padding:10px 11px;position:relative;margin:12px 0 0;
 }
-.grp > legend{padding:0 4px;font-size:11px}
+.grp > legend{padding:0 4px;font-size:12px}
 
 .lst{overflow:auto;outline:none}
 .lst .it{padding:1px 4px;line-height:1.45;white-space:nowrap}
@@ -290,7 +301,7 @@ input[type=checkbox].c9:disabled{background-color:var(--face)}
 /* =========================================================================
    ウィンドウ / ダイアログ
    ========================================================================= */
-.modal{position:absolute;inset:0;z-index:600}
+.modal{position:absolute;inset:0;z-index:600;color:#000;font-family:var(--ui);font-size:12px;line-height:14px}
 .win{
   position:absolute;
   background:var(--face);
@@ -302,7 +313,7 @@ input[type=checkbox].c9:disabled{background-color:var(--face)}
 .tbar{
   height:18px;flex:0 0 18px;
   background:linear-gradient(90deg,#0a246a 0%,#3a6ea5 58%,#a6caf0 100%);
-  color:#fff;font-weight:700;font-size:11px;
+  color:#fff;font-weight:700;font-size:12px;
   display:flex;align-items:center;gap:4px;
   padding:0 2px 0 3px;
   user-select:none;cursor:default;
@@ -329,7 +340,7 @@ input[type=checkbox].c9:disabled{background-color:var(--face)}
 label u,.lbl u{text-decoration:underline}
 body.noaccel label u{text-decoration:none}
 .sel9{
-  font-family:var(--ui);font-size:11px;height:21px;padding:1px 20px 1px 3px;color:#000;background:#fff;
+  font-family:var(--ui);font-size:12px;height:21px;padding:1px 20px 1px 3px;color:#000;background:#fff;
   appearance:none;-webkit-appearance:none;
   border:1px solid;border-color:var(--face-sh) var(--face-hi) var(--face-hi) var(--face-sh);
   box-shadow:inset 1px 1px 0 #000,inset -1px -1px 0 var(--face-lt);
@@ -341,7 +352,7 @@ body.noaccel label u{text-decoration:none}
 .taskbtn .ti{display:inline-flex;align-items:center;flex:0 0 16px}
 
 textarea.np{
-  flex:1;resize:none;font-family:var(--mono);font-size:12px;line-height:1.5;padding:2px 3px;
+  flex:1;resize:none;font-family:var(--mono);font-size:12px;line-height:14px;padding:2px 3px;
   background:#fff;color:#000;
   border:1px solid;border-color:var(--face-sh) var(--face-hi) var(--face-hi) var(--face-sh);
   box-shadow:inset 1px 1px 0 #000,inset -1px -1px 0 var(--face-lt);
@@ -351,9 +362,9 @@ textarea.np:focus{outline:none}
 /* MS-DOS プロンプト */
 .term{
   flex:1;min-height:0;overflow:auto;background:#000;color:#c8c8c8;
-  font-family:var(--mono);font-size:13px;line-height:1.45;padding:4px 5px;cursor:text;
+  font-family:var(--mono);font-size:12px;line-height:14px;padding:4px 5px;cursor:text;
 }
-.term.full{position:absolute;inset:0;font-size:15px;line-height:19px;padding:8px}
+.term.full{position:absolute;inset:0;font-family:var(--dot16);font-size:16px;line-height:19px;padding:8px}
 .termout{white-space:pre-wrap;word-break:break-all}
 .termline{display:flex;align-items:baseline;gap:0}
 .termin{
@@ -421,7 +432,7 @@ img.px{image-rendering:pixelated;image-rendering:crisp-edges;display:block;user-
 .p1top img{position:absolute;left:11px;top:8px}
 .p1top span{
   position:absolute;left:48px;top:0;line-height:31px;white-space:nowrap;
-  font:700 22px/31px Arial,"Helvetica Neue","MS UI Gothic",var(--ui);letter-spacing:.2px;
+  font:700 24px/30px var(--ui);letter-spacing:-1px;
 }
 
 /* 反転表示つきパーセント バー */
@@ -433,9 +444,9 @@ img.px{image-rendering:pixelated;image-rendering:crisp-edges;display:block;user-
 .cpbar .pbar{--pbw:115px}
 
 /* ビルボード（ファイルのコピー中） */
-.billboard{position:absolute;left:186px;top:108px;width:392px;color:#fff}
-.billboard h2{margin:0 0 22px;font:700 22px/26px Arial,"Helvetica Neue",var(--ui);letter-spacing:.2px}
-.billboard p{margin:0 0 15px;font-size:15px;line-height:18px}
+.billboard{position:absolute;left:186px;top:104px;width:416px;color:#fff}
+.billboard h2{margin:0 0 20px;font:700 24px/28px var(--ui)}
+.billboard p{margin:0 0 16px;font-family:var(--dot16);font-size:16px;line-height:20px}
 
 /* ---------- 16色時代のウィンドウ枠 ---------- */
 .win.s16{
@@ -470,7 +481,7 @@ img.px{image-rendering:pixelated;image-rendering:crisp-edges;display:block;user-
 .wiz-h{position:absolute;left:27px;top:36px;font-weight:700}
 .wiz-sub{position:absolute;left:49px;top:51px;right:16px}
 .wiz-body{position:absolute;left:49px;top:92px;width:420px;height:242px}
-.has-side .wiz-h{left:189px;top:38px;font-size:15px;line-height:18px}
+.has-side .wiz-h{left:189px;top:36px;font-family:var(--dot16);font-weight:400;font-size:16px;line-height:19px}
 .has-side .wiz-body{left:189px;top:88px;width:278px;height:244px}
 .wiz-sep{position:absolute;left:16px;top:338px;width:460px;height:0;border-top:1px solid #87888f;border-bottom:1px solid #fff}
 .wizwin:not(.has-side)::after{content:"";position:absolute;left:16px;top:81px;width:460px;height:0;border-top:1px solid #87888f;border-bottom:1px solid #fff}
@@ -536,7 +547,7 @@ img.px{image-rendering:pixelated;image-rendering:crisp-edges;display:block;user-
 /* =========================================================================
    起動ロゴ
    ========================================================================= */
-.post{color:#c8c8c8;font:15px/19px var(--mono);padding:8px}
+.post{color:#c8c8c8;font:16px/19px var(--dot16);padding:8px}
 .bootscr{background:#fefefe}
 .bootscr img{position:absolute;left:0;top:0}
 .bootbar{
@@ -613,7 +624,7 @@ img.px{image-rendering:pixelated;image-rendering:crisp-edges;display:block;user-
 .win.logon .form{margin-top:12px}
 .mon{position:relative;width:122px;height:120px}
 .mon-screen{position:absolute;left:10px;top:9px;width:103px;height:79px}
-.bigclock{text-align:center;font:700 15px/1.8 var(--mono);font-variant-numeric:tabular-nums;padding:6px;background:#fff;border:1px solid;border-color:#808080 #fff #fff #808080;box-shadow:inset 1px 1px 0 #000}
+.bigclock{text-align:center;font:16px/28px var(--dot16);font-variant-numeric:tabular-nums;padding:6px;background:#fff;border:1px solid;border-color:#808080 #fff #fff #808080;box-shadow:inset 1px 1px 0 #000}
 .welcome{padding:12px 12px 10px !important}
 
 /* エクスプローラ風ウィンドウ */
@@ -640,7 +651,7 @@ img.px{image-rendering:pixelated;image-rendering:crisp-edges;display:block;user-
 
 /* 終了画面 */
 .offscr{background:#000;display:flex;align-items:center;justify-content:center}
-.offscr .msg{color:#fcac3c;font-family:var(--mono);font-size:22px;line-height:1.8;text-align:center;text-shadow:0 0 14px rgba(252,172,60,.45)}
+.offscr .msg{color:#fcac3c;font-family:var(--dot16);font-size:32px;line-height:48px;text-align:center;text-shadow:0 0 14px rgba(252,172,60,.45)}
 
 /* 16 ビット時代のチェック ボックスは × 印 */
 .s16 input[type=checkbox].c9:checked,.setup input[type=checkbox].c9:checked{
@@ -666,7 +677,7 @@ body.fs #crt{padding:0;border-radius:0;background:#000;box-shadow:none}
 body.fs #screenwrap{border-radius:0;box-shadow:none}
 body.fs #fsexit{
   display:block;position:fixed;right:10px;top:calc(10px + env(safe-area-inset-top,0px));z-index:9999;
-  font:600 12px/1 var(--ui);color:#eaf6fa;background:rgba(20,26,31,.86);
+  font:600 12px/1 var(--shell);color:#eaf6fa;background:rgba(20,26,31,.86);
   border:1px solid #47545e;border-radius:6px;padding:8px 12px;cursor:pointer;
   opacity:0;transition:opacity .2s;
 }

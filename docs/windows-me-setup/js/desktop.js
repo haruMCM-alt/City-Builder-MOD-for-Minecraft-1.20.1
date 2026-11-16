@@ -105,7 +105,7 @@
       h('button', { class: 'btn tbtn', type: 'button', disabled: true }, h('i', { class: 'arw l' })),
       h('button', { class: 'btn tbtn', type: 'button', disabled: true }, h('i', { class: 'arw r' })),
       h('button', { class: 'btn tbtn', type: 'button', disabled: true }, h('i', { class: 'arw u' })),
-      h('span', { style: { marginLeft: '8px', fontSize: '11px' }, text: title })));
+      h('span', { style: { marginLeft: '8px' }, text: title })));
     add(cli, iconView(items, onOpen));
     add(cli, h('div', { class: 'sbar' },
       h('div', { text: status || (items.length + ' 個のオブジェクト') }),
