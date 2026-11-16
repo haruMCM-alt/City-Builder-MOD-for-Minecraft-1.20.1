@@ -298,7 +298,6 @@
         if (i >= tasks.length) { ui.bar.set(100); wait(450).then(function () { if (alive()) go('options'); }); return; }
         ui.st.textContent = tasks[i];
         ui.bar.set((i + 0.6) / tasks.length * 100);
-        snd.drive();
         wait(800 + Math.random() * 400).then(function () { run(i + 1); });
       })(0);
     }
@@ -552,7 +551,8 @@
           var p = 0;
           (function tick() {
             if (!alive()) return;
-            p += 4 + Math.random() * 7; bar.set(p); snd.drive();
+            p += 4 + Math.random() * 7;
+            bar.set(p);
             if (p < 100) { wait(220).then(tick); return; }
             wait(420).then(function () {
               if (!alive()) return;
@@ -635,7 +635,6 @@
       var bi = Math.min(BILLBOARDS.length - 1, Math.floor(p / (100 / BILLBOARDS.length)));
       if (bi !== cur) { showBoard(bi); }
       setEta(sh, Math.max(19, Math.round(22 - p / 100 * 3)) + ' 分');
-      if (Math.random() < 0.3) snd.drive();
       if (p >= 100) { wait(700).then(function () { if (alive()) restartDialog(1, 3, 'コンピュータを再起動して、セットアップを続行します。'); }); return; }
       wait(140).then(tick);
     })();
@@ -715,7 +714,6 @@
         var n = 0;
         (function tick() {
           if (!alive()) return;
-          snd.drive();
           if (++n < 9) { wait(420).then(tick); return; }
           done('ok');
           detect(sh);
@@ -745,7 +743,6 @@
           bar.set(p);
           pc.textContent = Math.floor(p) + '% 完了';
           setEta(sh, Math.round(15 - p / 100 * 4) + ' 分');
-          snd.drive();
           if (p < 100) { wait(p > 55 && p < 62 ? 1500 : 260).then(tick); return; }
           wait(700).then(function () { if (alive()) restartDialog(2, 4, HWINFO); });
         })();
@@ -777,7 +774,6 @@
             if (!alive()) return;
             p += 10 + Math.random() * 16;
             cbar.set(p);
-            snd.drive();
             if (p < 100) { wait(230).then(sub); return; }
             i++; tbar.set(i / ITEMS.length * 100);
             wait(280).then(step);
@@ -934,7 +930,6 @@
         }
         info.textContent = phases[ph];
       }
-      snd.drive();
       wait(70).then(tick);
     })();
   }
@@ -960,7 +955,6 @@
         if (!alive()) return;
         p += 2 + Math.random() * 5;
         bar.set(p);
-        if (Math.random() < 0.5) snd.drive();
         if (p < 100) { wait(160).then(tick); return; }
         wait(500).then(function () { if (alive()) { hist.length = 0; go('welcome'); } });
       })();

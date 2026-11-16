@@ -7,6 +7,7 @@
   var h = W.h, add = W.add, frag = W.frag;
 
   var CRT_W = 0, CRT_H = 0, fit = true;
+  var immersive = false, nativeFs = false, hintT = 0;
 
   var screenWrap = h('div', { id: 'screenwrap' });
   var bezel = h('div', { id: 'bezel' },
@@ -23,14 +24,14 @@
     return b;
   }
 
-  var bSound = dockBtn('音: OFF', {
-    pressed: false,
+  var bSound = dockBtn('音: ON', {
+    pressed: true,
     onClick: function (b) {
       var v = !W.getSound();
       W.setSound(v);
       b.textContent = '音: ' + (v ? 'ON' : 'OFF');
       b.setAttribute('aria-pressed', String(v));
-      if (v) W.snd.click();
+      if (v) W.snd.ding();
     }
   });
   var bScan = dockBtn('走査線', {
@@ -58,6 +59,9 @@
       resize();
     }
   });
+  var bFull = dockBtn('全画面', { onClick: function () { setFull(true); } });
+  var fsExit = h('button', { id: 'fsexit', type: 'button', title: 'Alt+Enter でも切り替えられます', text: '全画面を終了' });
+  fsExit.addEventListener('click', function () { setFull(false); });
   var bReset = dockBtn('最初から', {
     onClick: function () {
       document.body.dataset.power = 'on';
@@ -68,15 +72,15 @@
 
   var dock = h('div', { id: 'dock' },
     h('div', { class: 'grp' }, bSound, bScan, bSpeed),
-    h('div', { class: 'grp' }, bFit, bReset));
+    h('div', { class: 'grp' }, bFit, bFull, bReset));
 
   var hint = h('div', { id: 'hint' }, frag(
     '<kbd>Enter</kbd> 既定のボタン ・ <kbd>Esc</kbd> キャンセル ・ ' +
-    '<kbd>Tab</kbd> 移動 ・ <kbd>Alt</kbd>+下線の文字<br>' +
+    '<kbd>Tab</kbd> 移動 ・ <kbd>Alt</kbd>+下線の文字 ・ <kbd>Alt</kbd>+<kbd>Enter</kbd> 全画面<br>' +
     '※ Windows Me のセットアップ画面を再現した非公式のファンメイド作品です。' +
-    'ロゴとアイコンは Microsoft の著作物で、実機の画面から引用しています。実際のシステムには変更を加えません。'));
+    'ロゴ・アイコン・効果音は Microsoft の著作物で、実機のものを引用しています。実際のシステムには変更を加えません。'));
 
-  document.body.append(stage, dock, hint);
+  document.body.append(stage, dock, hint, fsExit);
   W.bindRefs(screenWrap, stage, crt);
 
   /* CSS から参照する画像（ディザの青地と第2フェーズの背景） */
@@ -87,6 +91,14 @@
 
   /* ------------------------------------------------------------ 拡大縮小 */
   function resize() {
+    if (immersive) {                    /* 全画面: 枠なしで 640x480 を画面いっぱいに */
+      var fsS = Math.min(window.innerWidth / 640, window.innerHeight / 480);
+      if (fsS >= 1) fsS = Math.floor(fsS * 4) / 4;
+      crt.style.setProperty('--s', fsS);
+      stage.style.width = Math.round(640 * fsS) + 'px';
+      stage.style.height = Math.round(480 * fsS) + 'px';
+      return;
+    }
     if (!CRT_W) { CRT_W = crt.offsetWidth; CRT_H = crt.offsetHeight; }
     var availW = Math.max(240, document.documentElement.clientWidth - 32);
     var availH = Math.max(220, window.innerHeight - dock.offsetHeight - hint.offsetHeight - 58);
@@ -106,6 +118,44 @@
     stage.style.width = Math.round(CRT_W * s) + 'px';
     stage.style.height = Math.round(CRT_H * s) + 'px';
   }
+  /* ------------------------------------------------------------ 全画面 */
+  /* ブラウザの全画面 API が使えない環境(埋め込み表示など)でも、ページ内いっぱいには広げる */
+  function setFull(on) {
+    immersive = on;
+    document.body.classList.toggle('fs', on);
+    var root = document.documentElement;
+    if (on) {
+      var req = root.requestFullscreen || root.webkitRequestFullscreen;
+      if (req) { try { var p1 = req.call(root); if (p1 && p1.catch) p1.catch(function () {}); } catch (e) {} }
+      /* Esc をセットアップ側の「キャンセル」に使えるようにする(対応ブラウザのみ。長押しで全画面を終了) */
+      if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(['Escape']).catch(function () {});
+      document.body.classList.add('fs-hint');
+      setTimeout(function () { document.body.classList.remove('fs-hint'); }, 2600);
+    } else {
+      nativeFs = false;
+      if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
+      var cur = document.fullscreenElement || document.webkitFullscreenElement;
+      var ex = document.exitFullscreen || document.webkitExitFullscreen;
+      if (cur && ex) { try { var p2 = ex.call(document); if (p2 && p2.catch) p2.catch(function () {}); } catch (e) {} }
+    }
+    resize();
+    setTimeout(resize, 160);
+  }
+  function onFsChange() {
+    var cur = document.fullscreenElement || document.webkitFullscreenElement;
+    if (cur) nativeFs = true;
+    else if (immersive && nativeFs) { setFull(false); return; }   /* ブラウザ側の操作で全画面が解除された */
+    resize();
+  }
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+  document.addEventListener('mousemove', function (e) {
+    if (!immersive || e.clientY > 56) return;
+    document.body.classList.add('fs-hint');
+    clearTimeout(hintT);
+    hintT = setTimeout(function () { document.body.classList.remove('fs-hint'); }, 1800);
+  });
+
   window.addEventListener('resize', resize);
   if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
   /* ドックと注記の高さが確定・変化したら測り直す */
@@ -123,6 +173,7 @@
   }
 
   document.addEventListener('keydown', function (e) {
+    if (e.altKey && e.key === 'Enter') { e.preventDefault(); setFull(!immersive); return; }
     if (window.__screenKeys && window.__screenKeys(e)) return;
     var layer = W.activeLayer();
     if (!layer) return;
@@ -134,7 +185,6 @@
       var t = layer.querySelector('[data-acc="' + k + '"]');
       if (t) {
         e.preventDefault();
-        W.snd.click();
         t.click();
         if (t.tagName === 'LABEL' && t.input) t.input.dispatchEvent(new Event('change', { bubbles: true }));
         return;

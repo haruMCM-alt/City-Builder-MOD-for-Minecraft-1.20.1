@@ -64,7 +64,33 @@
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
   /* ------------------------------------------------------------ サウンド */
-  var AC = null, sndOn = false;
+  /* Windows のサウンドは実機の WAV (assets/sounds/) を鳴らす。
+     セットアップ中は Windows のサウンドが使えないので、PC スピーカーのビープ音だけを矩形波で出す。 */
+  var SOUNDS = window.WINME_SOUNDS || null;
+  var sndOn = true, unlocked = false, AC = null;
+  var clips = {};
+  ['startup', 'logoff', 'chord', 'ding', 'start'].forEach(function (n) {
+    try {
+      var a = new Audio();
+      a.preload = 'auto';
+      a.src = SOUNDS && SOUNDS[n] ? SOUNDS[n] : 'assets/sounds/' + n + '.wav';
+      clips[n] = a;
+    } catch (e) {}
+  });
+  function play(n) {
+    if (!sndOn) return;
+    var a = clips[n];
+    if (!a) return;
+    try {
+      a.muted = false;
+      a.currentTime = 0;
+      var p = a.play();
+      if (p && p.catch) p.catch(function () {});
+    } catch (e) {}
+  }
+  function stopAll() {
+    Object.keys(clips).forEach(function (n) { try { clips[n].pause(); } catch (e) {} });
+  }
   function actx() {
     if (!AC) {
       var C = window.AudioContext || window.webkitAudioContext;
@@ -74,37 +100,43 @@
     if (AC.state === 'suspended') AC.resume();
     return AC;
   }
-  function tone(freq, dur, type, gain, delay) {
+  /* 最初の操作で再生を解禁する（操作なしの再生はブラウザに止められるため） */
+  function unlock() {
+    if (unlocked) return;
+    unlocked = true;
+    actx();
+    Object.keys(clips).forEach(function (n) {
+      var a = clips[n];
+      try {
+        a.muted = true;
+        var p = a.play();
+        if (p && p.then) p.then(function () { a.pause(); a.currentTime = 0; a.muted = false; }).catch(function () { a.muted = false; });
+      } catch (e) { a.muted = false; }
+    });
+  }
+  document.addEventListener('pointerdown', unlock, true);
+  document.addEventListener('keydown', unlock, true);
+
+  function speaker() {
     if (!sndOn) return;
     var c = actx(); if (!c) return;
-    var t0 = c.currentTime + (delay || 0);
-    var o = c.createOscillator(), g = c.createGain();
-    o.type = type || 'square';
-    o.frequency.setValueAtTime(freq, t0);
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(gain || 0.05, t0 + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    var t0 = c.currentTime, o = c.createOscillator(), g = c.createGain();
+    o.type = 'square';
+    o.frequency.setValueAtTime(800, t0);
+    g.gain.setValueAtTime(0.04, t0);
+    g.gain.setValueAtTime(0.04, t0 + 0.16);
+    g.gain.linearRampToValueAtTime(0.0001, t0 + 0.18);
     o.connect(g); g.connect(c.destination);
-    o.start(t0); o.stop(t0 + dur + 0.02);
+    o.start(t0); o.stop(t0 + 0.2);
   }
   var snd = {
-    click: function () { tone(1800, 0.012, 'square', 0.015); },
-    beep: function () { tone(760, 0.11, 'square', 0.05); tone(560, 0.13, 'square', 0.045, 0.13); },
-    ding: function () { tone(1046, 0.5, 'triangle', 0.05); tone(1568, 0.45, 'sine', 0.025, 0.02); },
-    /* 起動音は実機の楽曲ではなく、この作品のためのオリジナルの短い和音 */
-    start: function () {
-      [[392, 0], [523.25, 0.18], [659.25, 0.36], [783.99, 0.54]].forEach(function (n) {
-        tone(n[0], 1.5, 'triangle', 0.045, n[1]);
-        tone(n[0] * 2, 1.2, 'sine', 0.018, n[1] + 0.02);
-      });
-      tone(130.81, 2.2, 'sine', 0.05, 0);
-    },
-    shutdown: function () {
-      [[659.25, 0], [523.25, 0.16], [392, 0.32], [261.63, 0.5]].forEach(function (n) {
-        tone(n[0], 1.1, 'triangle', 0.04, n[1]);
-      });
-    },
-    drive: function () { tone(120 + Math.random() * 40, 0.05, 'sawtooth', 0.012); }
+    startup: function () { play('startup'); },    /* The Microsoft Sound.wav */
+    logoff: function () { play('logoff'); },      /* LOGOFF.WAV */
+    chord: function () { play('chord'); },        /* メッセージ ボックス */
+    ding: function () { play('ding'); },          /* 一般の警告音 */
+    nav: function () { play('start'); },          /* ナビゲーション開始 (START.WAV) */
+    speaker: speaker,
+    stop: stopAll
   };
 
   /* ---------------------------------------------------------------- 素材 */
@@ -133,8 +165,7 @@
     if (o.esc) b.dataset.esc = '1';
     if (o.style) Object.assign(b.style, o.style);
     b.addEventListener('click', function (e) {
-      snd.click();
-      if (o.onClick) o.onClick(e, b);
+            if (o.onClick) o.onClick(e, b);
     });
     return b;
   }
@@ -214,7 +245,7 @@
         resolve(id);
       }
       layer.done = done;
-      closeBtn.addEventListener('click', function () { snd.click(); done(o.escResult || 'cancel'); });
+      closeBtn.addEventListener('click', function () { done(o.escResult || 'cancel'); });
 
       var row = h('div', { class: 'dlg-row' });
       if (o.icon) add(row, h('div', { class: 'ic' }, pic(MSG[o.icon] || o.icon, o.iconW || 32, o.iconH || 32)));
@@ -246,7 +277,20 @@
       win.style.top = (o.y != null ? o.y : Math.round((480 - wh) / 2 - 10)) + 'px';
       dragify(win, bar);
 
-      if (o.sound !== false && MSG[o.icon]) snd[o.icon === 'error' || o.icon === 'warn' ? 'beep' : 'ding']();
+      if (o.sound !== false && MSG[o.icon]) {
+        if (theme === 's16') { if (o.icon === 'error' || o.icon === 'warn') snd.speaker(); }
+        else snd.chord();
+      }
+      /* ダイアログの外側をクリックすると警告音が鳴り、タイトル バーが点滅する */
+      layer.addEventListener('pointerdown', function (e) {
+        if (e.target !== layer) return;
+        if (theme === 's16') snd.speaker(); else snd.ding();
+        var n = 0;
+        (function blink() {
+          win.classList.toggle('inactive', n % 2 === 0);
+          if (++n < 6) setTimeout(blink, 70); else win.classList.remove('inactive');
+        })();
+      });
       var f = win.querySelector('[data-autofocus]') || win.querySelector('.btn.def') || win.querySelector('.btn');
       if (f) setTimeout(function () { try { f.focus(); } catch (e) {} }, 20);
       if (o.onOpen) o.onOpen(win, done);
@@ -283,7 +327,7 @@
     snd: snd, pad: pad, modals: modals,
     get RUN() { return RUN; },
     setSpeed: function (v) { SPEED = v; }, getSpeed: function () { return SPEED; },
-    setSound: function (v) { sndOn = v; if (v) actx(); }, getSound: function () { return sndOn; },
+    setSound: function (v) { sndOn = v; if (!v) stopAll(); }, getSound: function () { return sndOn; },
     refs: function () { return { screenWrap: screenWrap, stage: stage, crt: crt }; },
     bindRefs: function (sw, st, c) { screenWrap = sw; stage = st; crt = c; }
   };

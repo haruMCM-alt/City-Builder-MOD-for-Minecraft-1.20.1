@@ -29,7 +29,9 @@ python3 docs/windows-me-setup/build.py > windows-me-setup.html
 
 - マウス: クリック / デスクトップ アイコンはダブルクリック / ウィンドウはタイトル バーでドラッグ
 - `Enter` 既定のボタン、`Esc` キャンセル、`Tab` フォーカス移動、`Alt` + 下線付きの文字（例: `Alt+N` = 次へ）
-- 画面の下のバー: 効果音、走査線、再生速度（×1 / ×2 / ×4）、表示倍率、最初からやり直す
+- 画面の下のバー: 音の ON/OFF、走査線、再生速度（×1 / ×2 / ×4）、表示倍率、全画面、最初からやり直す
+- **全画面**: [全画面] ボタンか `Alt+Enter`。筐体と操作バーが消え、640×480 が画面いっぱいに表示されます。
+  もう一度 `Alt+Enter` を押すか、画面右上に出る [全画面を終了] で戻ります
 - 開発者コンソールから `window.__setup.go('options')` のように、任意のページへ直接移動できます
 
 入力した名前・プロダクト キー・コンピュータ名は最後まで引き継がれ、
@@ -44,9 +46,27 @@ python3 docs/windows-me-setup/build.py > windows-me-setup.html
   タイトル バーは `#0a246a → #a6caf0` のグラデーションです。
 - **画像**: ロゴ・アイコン・背景は `assets/` の PNG を使い、ドット絵のまま拡大表示します
   （表示倍率は 0.25 刻みに丸めています）。
+- **音**: 起動音・終了音・メッセージ ボックスの音などは、Windows Me に収録されている WAV をそのまま鳴らします
+  （下の表を参照）。ボタンのクリック音のように実機に無い音は鳴らしません。
 - **フォント**: `MS UI Gothic` を優先し、無い環境では Google Fonts の `DotGothic16` で表示します。
 - **文言**: 画面内の文章は日本語版の言い回しに合わせて書き起こしたものです。
   使用許諾契約書の本文は、実際の契約書ではなくこの作品用の文章です。
+
+## 音の割り当て
+
+| 場面 | ファイル | 元のファイル名 |
+| --- | --- | --- |
+| デスクトップの表示（Windows の起動） | `assets/sounds/startup.wav` | The Microsoft Sound.wav |
+| Windows の終了・再起動 | `assets/sounds/logoff.wav` | LOGOFF.WAV |
+| メッセージ ボックス | `assets/sounds/chord.wav` | CHORD.WAV |
+| ダイアログの外側をクリックしたときの警告 | `assets/sounds/ding.wav` | DING.WAV |
+| フォルダ ウィンドウを開く | `assets/sounds/start.wav` | START.WAV |
+
+- `start.wav` だけは、元の MS ADPCM 形式をブラウザが再生できないため、同じ音を 16 ビット PCM に変換しています。
+  ほかの 4 つは元のファイルのままです。
+- セットアップ中（デスクトップが出る前）は Windows のサウンドが鳴らない段階なので、
+  エラー時に PC スピーカー相当のビープ音（矩形波）だけを鳴らします。これは合成音です。
+- ブラウザの制限で、最初のクリックかキー操作までは音が出ません。
 
 ## ファイル構成
 
@@ -59,9 +79,10 @@ python3 docs/windows-me-setup/build.py > windows-me-setup.html
 | `js/desktop.js` | デスクトップ、スタート メニュー、付属アプリ |
 | `js/main.js` | 画面の組み立て、拡大縮小、キーボード操作 |
 | `assets/*.png` | 画面で使う画像（81 点） |
+| `assets/sounds/*.wav` | Windows Me のシステム サウンド（5 点） |
 | `build.py` | すべてを 1 つの HTML にまとめるスクリプト |
 
-## 画像の出典と権利について
+## 画像・音の出典と権利について
 
 `assets/` の画像は、次のサイトで公開されている Windows Me / Windows 98 の実機スクリーンショットや
 アイコン集から、必要な部分だけを切り出したものです（透かしの入った領域は使っていません）。
@@ -70,8 +91,9 @@ python3 docs/windows-me-setup/build.py > windows-me-setup.html
   （セットアップ画面、起動ロゴ、デスクトップ、スタート メニュー）
 - [winhistory.de — Windows Me](https://www.winhistory.de/more/winme.htm)（トレイ アイコン、システムのプロパティの図）
 - [Windows 98 Icon Viewer](https://win98icons.alexmeub.com/)（メッセージ ボックス、ドライブ、コントロール パネルのアイコン）
+- [Internet Archive — Microsoft: Windows Me system sounds (2000)](https://archive.org/details/Microsoft_Windows-ME-System-Sounds)（`assets/sounds/` の WAV）
 
-Windows、Windows Me のロゴ、および各アイコンは Microsoft Corporation の著作物・商標です。
+Windows、Windows Me のロゴ、各アイコン、およびシステム サウンドは Microsoft Corporation の著作物・商標です。
 本作品は Microsoft とは一切関係がなく、同社の許諾や承認を受けたものではありません。
-懐古・研究目的の再現であり、権利者から要請があった場合は該当する画像を削除します。
+懐古・研究目的の再現であり、権利者から要請があった場合は該当する画像・音声を削除します。
 閲覧者のコンピュータに変更を加える処理は一切含まれていません。

@@ -655,3 +655,20 @@ img.px{image-rendering:pixelated;image-rendering:crisp-edges;display:block;user-
 .thinbar .prog{height:9px;padding:1px;background:#fff;border-color:#87888f #fff #fff #87888f;box-shadow:inset 1px 1px 0 #000}
 .thinbar .prog i{background:#0000a8;background-image:none}
 .restartdlg .dlg-btns{margin-top:12px}
+
+/* =========================================================================
+   全画面表示: 筐体と操作バーを隠し、640x480 を黒地の中央に置く
+   ========================================================================= */
+#fsexit{display:none}
+body.fs{padding:0;gap:0;background:#000;background-image:none;overflow:hidden}
+body.fs #dock,body.fs #hint,body.fs #bezel{display:none}
+body.fs #crt{padding:0;border-radius:0;background:#000;box-shadow:none}
+body.fs #screenwrap{border-radius:0;box-shadow:none}
+body.fs #fsexit{
+  display:block;position:fixed;right:10px;top:calc(10px + env(safe-area-inset-top,0px));z-index:9999;
+  font:600 12px/1 var(--ui);color:#eaf6fa;background:rgba(20,26,31,.86);
+  border:1px solid #47545e;border-radius:6px;padding:8px 12px;cursor:pointer;
+  opacity:0;transition:opacity .2s;
+}
+body.fs.fs-hint #fsexit,body.fs #fsexit:hover,body.fs #fsexit:focus-visible{opacity:1}
+@media (hover:none){body.fs #fsexit{opacity:.45}}

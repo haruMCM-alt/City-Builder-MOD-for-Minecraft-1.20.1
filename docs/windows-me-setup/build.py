@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""style.css / js / assets を 1 つの HTML にまとめる。
+"""style.css / js / assets（画像と音）を 1 つの HTML にまとめる。
 
   python3 build.py > windows-me-setup.html          # 単体で開ける完全な HTML
   python3 build.py --fragment > fragment.html       # <html>/<body> を持たない断片
@@ -21,7 +21,12 @@ head = ('<title>Windows Me セットアップ</title>\n'
         '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
         '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">\n'
         '<style>\n' + read('style.css') + '\n</style>\n')
-body = ('<script>window.WINME_ASSETS=' + json.dumps(assets) + ';</script>\n' +
+sounds = {}
+for p in sorted(glob.glob(os.path.join(here, 'assets', 'sounds', '*.wav'))):
+    with open(p, 'rb') as f:
+        sounds[os.path.basename(p)[:-4]] = 'data:audio/wav;base64,' + base64.b64encode(f.read()).decode('ascii')
+
+body = ('<script>window.WINME_ASSETS=' + json.dumps(assets) + ';window.WINME_SOUNDS=' + json.dumps(sounds) + ';</script>\n' +
         ''.join('<script>\n' + read('js/' + n) + '\n</script>\n' for n in ('core.js', 'setup.js', 'desktop.js', 'main.js')))
 
 if '--fragment' in sys.argv:

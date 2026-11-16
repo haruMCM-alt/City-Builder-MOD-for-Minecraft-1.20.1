@@ -39,14 +39,13 @@
       o.icon ? h('span', { class: 'ti' }, pic(o.icon, 16, 16)) : null,
       h('span', { class: 'tl', text: o.title }));
     tb.addEventListener('click', function () {
-      snd.click();
-      if (rec.min) { restore(rec); } else if (D.active === rec) { minimize(rec); } else { focusWin(rec); }
+            if (rec.min) { restore(rec); } else if (D.active === rec) { minimize(rec); } else { focusWin(rec); }
     });
     rec.tb = tb;
     D.tasks.appendChild(tb);
 
-    bX.addEventListener('click', function () { snd.click(); closeWin(rec); });
-    bMin.addEventListener('click', function () { snd.click(); minimize(rec); });
+    bX.addEventListener('click', function () { closeWin(rec); });
+    bMin.addEventListener('click', function () { minimize(rec); });
     win.addEventListener('pointerdown', function () { focusWin(rec); }, true);
     W.dragify(win, bar);
 
@@ -91,13 +90,14 @@
         view.querySelectorAll('.iv').forEach(function (n) { n.setAttribute('aria-selected', 'false'); });
         el.setAttribute('aria-selected', 'true');
       });
-      el.addEventListener('dblclick', function () { snd.click(); onOpen(it); });
+      el.addEventListener('dblclick', function () { onOpen(it); });
       add(view, el);
     });
     return view;
   }
   function explorerChrome(cli, title, items, onOpen, status) {
     cli.classList.add('explorer');
+    snd.nav();
     add(cli, h('div', { class: 'mbar' },
       h('span', { html: 'ファイル(<u>F</u>)' }), h('span', { html: '編集(<u>E</u>)' }),
       h('span', { html: '表示(<u>V</u>)' }), h('span', { html: 'ヘルプ(<u>H</u>)' })));
@@ -502,7 +502,7 @@
       e.stopPropagation();
       if (c.dis) return;
       if (c.sub) { hot(); openCascade(it, c.sub, level); return; }
-      snd.click(); closeStart();
+      closeStart();
       if (c.act) c.act();
     });
     return it;
@@ -525,7 +525,7 @@
       it.addEventListener('click', function (e) {
         e.stopPropagation();
         if (o.sub) { hot(); openCascade(it, o.sub, 0); return; }
-        snd.click(); closeStart();
+        closeStart();
         if (o.act) o.act();
       });
       add(items, it);
@@ -594,9 +594,9 @@
       if (res !== 'ok') return;
       stopClock();
       if (mode === 'standby') return standby();
-      if (mode === 'restart') { snd.shutdown(); return fadeOut(function () { window.__bootLogo(window.__desktop, 3000); }); }
-      if (mode === 'dos') { snd.shutdown(); return fadeOut(dosMode); }
-      snd.shutdown();
+      if (mode === 'restart') { snd.logoff(); return fadeOut(function () { window.__bootLogo(window.__desktop, 3000); }); }
+      if (mode === 'dos') { snd.logoff(); return fadeOut(dosMode); }
+      snd.logoff();
       fadeOut(powerOff);
     });
   }
@@ -682,7 +682,7 @@
 
     function qlBtn(icon, title, act) {
       var b = h('button', { class: 'qlb', type: 'button', title: title }, pic(icon, 16, 16));
-      b.addEventListener('click', function (e) { e.stopPropagation(); snd.click(); closeStart(); act(); });
+      b.addEventListener('click', function (e) { e.stopPropagation(); closeStart(); act(); });
       return b;
     }
     var ql = h('div', { class: 'ql' }, h('i', { class: 'grip' }),
@@ -715,12 +715,12 @@
         icons.querySelectorAll('.dicon').forEach(function (n) { n.setAttribute('aria-selected', 'false'); });
         el.setAttribute('aria-selected', 'true');
       });
-      el.addEventListener('dblclick', function () { snd.click(); d.act(); });
-      el.addEventListener('keydown', function (e) { if (e.key === 'Enter') { snd.click(); d.act(); } });
+      el.addEventListener('dblclick', function () { d.act(); });
+      el.addEventListener('keydown', function (e) { if (e.key === 'Enter') { d.act(); } });
       add(icons, el);
     });
 
-    startBtn.addEventListener('click', function (e) { e.stopPropagation(); snd.click(); toggleStart(); });
+    startBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleStart(); });
     root.addEventListener('click', function () {
       closeStart();
       icons.querySelectorAll('.dicon').forEach(function (n) { n.setAttribute('aria-selected', 'false'); });
@@ -735,7 +735,7 @@
 
     setScreen(root);
     startMenuEl = null;
-    snd.start();
+    snd.startup();
 
     wait(1400).then(function () {
       if (!D || D.root !== root) return;
