@@ -1,7 +1,7 @@
 /* =========================================================================
-   Windows Me Setup — 再現スタイルシート (ファンメイド / 資産は全て自作SVG+CSS)
-   単一ビジュアル世界にコミットしたデザインのため light/dark の切替は行わず、
-   すべての色を明示的に塗る。
+   Windows Me セットアップ再現 — スタイルシート（非公式ファンメイド）
+   640x480 の実機スクリーンショットを実測した座標と色で組んでいる。
+   画面内の色は当時の UI の再現なので、light/dark の切り替えは行わない。
    ========================================================================= */
 
 :root{
@@ -24,7 +24,7 @@
   --shell-fg:#b9c6cd;
   --shell-accent:#39c0dd;
 
-  --ui:"MS UI Gothic","ＭＳ Ｐゴシック","MS PGothic","Hiragino Kaku Gothic ProN","DotGothic16","Noto Sans JP",sans-serif;
+  --ui:"MS UI Gothic","ＭＳ Ｐゴシック","MS PGothic","DotGothic16","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
   --mono:"MS Gothic","ＭＳ ゴシック","Osaka-Mono","DotGothic16",monospace;
   --logo:"Franklin Gothic Medium","Arial Narrow","Helvetica Neue",Arial,sans-serif;
 }
@@ -159,62 +159,6 @@ body.scanlines #scan{opacity:1}
 .dos .cur::after{content:"_";animation:blink 1.06s steps(1,end) infinite}
 @keyframes blink{50%{opacity:0}}
 
-/* ---------- セットアップ ウィザード ---------- */
-.wiz{position:absolute;inset:0;display:flex;background:#fff}
-.wiz-side{
-  width:190px;flex:0 0 190px;position:relative;color:#fff;
-  background:linear-gradient(176deg,#001433 0%,#00306b 28%,#0a6ba6 66%,#22a3c8 100%);
-  overflow:hidden;
-}
-.wiz-side::after{
-  content:"";position:absolute;left:-60px;top:-40px;width:260px;height:240px;
-  background:radial-gradient(closest-side,rgba(127,224,245,.30),rgba(127,224,245,0));
-  pointer-events:none;
-}
-.wiz-logo{padding:16px 0 0 14px;position:relative;z-index:1}
-.wiz-steps{margin:22px 0 0;padding:0;list-style:none;position:relative;z-index:1}
-.wiz-steps li{
-  display:flex;gap:6px;
-  padding:5px 12px 5px 10px;
-  font-size:11px;line-height:1.35;
-  color:rgba(255,255,255,.52);
-}
-.wiz-steps li .mk{width:9px;flex:0 0 9px;text-align:center;color:rgba(255,255,255,.45)}
-.wiz-steps li.done{color:rgba(255,255,255,.62)}
-.wiz-steps li.done .mk{color:#9fe8ff}
-.wiz-steps li.cur{
-  color:#fff;font-weight:700;
-  background:linear-gradient(90deg,rgba(255,255,255,.22),rgba(255,255,255,0));
-}
-.wiz-steps li.cur .mk{color:#fff}
-.wiz-eta{
-  position:absolute;left:12px;right:12px;bottom:12px;z-index:1;
-  padding:6px 8px;
-  border:1px solid rgba(255,255,255,.26);
-  background:rgba(0,0,0,.20);
-  font-size:11px;line-height:1.5;
-}
-.wiz-eta b{display:block;font-size:12px;color:#bff0ff;font-weight:700}
-
-.wiz-main{flex:1;display:flex;flex-direction:column;background:#fff;min-width:0}
-.wiz-body{flex:1;padding:16px 18px 6px;overflow:auto}
-.wiz-h{font-size:13px;font-weight:700;color:#000;margin:0 0 10px}
-.wiz-foot{
-  flex:0 0 auto;height:48px;
-  display:flex;align-items:center;justify-content:flex-end;gap:6px;
-  padding:0 14px 0 18px;
-  background:#fff;
-}
-.wiz-foot .spacer{flex:1}
-p.t{margin:0 0 9px;line-height:1.65}
-ul.t{margin:0 0 10px;padding-left:1.15em;line-height:1.75}
-ul.t li{margin:0}
-.note{
-  margin:10px 0 0;padding:6px 8px;line-height:1.6;
-  background:#f1efe9;border:1px solid #c9c4b8;
-}
-.dim{color:#5a5a5a}
-
 /* =========================================================================
    Windows 9x コントロール
    ========================================================================= */
@@ -298,7 +242,8 @@ input[type=checkbox].c9:disabled{background-color:var(--face)}
 .lst:focus .it[aria-selected="true"]{outline:1px dotted #fff;outline-offset:-1px}
 
 /* Windows 9x 風スクロールバー */
-#screenwrap *{scrollbar-width:auto;scrollbar-color:var(--face) #e9e7e2}
+/* 標準プロパティを指定すると Chromium が ::-webkit-scrollbar を無視するので、未対応ブラウザだけに適用 */
+@supports not selector(::-webkit-scrollbar){#screenwrap *{scrollbar-width:auto;scrollbar-color:var(--face) #e9e7e2}}
 #screenwrap ::-webkit-scrollbar{width:16px;height:16px}
 #screenwrap ::-webkit-scrollbar-track{
   background-color:#fff;
@@ -380,145 +325,6 @@ input[type=checkbox].c9:disabled{background-color:var(--face)}
 .dlg-btns{display:flex;justify-content:center;gap:8px;margin-top:14px}
 .dlg-btns.right{justify-content:flex-end}
 
-/* =========================================================================
-   起動ロゴ / シャットダウン
-   ========================================================================= */
-.bootscr{background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:34px}
-.sweep{
-  width:236px;height:11px;padding:1px;background:#04121c;
-  border:1px solid #123244;overflow:hidden;position:relative;
-}
-.sweep i{
-  position:absolute;top:1px;bottom:1px;left:0;width:74px;
-  background:linear-gradient(90deg,rgba(10,60,90,0),#0d6f9e 35%,#9beaff 52%,#0d6f9e 68%,rgba(10,60,90,0));
-  animation:sweep 2.3s linear infinite;
-}
-@keyframes sweep{from{transform:translateX(-80px)}to{transform:translateX(238px)}}
-@media (prefers-reduced-motion:reduce){.sweep i{animation-duration:6s}}
-.bootscr .by{position:absolute;right:16px;bottom:14px;color:#3f6d85;font:700 11px/1 var(--logo);letter-spacing:.14em}
-
-.offscr{background:#000;display:flex;align-items:center;justify-content:center}
-.offscr .msg{
-  color:#fcac3c;font-family:var(--mono);font-size:22px;line-height:1.8;text-align:center;
-  text-shadow:0 0 14px rgba(252,172,60,.45);
-}
-
-/* =========================================================================
-   デスクトップ
-   ========================================================================= */
-.desk{background:#3a6ea5;overflow:hidden}
-.desk .wall{
-  position:absolute;inset:0;
-  background:
-    radial-gradient(120% 90% at 50% 18%,rgba(120,205,235,.28),rgba(58,110,165,0) 62%),
-    linear-gradient(180deg,#4f86bd 0%,#3a6ea5 46%,#26588a 100%);
-  background-color:#3a6ea5;
-}
-.desk .wallmark{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);opacity:.2;pointer-events:none}
-.icons{position:absolute;top:8px;left:8px;width:102px;display:flex;flex-direction:column;gap:4px;z-index:2}
-.dicon{
-  width:96px;padding:4px 2px 5px;text-align:center;color:#fff;font-size:11px;line-height:1.25;
-  cursor:default;user-select:none;
-}
-.dicon .lab{display:inline-block;padding:1px 2px;word-break:keep-all;text-shadow:1px 1px 1px rgba(0,0,0,.75)}
-.dicon[aria-selected="true"] .lab{background:var(--sel);text-shadow:none;outline:1px dotted #fff;outline-offset:-1px}
-.dicon[aria-selected="true"] svg{filter:drop-shadow(0 0 0 #000);opacity:.82}
-
-.taskbar{
-  position:absolute;left:0;right:0;bottom:0;height:28px;z-index:500;
-  background:var(--face);
-  border-top:1px solid var(--face-hi);
-  box-shadow:0 -1px 0 var(--face-sh);
-  display:flex;align-items:center;gap:3px;padding:2px 2px;
-}
-#startbtn{
-  display:flex;align-items:center;gap:4px;
-  height:22px;min-width:0;padding:0 6px 0 3px;font-weight:700;
-}
-.tasks{flex:1;display:flex;gap:3px;overflow:hidden}
-.taskbtn{
-  height:22px;min-width:0;max-width:150px;flex:0 1 150px;
-  padding:0 6px;display:flex;align-items:center;gap:4px;
-  font-weight:400;overflow:hidden;
-}
-.taskbtn .tl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tray{
-  display:flex;align-items:center;gap:6px;height:22px;padding:0 7px;
-  border:1px solid;border-color:var(--face-sh) var(--face-hi) var(--face-hi) var(--face-sh);
-  font-size:11px;
-}
-#clock{min-width:44px;text-align:center;font-variant-numeric:tabular-nums}
-
-.startmenu{
-  position:absolute;left:2px;bottom:29px;z-index:520;
-  width:214px;display:flex;
-  background:var(--face);
-  border:1px solid;border-color:var(--face-lt) var(--face-dk) var(--face-dk) var(--face-lt);
-  box-shadow:inset 1px 1px 0 var(--face-hi),inset -1px -1px 0 var(--face-sh),2px 2px 6px rgba(0,0,0,.4);
-  padding:2px;
-}
-.startmenu .banner{
-  flex:0 0 22px;width:22px;
-  background:linear-gradient(0deg,#001433 0%,#0a6ba6 62%,#22a3c8 100%);
-  position:relative;
-}
-.startmenu .banner span{
-  position:absolute;left:0;bottom:7px;width:22px;
-  writing-mode:vertical-rl;transform:rotate(180deg);
-  white-space:nowrap;color:#fff;font:700 12px/22px var(--logo);letter-spacing:.06em;
-}
-.startmenu .banner span em{font-style:normal;color:#8fe6fb}
-.smitems{flex:1;padding:1px 0}
-.smi{
-  display:flex;align-items:center;gap:7px;
-  padding:4px 5px;font-size:11px;cursor:default;user-select:none;position:relative;
-  white-space:nowrap;
-}
-.smi:hover,.smi.hot{background:var(--sel);color:#fff}
-.smi .ar{margin-left:auto;font-size:9px}
-.smi.sep{padding:0;margin:3px 2px;height:2px;border-top:1px solid var(--face-sh);border-bottom:1px solid var(--face-hi);pointer-events:none}
-.submenu{
-  position:absolute;z-index:530;min-width:150px;padding:2px;
-  background:var(--face);
-  border:1px solid;border-color:var(--face-lt) var(--face-dk) var(--face-dk) var(--face-lt);
-  box-shadow:inset 1px 1px 0 var(--face-hi),inset -1px -1px 0 var(--face-sh),2px 2px 6px rgba(0,0,0,.4);
-}
-
-/* エクスプローラ風ウィンドウ */
-.mbar{display:flex;gap:2px;padding:1px 2px;font-size:11px;user-select:none}
-.mbar span{padding:2px 6px}
-.mbar span:hover{background:var(--sel);color:#fff}
-.tstrip{
-  display:flex;align-items:center;gap:3px;padding:2px;
-  border-top:1px solid var(--face-hi);border-bottom:1px solid var(--face-sh);
-}
-.tstrip .tbtn{width:24px;height:22px;min-width:0;padding:0;display:flex;align-items:center;justify-content:center}
-.iview{flex:1;background:#fff;display:flex;flex-wrap:wrap;align-content:flex-start;gap:2px;padding:6px;overflow:auto;
-  border:1px solid;border-color:var(--face-sh) var(--face-hi) var(--face-hi) var(--face-sh);
-  box-shadow:inset 1px 1px 0 #000;}
-.iv{width:74px;padding:4px 2px;text-align:center;font-size:11px;line-height:1.25;word-break:keep-all;cursor:default;user-select:none}
-.iv[aria-selected="true"] .lab{background:var(--sel);color:#fff}
-.sbar{display:flex;gap:2px;padding:2px 0 0}
-.sbar div{
-  padding:2px 5px;font-size:11px;
-  border:1px solid;border-color:var(--face-sh) var(--face-hi) var(--face-hi) var(--face-sh);
-}
-.sbar div:first-child{flex:1}
-
-/* スライドショー(ファイルコピー中) */
-.slidewrap{position:relative;flex:1;overflow:hidden;background:#fff}
-.slide{position:absolute;inset:0;padding:14px 18px 0;display:flex;flex-direction:column;opacity:0;transition:opacity .55s ease}
-.slide.on{opacity:1}
-@media (prefers-reduced-motion:reduce){.slide{transition:none}}
-.slide .art{border:1px solid #9aa6ad;background:#eef4f7;height:196px;overflow:hidden}
-.slide h4{margin:11px 0 6px;font-size:12px;font-weight:700;color:#00417a}
-.slide p{margin:0;line-height:1.7}
-.copyfoot{flex:0 0 auto;padding:8px 18px 12px;background:#fff}
-.copyfoot .st{display:flex;justify-content:space-between;gap:10px;margin-bottom:5px;font-size:11px}
-.copyfoot .st .fn{font-family:var(--mono)}
-
-.toast{position:absolute;right:8px;bottom:8px;z-index:560;width:250px}
-
 /* ---------- 追加コントロール ---------- */
 label u,.lbl u{text-decoration:underline}
 body.noaccel label u{text-decoration:none}
@@ -581,3 +387,271 @@ textarea.np:focus{outline:none}
 /* ウィンドウ レイヤー。何も開いていないときはデスクトップのクリックを通す */
 .winlayer{position:absolute;inset:0 0 28px 0;z-index:300;pointer-events:none}
 .winlayer > .win{pointer-events:auto}
+
+/* =========================================================================
+   画像の描画: アイコン類はドット絵のまま拡大する
+   ========================================================================= */
+img.px{image-rendering:pixelated;image-rendering:crisp-edges;display:block;user-select:none;-webkit-user-drag:none}
+#screenwrap{font-size:12px;line-height:14px}
+
+/* =========================================================================
+   セットアップ画面（640x480 実測レイアウト）
+   ========================================================================= */
+.setup{background:#000;color:#000;font-size:12px;line-height:14px}
+.setup::before{content:"";position:absolute;left:134px;right:0;bottom:0}
+.setup.p1::before{top:30px;background-image:var(--img-dither);background-size:2px 2px}
+.setup.p2::before{top:0;background-image:var(--img-bg2);background-size:506px 480px}
+
+/* 左パネル */
+.lp{position:absolute;left:0;top:0;width:134px;height:480px;background:#000;color:#fff}
+.lp .step{position:absolute;left:3px;display:flex;gap:1px;white-space:pre}
+.lp .step img{flex:0 0 20px}
+.lp .step span{padding-top:2px}
+.lp .step.cur{color:#ffff00}
+.lp .eta{position:absolute;left:3px;top:271px;display:flex;gap:1px}
+.lp .eta span{padding-top:2px}
+.lp .eta-val{position:absolute;left:0;top:308px;width:134px;text-align:center;color:#ffff00}
+.lp .info{position:absolute;left:7px;top:343px;width:123px}
+.lp .mslogo{position:absolute;left:19px;top:457px}
+.lp .cplabel{position:absolute;left:0;top:349px;width:134px;text-align:center}
+.lp .cpbar{position:absolute;left:9px;top:381px;width:117px;height:18px}
+
+/* 上端のタイトル帯（第1フェーズのみ） */
+.p1top{position:absolute;left:134px;top:0;right:0;height:30px;background:#000;color:#fff}
+.p1top img{position:absolute;left:11px;top:8px}
+.p1top span{
+  position:absolute;left:48px;top:0;line-height:31px;white-space:nowrap;
+  font:700 22px/31px Arial,"Helvetica Neue","MS UI Gothic",var(--ui);letter-spacing:.2px;
+}
+
+/* 反転表示つきパーセント バー */
+.pbar{position:relative;height:100%;min-height:17px;background:#fff;border:1px solid #000;overflow:hidden}
+.cpbar .pbar{font-weight:700}
+.pbar .t{position:absolute;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#000}
+.pbar .f{position:absolute;left:0;top:0;bottom:0;width:0;background:#0000a8;overflow:hidden}
+.pbar .f .t{color:#fff;width:var(--pbw,115px)}
+.cpbar .pbar{--pbw:115px}
+
+/* ビルボード（ファイルのコピー中） */
+.billboard{position:absolute;left:186px;top:108px;width:392px;color:#fff}
+.billboard h2{margin:0 0 22px;font:700 22px/26px Arial,"Helvetica Neue",var(--ui);letter-spacing:.2px}
+.billboard p{margin:0 0 15px;font-size:15px;line-height:18px}
+
+/* ---------- 16色時代のウィンドウ枠 ---------- */
+.win.s16{
+  --face:#c0c7c8;--face-sh:#87888f;--face-lt:#c0c7c8;--face-hi:#ffffff;--face-dk:#000000;--sel:#0000a8;
+  background:#c0c7c8;border:0;padding:4px 5px 5px 5px;color:#000;
+  box-shadow:inset 1px 1px 0 #87888f,inset -1px -1px 0 #000,inset 2px 2px 0 #fff,inset -2px -2px 0 #87888f;
+  font-size:12px;line-height:14px;
+}
+.win.s16 .tbar{
+  height:20px;flex:0 0 20px;padding:0 4px;background:#0000a8;color:#fff;font-weight:700;font-size:12px;
+  border:1px solid;border-color:#87888f #fff #fff #87888f;cursor:default;
+}
+.win.s16 .tbar.center,.screen.p1 ~ .modal .win.s16 .tbar{justify-content:center;text-align:center}
+.win.s16 .tbar.center .ttl,.screen.p1 ~ .modal .win.s16 .tbar .ttl{flex:0 1 auto}
+.win.s16.dlg .cli{padding:12px 12px 10px}
+.win.s16.mini .cli{padding:8px 10px 10px}
+.win.s16 .dlg-row{gap:12px}
+.win.s16 .dlg-row .msg{line-height:15px;padding-top:1px}
+.lab2{margin:9px 0 3px}
+.items{margin:12px 0 4px 6px}
+.items .item{display:flex;gap:6px;align-items:center;line-height:17px}
+.items .item i{width:8px;height:8px;flex:0 0 8px}
+.items .item.cur{font-weight:700}
+.items .item.cur i{background:linear-gradient(135deg,transparent 0 0) ,none;border-left:5px solid #000;border-top:4px solid transparent;border-bottom:4px solid transparent;width:0;height:0;margin-right:3px}
+.pc{text-align:center;margin-top:6px}
+.grpbox{border:1px solid #87888f;box-shadow:1px 1px 0 #fff,inset 1px 1px 0 #fff;padding:12px 12px 12px 12px}
+
+/* ---------- ウィザード本体 (141,60) 492x390 ---------- */
+.wizwin{left:141px;top:60px;width:492px;height:390px;display:block}
+.wizwin .tbar{display:flex;align-items:center}
+.wiz-side{position:absolute;left:16px;top:35px}
+.wiz-h{position:absolute;left:27px;top:36px;font-weight:700}
+.wiz-sub{position:absolute;left:49px;top:51px;right:16px}
+.wiz-body{position:absolute;left:49px;top:92px;width:420px;height:242px}
+.has-side .wiz-h{left:189px;top:38px;font-size:15px;line-height:18px}
+.has-side .wiz-body{left:189px;top:88px;width:278px;height:244px}
+.wiz-sep{position:absolute;left:16px;top:338px;width:460px;height:0;border-top:1px solid #87888f;border-bottom:1px solid #fff}
+.wizwin:not(.has-side)::after{content:"";position:absolute;left:16px;top:81px;width:460px;height:0;border-top:1px solid #87888f;border-bottom:1px solid #fff}
+.wizwin .wb{position:absolute;top:352px;width:75px}
+.wizwin .wb.back{left:242px}
+.wizwin .wb.next{left:317px}
+.wizwin .wb.cancel{left:402px}
+.setup p.t,.win.s16 p.t{margin:0 0 10px;line-height:14px}
+.rows{margin-top:12px}
+.setup .ctl,.win.s16 .ctl{margin:0 0 9px;line-height:14px;gap:5px}
+.lbl{display:block;margin:0 0 3px}
+.eula{height:118px;overflow:auto;padding:2px 4px;margin-top:2px}
+.eula pre{margin:0;font:inherit;white-space:pre-wrap;line-height:14px}
+.eula:focus{outline:none}
+.keyrow{display:flex;align-items:center;gap:4px;margin-top:14px}
+.keyrow .tf.key{width:52px;height:20px}
+.keyrow .keyhelp{margin-left:16px}
+.opts{margin-top:10px}
+.opt{display:flex;gap:6px;margin-left:-2px;min-height:44px;margin-bottom:6px}
+.opt img{flex:0 0 34px;margin-top:-4px}
+.opt .ctl{margin:0 0 3px}
+.optd{margin-left:17px;line-height:14px}
+.form{display:grid;grid-template-columns:auto 1fr;gap:9px 10px;align-items:center;justify-items:start;margin-top:14px}
+.form.col{grid-template-columns:1fr;gap:3px;margin-top:8px}
+.form.col .tf{margin-bottom:9px}
+.complist{height:150px}
+.complist .ctl{margin:0;padding:1px 4px;display:flex}
+.complist .ctl .sz{margin-left:auto}
+.spacerow{display:flex;justify-content:space-between;margin-top:10px}
+.biglist{height:206px}
+.tzlist{height:132px}
+
+/* 準備中ダイアログ（白地） */
+.prepwin{left:239px;top:187px;width:292px;height:131px;display:block;background:#fff !important}
+.prepwin .tbar{display:flex;align-items:center}
+.prepwin .ic{position:absolute;left:11px;top:33px}
+.prepwin .txt{position:absolute;left:52px;top:35px;width:228px;line-height:14px}
+.prepwin .bar{position:absolute;left:50px;top:95px;width:232px;height:18px}
+.prepwin .bar .pbar{--pbw:230px}
+
+/* ---------- 16色時代のコントロール ---------- */
+.s16 .btn,.setup .btn{
+  background:#c0c7c8;border:1px solid #000;border-radius:3px;height:23px;min-width:75px;padding:0 8px;font-size:12px;
+  box-shadow:inset 1px 1px 0 #fff,inset -1px -1px 0 #87888f,inset -2px -2px 0 #87888f;
+}
+.s16 .btn.def,.setup .btn.def{margin:0;box-shadow:inset 0 0 0 1px #000,inset 2px 2px 0 #fff,inset -2px -2px 0 #87888f,inset -3px -3px 0 #87888f}
+.s16 .btn:not(:disabled):active,.setup .btn:not(:disabled):active{
+  border-color:#000;box-shadow:inset 1px 1px 0 #87888f,inset 2px 2px 0 #87888f;padding:2px 7px 0 9px;
+}
+.s16 .btn:disabled,.setup .btn:disabled{color:#87888f;text-shadow:1px 1px 0 #fff}
+.s16 .btn:focus-visible::after,.setup .btn:focus-visible::after{inset:4px}
+.s16 .tf,.setup .tf{border-color:#87888f #fff #fff #87888f;box-shadow:inset 1px 1px 0 #000,inset -1px -1px 0 #c0c7c8;font-size:12px}
+.s16 .tf:disabled,.setup .tf:disabled{background:#fff;color:#87888f}
+.s16 .well,.setup .well{border-color:#87888f #fff #fff #87888f;box-shadow:inset 1px 1px 0 #000,inset -1px -1px 0 #c0c7c8}
+.s16 .lst .it[aria-selected="true"],.setup .lst .it[aria-selected="true"]{background:#0000a8}
+.s16 .lst .it,.setup .lst .it{line-height:14px;padding:0 3px}
+.s16 .prog,.setup .prog{height:17px;background:#c0c7c8;border-color:#87888f #fff #fff #87888f;box-shadow:none;padding:2px}
+.s16 .prog i,.setup .prog i{background-image:linear-gradient(90deg,#0000a8 0 6px,transparent 6px 8px);background-size:8px 100%}
+.s16 input[type=radio].r9,.setup input[type=radio].r9{border-color:#87888f #fff #fff #87888f;box-shadow:inset 1px 1px 0 #000,inset -1px -1px 0 #c0c7c8}
+.s16 input[type=checkbox].c9,.setup input[type=checkbox].c9{border-color:#87888f #fff #fff #87888f;box-shadow:inset 1px 1px 0 #000,inset -1px -1px 0 #c0c7c8}
+.setup .ctl.off,.s16 .ctl.off{color:#87888f}
+
+/* =========================================================================
+   起動ロゴ
+   ========================================================================= */
+.post{color:#c8c8c8;font:15px/19px var(--mono);padding:8px}
+.bootscr{background:#fefefe}
+.bootscr img{position:absolute;left:0;top:0}
+.bootbar{
+  position:absolute;left:0;right:0;bottom:0;height:9px;
+  background:linear-gradient(90deg,#5c86b8 0%,#4e7eb8 12%,#6089b8 25%,#8aa9bf 40%,#afb8c0 55%,#afb8c0 70%,#8aa9bf 82%,#5c86b8 100%);
+  background-size:1280px 100%;
+  animation:bootbar 3.2s linear infinite;
+}
+@keyframes bootbar{from{background-position:0 0}to{background-position:-1280px 0}}
+@media (prefers-reduced-motion:reduce){.bootbar{animation-duration:12s}}
+
+/* =========================================================================
+   デスクトップ（実機 1024x768 のスクリーンショットから採寸）
+   ========================================================================= */
+.desk{background:#3a6ea5;overflow:hidden;font-size:12px;line-height:14px}
+.center-abs{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.icons{position:absolute;top:0;left:0;width:75px;display:block;z-index:2}
+.dicon{width:75px;height:75px;padding:2px 0 0;text-align:center;color:#fff;font-size:12px;line-height:13px;cursor:default;user-select:none}
+.dicon img{margin:0 auto 4px}
+.dicon .lab{display:inline-block;padding:1px 2px;word-break:keep-all;text-shadow:none;max-width:75px}
+.dicon[aria-selected="true"] .lab{background:#0a246a;outline:1px dotted #f5db95;outline-offset:-1px}
+.dicon[aria-selected="true"] img{filter:brightness(.6) sepia(1) hue-rotate(190deg) saturate(3)}
+.dicon:focus-visible{outline:1px dotted #fff}
+
+.taskbar{
+  position:absolute;left:0;right:0;bottom:0;height:28px;z-index:500;
+  background:#d4d0c8;border-top:1px solid #d4d0c8;box-shadow:inset 0 1px 0 #fff;
+  display:flex;align-items:center;gap:0;padding:2px 2px 0;
+}
+#startbtn{display:flex;align-items:center;gap:3px;height:22px;min-width:0;padding:0 5px 0 3px;font-weight:700;font-size:12px}
+#startbtn.is-down{padding:1px 4px 0 4px}
+.ql{display:flex;align-items:center;height:22px;margin-left:3px}
+.ql .grip{width:3px;height:18px;margin:0 4px;border:1px solid;border-color:#fff #808080 #808080 #fff}
+.qlb{width:23px;height:22px;padding:0;border:1px solid transparent;background:transparent;display:flex;align-items:center;justify-content:center}
+.qlb:hover{border-color:#fff #808080 #808080 #fff}
+.qlb:active{border-color:#808080 #fff #fff #808080}
+.tasks{flex:1;display:flex;gap:3px;overflow:hidden;margin-left:2px}
+.taskbtn{height:22px;min-width:0;max-width:160px;flex:0 1 160px;padding:0 5px;display:flex;align-items:center;gap:4px;font-weight:400;overflow:hidden;justify-content:flex-start;font-size:12px}
+.taskbtn.is-down{font-weight:700;background-color:#fff;background-image:linear-gradient(45deg,#d4d0c8 25%,transparent 25%,transparent 75%,#d4d0c8 75%),linear-gradient(45deg,#d4d0c8 25%,#fff 25%,#fff 75%,#d4d0c8 75%);background-size:2px 2px;background-position:0 0,1px 1px}
+.taskbtn .tl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tray{display:flex;align-items:center;gap:3px;height:22px;padding:0 4px 0 3px;margin-left:2px;border:1px solid;border-color:#808080 #fff #fff #808080;font-size:12px}
+#clock{min-width:38px;text-align:center;font-variant-numeric:tabular-nums;padding-left:4px}
+
+/* スタート メニュー */
+.startmenu{
+  position:absolute;left:2px;bottom:25px;z-index:520;display:flex;min-width:176px;
+  background:#d4d0c8;padding:3px;
+  border:0;box-shadow:inset 1px 1px 0 #d4d0c8,inset -1px -1px 0 #404040,inset 2px 2px 0 #fff,inset -2px -2px 0 #808080;
+}
+.startmenu .banner{flex:0 0 21px;width:21px;background:#000;display:flex;align-items:flex-end}
+.smitems{flex:1;padding:0 0 0 1px}
+.smi{display:flex;align-items:center;height:32px;padding:0 10px 0 3px;gap:8px;font-size:12px;cursor:default;user-select:none;white-space:nowrap}
+.smi.hot{background:#0a246a;color:#fff}
+.smi .sl{flex:1;padding-right:14px}
+.smsep{height:8px;position:relative}
+.smsep::after{content:"";position:absolute;left:2px;right:2px;top:3px;border-top:1px solid #808080;border-bottom:1px solid #fff}
+.ar{width:0;height:0;border-left:4px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;flex:0 0 auto}
+.cmenu{
+  position:absolute;z-index:530;background:#d4d0c8;padding:3px;min-width:120px;
+  box-shadow:inset 1px 1px 0 #d4d0c8,inset -1px -1px 0 #404040,inset 2px 2px 0 #fff,inset -2px -2px 0 #808080;
+}
+.cmi{display:flex;align-items:center;height:20px;padding:0 6px 0 1px;gap:6px;font-size:12px;white-space:nowrap;cursor:default;user-select:none}
+.cmi .ci{width:16px;height:16px;flex:0 0 16px}
+.cmi .cl{flex:1;padding-right:18px}
+.cmi.hot{background:#0a246a;color:#fff}
+.cmi.dis{color:#808080;text-shadow:1px 1px 0 #fff}
+.cmi.dis.hot{background:transparent;color:#808080}
+
+/* デスクトップ上のウィンドウ */
+.win.dsk,.win.app{font-size:12px;line-height:14px}
+.win.dsk .tbar,.win.app .tbar{font-size:12px}
+.win.dsk.dlg .cli{padding:12px 12px 10px}
+.logon-grid{display:grid;grid-template-columns:auto 1fr;gap:12px}
+.win.logon .form{margin-top:12px}
+.mon{position:relative;width:122px;height:120px}
+.mon-screen{position:absolute;left:10px;top:9px;width:103px;height:79px}
+.bigclock{text-align:center;font:700 15px/1.8 var(--mono);font-variant-numeric:tabular-nums;padding:6px;background:#fff;border:1px solid;border-color:#808080 #fff #fff #808080;box-shadow:inset 1px 1px 0 #000}
+.welcome{padding:12px 12px 10px !important}
+
+/* エクスプローラ風ウィンドウ */
+.mbar{display:flex;gap:0;padding:1px 0;font-size:12px;user-select:none}
+.mbar span{padding:2px 6px}
+.mbar span:hover{background:#0a246a;color:#fff}
+.tstrip{display:flex;align-items:center;gap:2px;padding:2px;border-top:1px solid #fff;border-bottom:1px solid #808080;box-shadow:0 -1px 0 #808080}
+.tstrip .tbtn{width:24px;height:22px;min-width:0;padding:0;display:flex;align-items:center;justify-content:center}
+.arw{width:0;height:0;border:5px solid transparent}
+.arw.l{border-right-color:#000;border-left-width:0}
+.arw.r{border-left-color:#000;border-right-width:0}
+.arw.u{border-bottom-color:#000;border-top-width:0}
+.btn:disabled .arw.l{border-right-color:#808080}.btn:disabled .arw.r{border-left-color:#808080}.btn:disabled .arw.u{border-bottom-color:#808080}
+.iview{flex:1;background:#fff;display:flex;flex-wrap:wrap;align-content:flex-start;gap:2px;padding:6px;overflow:auto;
+  border:1px solid;border-color:#808080 #fff #fff #808080;box-shadow:inset 1px 1px 0 #404040}
+.iv{width:76px;padding:4px 2px;text-align:center;font-size:12px;line-height:13px;cursor:default;user-select:none;word-break:keep-all}
+.iv img{margin:0 auto 4px}
+.iv[aria-selected="true"] .lab{background:#0a246a;color:#fff}
+.iv[aria-selected="true"] img{filter:brightness(.6) sepia(1) hue-rotate(190deg) saturate(3)}
+.sbar{display:flex;gap:2px;padding:2px 0 0}
+.sbar div{padding:2px 5px;font-size:12px;border:1px solid;border-color:#808080 #fff #fff #808080;min-height:19px}
+.sbar div:first-child{flex:1}
+.tbar .ti img,.taskbtn .ti img{image-rendering:pixelated}
+
+/* 終了画面 */
+.offscr{background:#000;display:flex;align-items:center;justify-content:center}
+.offscr .msg{color:#fcac3c;font-family:var(--mono);font-size:22px;line-height:1.8;text-align:center;text-shadow:0 0 14px rgba(252,172,60,.45)}
+
+/* 16 ビット時代のチェック ボックスは × 印 */
+.s16 input[type=checkbox].c9:checked,.setup input[type=checkbox].c9:checked{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M1.5 1.5 L9.5 9.5 M9.5 1.5 L1.5 9.5' fill='none' stroke='%23000' stroke-width='1.3'/%3E%3C/svg%3E");
+}
+.s16 input[type=checkbox].c9:disabled,.setup input[type=checkbox].c9:disabled{background-color:#fff}
+
+/* 再起動ダイアログ: 枠の中に説明・細い進行バー・ボタンが入る */
+.restartdlg .cli{padding:10px 10px 10px !important}
+.restartdlg .grpbox{padding:14px 16px 12px}
+.thinbar{margin:14px 2px 0}
+.thinbar .prog{height:9px;padding:1px;background:#fff;border-color:#87888f #fff #fff #87888f;box-shadow:inset 1px 1px 0 #000}
+.thinbar .prog i{background:#0000a8;background-image:none}
+.restartdlg .dlg-btns{margin-top:12px}
