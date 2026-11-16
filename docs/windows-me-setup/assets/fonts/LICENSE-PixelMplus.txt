@@ -1,0 +1,23 @@
+PixelMplus (PixelMplus12-Regular / PixelMplus12-Bold)
+Copyright (C) 2013 M+ FONTS PROJECT, itouhiro
+
+PixelMplus は M+ FONTS をもとにしたビットマップ風フォントで、
+M+ FONTS と同じ次のライセンスで配布されています。
+
+-------------------------------------------------------------------------------
+M+ FONTS                                Copyright (C) 2002-2013 M+ FONTS PROJECT
+
+LICENSE_E
+
+These fonts are free software.
+Unlimited permission is granted to use, copy, and distribute them, with
+or without modification, either commercially or not.
+
+This software is provided "as is" without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability,
+fitness for a particular purpose and noninfringement.
+-------------------------------------------------------------------------------
+
+このリポジトリでは、元の TTF を WOFF2 形式に変換して同梱しています。
+PixelMplus12-Bold のみ、6 ドット幅で判読しにくい W M w m の 4 字を
+PixelMplus12-Regular の字形に差し替えています。それ以外の字形は無変更です。
